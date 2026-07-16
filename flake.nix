@@ -186,6 +186,22 @@
 
         {
           type = "command";
+          name = "partner-cleanup";
+          description = "Consume partner review observations, fix them through a sub-agent, and commit the cleanup";
+          argumentHint = "[optional observations directory]";
+          body = builtins.readFile ./commands/partner-cleanup.md;
+        }
+
+        {
+          type = "command";
+          name = "partner-reviewer";
+          description = "Watch new commits and publish one atomic observation file per actionable review finding or worthwhile new idea";
+          argumentHint = "[optional baseline ref, commit range, or poll interval seconds]";
+          body = builtins.readFile ./commands/partner-reviewer.md;
+        }
+
+        {
+          type = "command";
           name = "restart";
           description = "Restart the dev server";
           body = builtins.readFile ./commands/restart.md;
@@ -218,6 +234,26 @@
           name = "user-test";
           description = "Usability Tester";
           body = builtins.readFile ./commands/user-test.md;
+        }
+
+        {
+          type = "command";
+          name = "wiggum";
+          description = "Continue autonomously until all tasks are completed and parity is achieved";
+          body = builtins.readFile ./commands/wiggum.md;
+        }
+
+        # ── Skills (rendered to ~/.claude/skills/<name>/SKILL.md) ───────────
+
+        {
+          type = "skill";
+          name = "fix-all";
+          description = "Fix all issues — no exceptions, no excuses. Fix every finding uncovered during the work, here and now. \"Out of scope,\" \"pre-existing,\" and \"follow-up ticket\" are not acceptable framings. Fixes go upstream, everything changed gets a real test, and no reward hacking.";
+          extraFrontmatter = {
+            author = "Isaac Shapira";
+            invocation = "/fix-all";
+          };
+          body = builtins.readFile ./skills/fix-all.md;
         }
 
       ];
