@@ -1,11 +1,11 @@
-# incite
+<div align="center"><h1>V&nbsp;&nbsp;&nbsp;I&nbsp;&nbsp;&nbsp;O&nbsp;&nbsp;&nbsp;L&nbsp;&nbsp;&nbsp;E&nbsp;&nbsp;&nbsp;N&nbsp;&nbsp;&nbsp;C&nbsp;&nbsp;&nbsp;E</h1></div>
 
-Declarative AI agent configuration. Skills, sub-agents, and global
-instructions — declared once in Nix, deployed everywhere.
+---
 
-Built on [agent-pm](https://gitlab.com/fresheyeball/flake-prompt), which
-renders prompt definitions into the native on-disk formats for Claude Code,
-Codex, opencode, Crush, and Droid.
+Declarative AI agent configuration. Skills, sub-agents, and global instructions — declared once in Nix, deployed everywhere.
+
+Built on [Flake Prompt](https://gitlab.com/fresheyeball/flake-prompt), which
+renders prompt definitions into the native on-disk formats for Claude Code, Codex, opencode, Crush, and Droid.
 
 ## Structure
 
