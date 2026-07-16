@@ -8,11 +8,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1784213340,
-        "narHash": "sha256-BELVIF3FQbFxvjXJkgYYU0eZ1FHEocpmOywHgW27dxw=",
+        "lastModified": 1784242592,
+        "narHash": "sha256-ygl447nKc4Flwgd2pOAQv384S1uWZlJn+tiJe7wZuoo=",
         "owner": "fresheyeball",
         "repo": "flake-prompt",
-        "rev": "d020229583b4ef8ea44a6561f28e75933e3a682d",
+        "rev": "117e46ccaa3fb9974bdbf2893400ccf477816c3b",
         "type": "gitlab"
       },
       "original": {
