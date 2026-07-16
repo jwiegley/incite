@@ -106,6 +106,14 @@
           body = builtins.readFile ./agents/compiler.md;
         }
 
+        {
+          type = "agent";
+          name = "fess-auditor";
+          description = "Runs the fess audit in a sub-agent and reports the evidence-backed results to the main session. Use after implementation or verification work when the main agent needs an honesty check.";
+          mode = "subagent";
+          body = builtins.readFile ./agents/fess-auditor.md;
+        }
+
         # ── Commands (rendered to ~/.claude/commands/) ───────────────────────
 
         {
