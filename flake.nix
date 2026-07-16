@@ -70,6 +70,11 @@
           type = "agent";
           name = "code-review";
           description = "Read-only code review agent focused on security, performance, correctness, and maintainability";
+          # Tools without native agents (codex, crush) would degrade this to a
+          # skill, colliding with the code-review *command* deployed as a
+          # skill there. The command is the user-facing entry point; drop the
+          # agent on those tools instead.
+          degradation = "skip";
           mode = "subagent";
           model = "anthropic/claude-sonnet-4-20250514";
           extraFrontmatter = {
