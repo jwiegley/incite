@@ -1,0 +1,1 @@
+Integrate https://gitlab.com/platonic/gitlab-ci.nix into this project. Take at the template on that flake to inform your work. After Integrating run `nix update gitlab-ci && nix run .#gitlab-ci > .gitlab-ci.yaml`
