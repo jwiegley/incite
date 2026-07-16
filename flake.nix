@@ -5,9 +5,14 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     agent-pm.url = "gitlab:fresheyeball/flake-prompt";
     agent-pm.inputs.nixpkgs.follows = "nixpkgs";
+
+    macha = {
+      url = "path:/home/isaac/_/macha-orchestration/main";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, agent-pm }:
+  outputs = { self, nixpkgs, agent-pm, macha }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -55,6 +60,13 @@
             - When orphan instance build failures occur, disable the warning with `OPTIONS_GHC`. Orphan
               instances are fine.
           '';
+        }
+
+        {
+          type = "instructions";
+          name = "agentic-philosophy";
+          order = 200;
+          body = builtins.readFile "${macha}/PHILOSOPHY_AGENTIC.md";
         }
 
         # ── Agents ──────────────────────────────────────────────────────────
@@ -173,6 +185,13 @@
           name = "grind-tests";
           description = "Comprehensive test suite grinder — fans out 12+ parallel audit agents, remediates every finding";
           body = builtins.readFile ./commands/grind-tests.md;
+        }
+
+        {
+          type = "command";
+          name = "fstar-erlang-ell";
+          description = "Load macha-orchestration precepts — BEAM + F* + C++23 stack rules, StarBeam status, and orientation";
+          body = builtins.readFile "${macha}/AGENTS.md";
         }
 
         {
