@@ -45,13 +45,17 @@
     "macha": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-oIeXEWOYiHQgtJm4VPnJE6HTLpXanOmJy5ayVD1ypCA=",
-        "path": "/home/isaac/_/macha-orchestration/main",
-        "type": "path"
+        "lastModified": 1784053616,
+        "narHash": "sha256-xspLMIP/pdOgIY8d9ofG0zRGto2otC6A80u90/H9Fao=",
+        "ref": "refs/heads/main",
+        "rev": "b51fa711a6cfeb570f7453376450ac5b3cc2f0a5",
+        "revCount": 93,
+        "type": "git",
+        "url": "ssh://git@gitlab.com/mecha-team-zero/macha-orchestration"
       },
       "original": {
-        "path": "/home/isaac/_/macha-orchestration/main",
-        "type": "path"
+        "type": "git",
+        "url": "ssh://git@gitlab.com/mecha-team-zero/macha-orchestration"
       }
     },
     "nixpkgs": {

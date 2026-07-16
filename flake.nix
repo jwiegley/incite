@@ -7,7 +7,7 @@
     agent-pm.inputs.nixpkgs.follows = "nixpkgs";
 
     macha = {
-      url = "path:/home/isaac/_/macha-orchestration/main";
+      url = "git+ssh://git@gitlab.com/mecha-team-zero/macha-orchestration";
       flake = false;
     };
   };
