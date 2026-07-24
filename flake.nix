@@ -288,6 +288,39 @@
           body = builtins.readFile ./skills/fix-all.md;
         }
 
+        {
+          type = "skill";
+          name = "pr-comment";
+          description = "Companion to pr-review: compose one piece of feedback as a minimal, complete, actionable, and kind review comment and add it immediately to my pending GitHub review on the PR under review (creating the pending review if absent). All comments submit later as a single review, only on explicit instruction.";
+          extraFrontmatter = {
+            author = "Isaac Shapira";
+            invocation = "/pr-comment <the feedback to leave>";
+          };
+          body = builtins.readFile ./skills/pr-comment.md;
+        }
+
+        {
+          type = "skill";
+          name = "pr-fix";
+          description = "Companion to pr-review: apply one described change to the PR under review via a subagent in a separate worktree, then immediately push the commit to the PR head branch. The review worktree stays untouched.";
+          extraFrontmatter = {
+            author = "Isaac Shapira";
+            invocation = "/pr-fix <description of the change>";
+          };
+          body = builtins.readFile ./skills/pr-fix.md;
+        }
+
+        {
+          type = "skill";
+          name = "pr-review";
+          description = "Interactively review a GitHub PR one logical group of diff hunks at a time (1-5 related hunks, mechanical churn attached to the change that caused it) as a strictly read-only reviewer: set up an isolated worktree, walk group by group explaining and critiquing each, pausing for discussion and to draft comments, then a holistic adversarial pass. After the holistic review, spawns a background babysitter subagent that keeps the PR mergeable with CI green and review comments addressed. Understands Graphite stacks: 'next' advances to the next PR upstack as a fresh review. Optionally posts drafted comments via gh only on explicit approval.";
+          extraFrontmatter = {
+            author = "Isaac Shapira";
+            invocation = "/pr-review <pr-number>";
+          };
+          body = builtins.readFile ./skills/pr-review.md;
+        }
+
       ];
 
     in {
