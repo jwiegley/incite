@@ -56,7 +56,7 @@ shipFeatureFull =
     "ship-feature-full"
     "Explore, plan, implement, build/commit in a loop, then (with approval) open a PR"
     featureRequest
-    (execGrant ["git", "cabal", "gh"])
+    (execGrant ["git*", "cabal*", "gh*"])
     $ explorePlanEdit
       >>> implement
       >>> workLoop 8 step
