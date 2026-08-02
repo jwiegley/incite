@@ -11,13 +11,13 @@
       flake = false;
     };
 
-    # pass — the typed multi-agent workflow tool (agent-functor). Kept on its own
+    # agent-functor — the typed multi-agent workflow library. Kept on its own
     # pinned nixpkgs (its Haskell deps are built against nixos-24.11), so it does
     # NOT follow incite's unstable.
-    pass.url = "git+file:///home/isaac/_/agent-functor";
+    agent-functor.url = "git+file:///home/isaac/_/agent-functor";
   };
 
-  outputs = { self, nixpkgs, agent-pm, macha, pass }:
+  outputs = { self, nixpkgs, agent-pm, macha, agent-functor }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -338,18 +338,19 @@
         };
 
         # Incite's OWN workflows, defined locally in ./workflows (typed Flow
-        # values) and built against the pass library. `nix run .#pass -- list`
-        # shows them; `run <name>` drives your configured ACP agent; `plan|cost
-        # <name>` are offline. Add a workflow by editing ./workflows/Main.hs.
-        pass = pass.lib.${system}.mkWorkflowRunner {
+        # values) and built against the agent-functor library. `nix run
+        # .#agent-functor -- list` shows them; `run <name>` drives your configured
+        # ACP agent; `plan|cost <name>` are offline. Add a workflow by editing
+        # ./workflows/Main.hs.
+        agent-functor = agent-functor.lib.${system}.mkWorkflowRunner {
           src = ./workflows;
           name = "incite-workflows";
         };
       };
 
-      apps.${system}.pass = {
+      apps.${system}.agent-functor = {
         type = "app";
-        program = "${self.packages.${system}.pass}/bin/pass";
+        program = "${self.packages.${system}.agent-functor}/bin/agent-functor";
       };
     };
 }

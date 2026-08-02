@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Isaac's local @pass@ workflows.
+-- | Isaac's local @agent-functor@ workflows.
 --
--- This package consumes the @pass@ library (agent-functor) and defines its own
+-- This package consumes the @agent-functor@ library and defines its own
 -- workflows as typed 'Flow' values. Add a workflow by writing another 'Workflow'
 -- and listing it in 'workflows' — the CLI (@list@\/@plan@\/@cost@\/@run@) comes
 -- for free from 'passMain'. Nothing here forks agent-functor; it's a downstream
@@ -11,9 +11,9 @@ module Main (main) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Pass.Flow ((>>>))
-import Pass.Flow.Combinators (refineWith)
-import Pass.Run (Workflow, passMain, workflow)
+import Agent.Flow ((>>>))
+import Agent.Flow.Combinators (refineWith)
+import Agent.Run (Workflow, passMain, workflow)
 
 main :: IO ()
 main = passMain workflows

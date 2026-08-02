@@ -1,10 +1,10 @@
 cabal-version:      2.4
 name:               incite-workflows
 version:            0.1.0.0
-synopsis:           Isaac's local pass workflows (consumes the pass library)
+synopsis:           Isaac's local agent-functor workflows (consumes the agent-functor library)
 
--- The runner binary is named `pass` so `nix run .#pass -- run <name>` works.
-executable pass
+-- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
+executable agent-functor
     hs-source-dirs:     .
     main-is:            Main.hs
     default-language:   GHC2021
@@ -13,4 +13,4 @@ executable pass
     build-depends:
         base
       , text
-      , pass
+      , agent-functor

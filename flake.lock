@@ -1,5 +1,24 @@
 {
   "nodes": {
+    "agent-functor": {
+      "inputs": {
+        "flake-utils": "flake-utils",
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1785686843,
+        "narHash": "sha256-dHE3/xLNkSkhWpfdwLVsmFllCTGA1Fh3urg5zj84iyo=",
+        "ref": "refs/heads/master",
+        "rev": "217dd589537b8c53f0ddf52a2da8b7b74d6d25e9",
+        "revCount": 46,
+        "type": "git",
+        "url": "file:///home/isaac/_/agent-functor"
+      },
+      "original": {
+        "type": "git",
+        "url": "file:///home/isaac/_/agent-functor"
+      }
+    },
     "agent-pm": {
       "inputs": {
         "home-manager": "home-manager",
@@ -78,22 +97,6 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1784115452,
-        "narHash": "sha256-BoYPdqk6jlKXy+DyUzyGV/CtRGfAhk2MmIgBhsemTGI=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "35d3407a3816f3b341d8cf1d60abaf2b7b8166ac",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixpkgs-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs_2": {
-      "locked": {
         "lastModified": 1751274312,
         "narHash": "sha256-/bVBlRpECLVzjV19t5KMdMFWSwKLtb5RyXdjz3LJT+g=",
         "owner": "NixOS",
@@ -108,31 +111,28 @@
         "type": "github"
       }
     },
-    "pass": {
-      "inputs": {
-        "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs_2"
-      },
+    "nixpkgs_2": {
       "locked": {
-        "lastModified": 1785685972,
-        "narHash": "sha256-W69ymtbH1jUohAF2WQcIPzSr73bZ2VqcJ1/NWxWureg=",
-        "ref": "refs/heads/master",
-        "rev": "1ce46145c686482a50bd3257235f481908ef6f72",
-        "revCount": 44,
-        "type": "git",
-        "url": "file:///home/isaac/_/agent-functor"
+        "lastModified": 1784115452,
+        "narHash": "sha256-BoYPdqk6jlKXy+DyUzyGV/CtRGfAhk2MmIgBhsemTGI=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "35d3407a3816f3b341d8cf1d60abaf2b7b8166ac",
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "file:///home/isaac/_/agent-functor"
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
       }
     },
     "root": {
       "inputs": {
+        "agent-functor": "agent-functor",
         "agent-pm": "agent-pm",
         "macha": "macha",
-        "nixpkgs": "nixpkgs",
-        "pass": "pass"
+        "nixpkgs": "nixpkgs_2"
       }
     },
     "systems": {
