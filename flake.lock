@@ -3,14 +3,15 @@
     "agent-functor": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1785687643,
-        "narHash": "sha256-oX6R6b4UfXOPB/lpenX452I2uR/LMwTZucTrKOAY33s=",
+        "lastModified": 1785689619,
+        "narHash": "sha256-TUWSqSH22hazbrAutelkaGixW3WtwBsuegFfjau/Lqs=",
         "ref": "refs/heads/master",
-        "rev": "a9c21e876c944060b3fb2df782aad99a1f42e8e1",
-        "revCount": 50,
+        "rev": "0c301fd775319542d09b1cdab4174292f8698285",
+        "revCount": 51,
         "type": "git",
         "url": "file:///home/isaac/_/agent-functor"
       },
@@ -107,6 +108,22 @@
       "original": {
         "owner": "NixOS",
         "ref": "nixos-24.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-adapters": {
+      "locked": {
+        "lastModified": 1784992771,
+        "narHash": "sha256-xEE5I69+WNqcs7Z0v5D9xwcHYRbvC8k/fKBmlUBdCp4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "37bfb33419c6e367e8bb6f44041eaecf953b5236",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
         "repo": "nixpkgs",
         "type": "github"
       }
