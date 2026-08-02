@@ -15,7 +15,7 @@ import Agent.Flow (Flow, (>>>))
 import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, refineWith, reviewScales, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
 import Agent.Grant (execGrant)
-import Agent.Run (Workflow, passMain, workflow, workflowG)
+import Agent.Run (Workflow, passMain, workflow, workflowGReq, workflowReq)
 
 main :: IO ()
 main = passMain workflows
@@ -35,7 +35,7 @@ workflows =
 -- git, no PR. 'shipFeatureFull' adds the world-acting half.
 shipFeature :: Workflow
 shipFeature =
-  workflow "ship-feature" "Explore a feature request, plan it, edit through lenses, review at scale" featureRequest $
+  workflowReq "ship-feature" "Explore a feature request, plan it, edit through lenses, review at scale" $
     explorePlanEdit >>> review
   where
     -- Review the edited plan at three scales: whole, joined neighbours, per step.
@@ -52,10 +52,9 @@ shipFeature =
 -- agent + credentials; the human gate asks before opening the PR.
 shipFeatureFull :: Workflow
 shipFeatureFull =
-  workflowG
+  workflowGReq
     "ship-feature-full"
     "Explore, plan, implement, build/commit in a loop, then (with approval) open a PR"
-    featureRequest
     (execGrant ["git*", "cabal*", "gh*"])
     $ explorePlanEdit
       >>> implement
@@ -128,12 +127,4 @@ sampleCode =
   T.unlines
     [ "average :: [Int] -> Int"
     , "average xs = sum xs `div` length xs"
-    ]
-
--- | The feature request fed into 'shipFeature'.
-featureRequest :: Text
-featureRequest =
-  T.unlines
-    [ "Add a `--json` flag to the CLI so every command can emit machine-readable"
-    , "output instead of the human-formatted text, without breaking existing usage."
     ]
