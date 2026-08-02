@@ -114,11 +114,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1785683147,
-        "narHash": "sha256-90BK6vTJQs8F9p82GU/Zf8jPphg9TiEsZBLk5bmyAYY=",
+        "lastModified": 1785684557,
+        "narHash": "sha256-l5k+RXeA55wktFPdjovRCG6w8kRcMzzBsN7+y/vp+7E=",
         "ref": "refs/heads/master",
-        "rev": "c56cfb2ba2c86977e3cc3560b3b16b2330c5daf2",
-        "revCount": 36,
+        "rev": "4dc937a7eed5357f0b689b2b9b9614592b260431",
+        "revCount": 41,
         "type": "git",
         "url": "file:///home/isaac/_/agent-functor"
       },
