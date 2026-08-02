@@ -11,10 +11,11 @@ module Main (main) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Flow ((>>>))
-import Agent.Flow.Combinators (exploreWith, hierarchical, lensEdit, refineWith, reviewScales)
+import Agent.Flow (Flow, (>>>))
+import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, refineWith, reviewScales, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
-import Agent.Run (Workflow, passMain, workflow)
+import Agent.Grant (execGrant)
+import Agent.Run (Workflow, passMain, workflow, workflowG)
 
 main :: IO ()
 main = passMain workflows
@@ -22,25 +23,67 @@ main = passMain workflows
 workflows :: [Workflow]
 workflows =
   [ shipFeature
+  , shipFeatureFull
   , haskellReview
   , explainCode
   , testWriter
   ]
 
--- | The flagship: turn a feature request into a reviewed implementation plan.
--- Multi-agent explore → plan → lens edit → multi-scale review — the analysis half
--- of ship-feature, composed from the agent-functor combinators (prompt-only; the
--- world-acting work loop of implement/verify/commit/PR is a later stage).
+-- | The analysis flagship: turn a feature request into a reviewed implementation
+-- plan. Multi-agent explore → plan → lens edit → multi-scale review. Prompt-only,
+-- so it runs against your agent without touching the filesystem — no worktree, no
+-- git, no PR. 'shipFeatureFull' adds the world-acting half.
 shipFeature :: Workflow
 shipFeature =
   workflow "ship-feature" "Explore a feature request, plan it, edit through lenses, review at scale" featureRequest $
-    explore
-      >>> plan
-      >>> edit
-      >>> review
+    explorePlanEdit >>> review
   where
-    -- Three agents explore the request from different stances; findings are
-    -- ordered by priority (skeptic's risks first) and unioned.
+    -- Review the edited plan at three scales: whole, joined neighbours, per step.
+    review =
+      reviewScales
+        T.lines
+        (coarsenTo 40)
+        (\unit -> "Review this plan step for correctness, completeness, and ordering. Note any missing prerequisite:\n\n" <> unit)
+
+-- | Full ship-feature parity: explore → plan → edit → __implement__ → a work loop
+-- (build\/commit\/work cadence) → human approval → open a PR. World-acting, so it
+-- runs inside an isolated git worktree; its 'execGrant' permits only @git@,
+-- @cabal@ and @gh@ (every other command is denied). Needs a real git repo + your
+-- agent + credentials; the human gate asks before opening the PR.
+shipFeatureFull :: Workflow
+shipFeatureFull =
+  workflowG
+    "ship-feature-full"
+    "Explore, plan, implement, build/commit in a loop, then (with approval) open a PR"
+    featureRequest
+    (execGrant ["git", "cabal", "gh"])
+    $ explorePlanEdit
+      >>> implement
+      >>> workLoop 8 step
+      >>> humanGate "Open a pull request for these changes?"
+      >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
+  where
+    implement =
+      refineWith "implement" $ \plan ->
+        "Implement this plan in the current repository — edit the files directly. Summarise what you changed:\n\n" <> plan
+    -- The cadence, unrolled by ordinary Haskell (§0.2), mirroring the legacy
+    -- ShipFeature loop: commit on a 5-beat, build on a 3-beat, review on a 2-beat,
+    -- otherwise keep working. All world-acting; only git/cabal/gh are granted.
+    step n
+      | n `mod` 5 == 0 = commit ("ship-feature: checkpoint " <> T.pack (show n))
+      | n `mod` 3 == 0 = verify [("build", ["cabal", "build"])]
+      | n `mod` 2 == 0 =
+          refineWith "review" $ \sofar ->
+            "Review the changes you have made so far for correctness and style. List anything to fix:\n\n" <> sofar
+      | otherwise =
+          refineWith "work" $ \sofar ->
+            "Continue implementing the plan and fix any build errors. Summarise the delta:\n\n" <> sofar
+
+-- The shared analysis prefix of both ship-feature workflows: three-stance explore,
+-- plan, then lens edits — a reusable 'Flow' value.
+explorePlanEdit :: Flow Text Text
+explorePlanEdit = explore >>> plan >>> edit
+  where
     explore =
       exploreWith
         [ ("intrepid", \req -> "You are bold and ambitious. Sketch the most direct way to ship this feature and what it unlocks:\n\n" <> req)
@@ -48,26 +91,15 @@ shipFeature =
         , ("contemplative", \req -> "You are thoughtful. Weigh design alternatives and long-term consequences:\n\n" <> req)
         ]
         (hierarchical ["skeptic", "contemplative", "intrepid"])
-
-    -- Turn the exploration into a concrete, ordered plan (one unit per line).
     plan =
       refineWith "plan" $ \findings ->
         "From these exploration findings, write a concrete implementation plan as an ordered list — ONE step per line, each a self-contained unit of work:\n\n" <> findings
-
-    -- Refine the plan through lenses, in dependency order.
     edit =
       lensEdit
         [ ("scope", \p -> "Tighten SCOPE: cut any step not essential to shipping. Keep one step per line:\n\n" <> p)
         , ("risk", \p -> "Annotate each step with its RISK and a one-line mitigation. Keep one step per line:\n\n" <> p)
         , ("sequencing", \p -> "Reorder the steps into correct dependency SEQUENCE. Keep one step per line:\n\n" <> p)
         ]
-
-    -- Review the plan at three scales: whole, joined neighbours, and per step.
-    review =
-      reviewScales
-        T.lines
-        (coarsenTo 40)
-        (\unit -> "Review this plan step for correctness, completeness, and ordering. Note any missing prerequisite:\n\n" <> unit)
 
 -- | Review a Haskell function for bugs\/style, then rewrite it fixing the issues.
 haskellReview :: Workflow
