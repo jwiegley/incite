@@ -352,5 +352,9 @@
         type = "app";
         program = "${self.packages.${system}.agent-functor}/bin/agent-functor";
       };
+
+      # `nix develop` for editing ./workflows: GHC with the agent-functor library
+      # in scope, plus HLS and cabal, so the Language Server resolves Agent.*.
+      devShells.${system}.default = agent-functor.lib.${system}.workflowsShell { };
     };
 }
