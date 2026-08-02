@@ -337,11 +337,19 @@
           tools.claude.enable = true;
         };
 
-        # The runnable pass workflow tool: `nix run .#pass -- run` drives your
-        # configured ACP agent; `nix run .#pass -- plan|cost` are offline.
-        pass = pass.packages.${system}.default;
+        # Incite's OWN workflows, defined locally in ./workflows (typed Flow
+        # values) and built against the pass library. `nix run .#pass -- list`
+        # shows them; `run <name>` drives your configured ACP agent; `plan|cost
+        # <name>` are offline. Add a workflow by editing ./workflows/Main.hs.
+        pass = pass.lib.${system}.mkWorkflowRunner {
+          src = ./workflows;
+          name = "incite-workflows";
+        };
       };
 
-      apps.${system}.pass = pass.apps.${system}.default;
+      apps.${system}.pass = {
+        type = "app";
+        program = "${self.packages.${system}.pass}/bin/pass";
+      };
     };
 }
