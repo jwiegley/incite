@@ -10,9 +10,14 @@
       url = "git+ssh://git@gitlab.com/mecha-team-zero/macha-orchestration";
       flake = false;
     };
+
+    # pass — the typed multi-agent workflow tool (agent-functor). Kept on its own
+    # pinned nixpkgs (its Haskell deps are built against nixos-24.11), so it does
+    # NOT follow incite's unstable.
+    pass.url = "git+file:///home/isaac/_/agent-functor";
   };
 
-  outputs = { self, nixpkgs, agent-pm, macha }:
+  outputs = { self, nixpkgs, agent-pm, macha, pass }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -326,9 +331,17 @@
     in {
       lib.prompts = prompts;
 
-      packages.${system}.default = agent-pm.lib.mkPromptsPackage pkgs {
-        inherit prompts;
-        tools.claude.enable = true;
+      packages.${system} = {
+        default = agent-pm.lib.mkPromptsPackage pkgs {
+          inherit prompts;
+          tools.claude.enable = true;
+        };
+
+        # The runnable pass workflow tool: `nix run .#pass -- run` drives your
+        # configured ACP agent; `nix run .#pass -- plan|cost` are offline.
+        pass = pass.packages.${system}.default;
       };
+
+      apps.${system}.pass = pass.apps.${system}.default;
     };
 }
