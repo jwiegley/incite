@@ -2,3 +2,6 @@ result
 result-*
 dist-newstyle/
 .ghc.environment.*
+
+# agent-functor world-acting run worktrees (leftover if a run is killed)
+.agent-functor-worktree-*
