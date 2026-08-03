@@ -64,8 +64,8 @@ shipFeatureFull =
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     implement =
-      refineWith "implement" $ \plan ->
-        "Implement this plan in the current repository — edit the files directly. Summarise what you changed:\n\n" <> plan
+      refineWith "implement" (\plan ->
+        "Implement this plan in the current repository — edit the files directly. Summarise what you changed:\n\n" <> plan) id
     -- The cadence, unrolled by ordinary Haskell (§0.2), mirroring the legacy
     -- ShipFeature loop: commit on a 5-beat, build on a 3-beat, review on a 2-beat,
     -- otherwise keep working. All world-acting; only git/cabal/gh are granted.
@@ -73,11 +73,11 @@ shipFeatureFull =
       | n `mod` 5 == 0 = commit ("ship-feature: checkpoint " <> T.pack (show n))
       | n `mod` 3 == 0 = verify [("build", ["cabal", "build"])]
       | n `mod` 2 == 0 =
-          refineWith "review" $ \sofar ->
-            "Review the changes you have made so far for correctness and style. List anything to fix:\n\n" <> sofar
+          refineWith "review" (\sofar ->
+            "Review the changes you have made so far for correctness and style. List anything to fix:\n\n" <> sofar) id
       | otherwise =
-          refineWith "work" $ \sofar ->
-            "Continue implementing the plan and fix any build errors. Summarise the delta:\n\n" <> sofar
+          refineWith "work" (\sofar ->
+            "Continue implementing the plan and fix any build errors. Summarise the delta:\n\n" <> sofar) id
 
 -- The shared analysis prefix of both ship-feature workflows: three-stance explore,
 -- plan, then lens edits — a reusable 'Flow' value.
@@ -92,8 +92,8 @@ explorePlanEdit = explore >>> plan >>> edit
         ]
         (hierarchical ["skeptic", "contemplative", "intrepid"])
     plan =
-      refineWith "plan" $ \findings ->
-        "From these exploration findings, write a concrete implementation plan as an ordered list — ONE step per line, each a self-contained unit of work:\n\n" <> findings
+      refineWith "plan" (\findings ->
+        "From these exploration findings, write a concrete implementation plan as an ordered list — ONE step per line, each a self-contained unit of work:\n\n" <> findings) id
     edit =
       lensEdit
         [ ("scope", \p -> "Tighten SCOPE: cut any step not essential to shipping. Keep one step per line:\n\n" <> p)
@@ -105,22 +105,22 @@ explorePlanEdit = explore >>> plan >>> edit
 haskellReview :: Workflow
 haskellReview =
   workflow "haskell-review" "Review a Haskell function, then rewrite it fixing the issues" sampleCode $
-    refineWith "reviewer" (\code -> "Review this Haskell for bugs and style, terse bullet points:\n\n" <> code)
-      >>> refineWith "reviser" (\review -> "Given this review, rewrite the function fixing the issues. Output ONLY the corrected Haskell code:\n\n" <> review)
+    refineWith "reviewer" (\code -> "Review this Haskell for bugs and style, terse bullet points:\n\n" <> code) id
+      >>> refineWith "reviser" (\review -> "Given this review, rewrite the function fixing the issues. Output ONLY the corrected Haskell code:\n\n" <> review) id
 
 -- | Explain a piece of code in plain English for a newcomer.
 explainCode :: Workflow
 explainCode =
   workflow "explain" "Explain a piece of code in plain English" sampleCode $
-    refineWith "explainer" (\code -> "Explain what this code does in plain English, for a newcomer. Be concise:\n\n" <> code)
+    refineWith "explainer" (\code -> "Explain what this code does in plain English, for a newcomer. Be concise:\n\n" <> code) id
 
 -- | Draft tests, critique them, then finalize — a three-stage chain.
 testWriter :: Workflow
 testWriter =
   workflow "test-writer" "Draft hspec tests, critique them, then finalize" sampleCode $
-    refineWith "draft" (\code -> "Write hspec tests covering the edge cases of this function:\n\n" <> code)
-      >>> refineWith "critic" (\tests -> "Critique these tests: what cases are missing or wrong? Terse bullet points:\n\n" <> tests)
-      >>> refineWith "finalize" (\critique -> "Apply this critique and output ONLY the final, complete hspec test module:\n\n" <> critique)
+    refineWith "draft" (\code -> "Write hspec tests covering the edge cases of this function:\n\n" <> code) id
+      >>> refineWith "critic" (\tests -> "Critique these tests: what cases are missing or wrong? Terse bullet points:\n\n" <> tests) id
+      >>> refineWith "finalize" (\critique -> "Apply this critique and output ONLY the final, complete hspec test module:\n\n" <> critique) id
 
 -- | The artifact fed into the code workflows above.
 sampleCode :: Text
