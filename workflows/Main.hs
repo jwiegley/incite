@@ -12,7 +12,7 @@ module Main (main) where
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Flow (Flow, (>>>))
-import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, refineWith, reviewScales, submitPR, verify, workLoop)
+import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, refineWith, reviewScales, steer, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
 import Agent.Grant (execGrant)
 import Agent.Run (Workflow, passMain, workflow, workflowGReq, workflowReq)
@@ -57,6 +57,7 @@ shipFeatureFull =
     "Explore, plan, implement, build/commit in a loop, then (with approval) open a PR"
     (execGrant ["git*", "cabal*", "gh*"])
     $ explorePlanEdit
+      >>> steer "Review the plan — add any guidance before implementation begins"
       >>> implement
       >>> workLoop 8 step
       >>> humanGate "Open a pull request for these changes?"
