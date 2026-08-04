@@ -7,11 +7,11 @@
         "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1785813554,
-        "narHash": "sha256-b8wfc1DuskiInSJqTtIvtql6rrR4XdJ80twIlBCUjNo=",
+        "lastModified": 1785816212,
+        "narHash": "sha256-CtjkSsKeYS3tIOpCO/2gv+Kw3rgQB7jS4VNehjmLRgc=",
         "ref": "refs/heads/master",
-        "rev": "b5e7c7ae8b6b85f194881c78f1a08adaa3fd3e72",
-        "revCount": 104,
+        "rev": "277022c3a036a2269848eb15a2bf93ab3647804a",
+        "revCount": 105,
         "type": "git",
         "url": "file:///home/isaac/_/agent-functor"
       },
