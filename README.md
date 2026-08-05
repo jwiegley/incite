@@ -13,7 +13,8 @@ Two halves, one flake:
   Code, Codex, opencode, Crush, and Droid.
 - **Workflows** — built on `agent-functor`, a typed workflow library (local
   checkout, no remote yet). Workflows are `Flow Text Text` values composed with
-  `>>>`; the CLI (`list`/`plan`/`cost`/`run`) comes for free.
+  `>>>`; the CLI (`list`/`plan`/`cost`/`run`) and a live TUI for `run` come for
+  free.
 
 ## Structure
 
@@ -26,6 +27,10 @@ agents/            — sub-agent bodies
   fess-auditor.md  — evidence-backed honesty check on a finished session
 commands/          — slash command bodies (frontmatter lives in flake.nix)
 skills/            — skill bodies
+  fix-all.md       — fix every finding found along the way, no "out of scope"
+  pr-review.md     — interactive, strictly read-only PR review in a worktree
+  pr-comment.md    — draft one comment into the pending review
+  pr-fix.md        — apply one change via a subagent, push to the PR head
 workflows/
   Main.hs          — the typed workflows; `passMain` gives them a CLI
   *.cabal          — builds a binary named `agent-functor`
@@ -47,11 +52,33 @@ command.
 | `command` | `~/.claude/commands/<name>.md` |
 | `skill` | `~/.claude/skills/<name>/SKILL.md` |
 
-Per-prompt knobs used here: `model`, `mode`, `argumentHint`,
-`extraFrontmatter` (temperature, tool denials, `agent =` binding), and
-`degradation = "skip"` — which drops a prompt on tools that lack the native
-concept instead of degrading it into something that collides. The standalone
-package renders for `claude` and `codex`.
+Per-prompt knobs used here: `order` (instructions only — the concatenation
+order in `CLAUDE.md`), `model`, `mode`, `argumentHint`, `extraFrontmatter`
+(temperature, tool denials, `agent =` binding, skill `author`/`invocation`),
+and `degradation = "skip"` — which drops a prompt on tools that lack the
+native concept instead of degrading it into something that collides. Only
+`code-review` sets `skip` today: tools without native agents would degrade the
+agent into a skill, colliding with the `code-review` *command* already
+deployed as a skill there.
+
+### The PR-review trio
+
+`pr-review` is the entry point and the other two are its companions — they are
+meant to be invoked *during* a review, not standalone:
+
+- **`/pr-review <pr-number>`** sets up an isolated worktree and walks the diff
+  one logical group of hunks at a time, strictly read-only, pausing for
+  discussion. Ends with a holistic adversarial pass, then leaves a background
+  babysitter keeping the PR mergeable. Understands Graphite stacks — `next`
+  advances upstack as a fresh review.
+- **`/pr-comment <feedback>`** turns one piece of feedback into a minimal,
+  actionable comment on the *pending* GitHub review. Nothing submits until you
+  explicitly say so — the whole review posts as one batch.
+- **`/pr-fix <change>`** hands one change to a subagent in a *separate*
+  worktree and pushes it to the PR head branch. The review worktree stays
+  untouched, so reviewing and fixing never fight over the same tree.
+
+The split is deliberate: the reviewer never writes, the fixer never reviews.
 
 ## Inputs
 
@@ -89,11 +116,17 @@ nix build
 `claude` and `codex`:
 
 ```
-result/.claude/CLAUDE.md          result/.codex/AGENTS.md
-result/.claude/agents/<name>.md   result/.codex/prompts/<name>.md
-result/.claude/commands/<name>.md result/.codex/skills/<name>/SKILL.md
+result/.claude/CLAUDE.md               result/.codex/AGENTS.md
+result/.claude/agents/<name>.md        result/.codex/prompts/<name>.md
+result/.claude/commands/<name>.md      result/.codex/skills/<name>/SKILL.md
 result/.claude/skills/<name>/SKILL.md
 ```
+
+The two trees are deliberately not mirror images. Commands map across one to
+one, but codex has no sub-agent concept, so agents degrade into skills there —
+`.codex/skills/` ends up holding the real skills *plus* `voice`, `compiler`
+and `fess-auditor` (and not `code-review`, per the `skip` above). That
+asymmetry is the degradation policy working, not a rendering bug.
 
 ## Running the workflows
 
@@ -106,9 +139,19 @@ nix run .#agent-functor -- run  ship-feature -i "add a --json flag"
 
 `run` flags: `--backend NAME` (default `claude-agent`), `-i/--input TEXT`
 (prompts on a tty if omitted), `--sandbox` (isolate a world-acting run in a
-throwaway worktree instead of editing in place), `--concurrency N` (caps
-concurrent fan-out sessions; defaults to 6, or the workflow's own
-`withConcurrency`; `0` = unbounded).
+throwaway worktree instead of editing in place — the result is committed to an
+`agent-functor/run-…` branch; prompt-only flows have nothing to isolate and
+always run in place), `--concurrency N` (caps concurrent fan-out sessions;
+defaults to 6, or the workflow's own `withConcurrency`; `0` = unbounded).
+
+`run` picks its front-end off the terminal. On a tty it drives the **live
+TUI**: a context header, a stage list that fills in as leaves complete, a
+scrolling agent transcript with styled inline tool calls, and modals for the
+points where a flow blocks on you — `steer`, `humanGate`, and any permission
+prompt answer straight out of the TUI. Piped or in CI it falls back to an
+inline transcript and those same blocking points drop to plain stdin asks, so
+an unattended `ship-feature-full` still stops at its gate. `plan` and `cost`
+never touch an agent, so they work anywhere.
 
 Currently defined in `workflows/Main.hs`:
 
