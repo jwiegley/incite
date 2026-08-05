@@ -12,7 +12,7 @@ module Main (main) where
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Flow (Flow, (>>>))
-import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, mergeWith, refineWith, reviewScales, steer, submitPR, verify, workLoop)
+import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, raceN, refineWith, reviewScales, steer, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
 import Agent.Grant (execGrant)
 import Agent.Run (Workflow, passMain, workflow, workflowGReq, workflowReq)
@@ -63,18 +63,22 @@ shipFeatureFull =
       >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
-    -- Parallel subagent workers each draft an implementation approach for the plan
-    -- (concurrently, no edits yet → no conflicts); a merge prompt then integrates
-    -- their efforts and DOES THE ACTUAL WORK — edits the files in the repo.
+    -- TRUE parallel workers: 3 workers each implement the plan for real, in their
+    -- OWN isolated git worktree (concurrently, no conflicts); then a merge prompt
+    -- inspects all three worktrees, picks the best (or synthesises), and applies it
+    -- here in place.
     implement =
-      mergeWith
-        [ ("worker-direct", \plan -> "You are a pragmatic worker. Draft the most direct implementation of this plan — which files to change and exactly how. Do NOT edit anything yet; just describe the changes:\n\n" <> plan)
-        , ("worker-robust", \plan -> "You are a careful worker. Independently draft a robust implementation of this plan — files to change, edge cases, and how. Do NOT edit anything yet; just describe the changes:\n\n" <> plan)
-        ]
-        "integrate"
-        ( \drafts ->
-            "Two workers independently drafted implementation approaches below. Integrate the best of both, then ACTUALLY IMPLEMENT it in the current repository — edit the files directly. Summarise what you changed:\n\n"
-              <> drafts
+      raceN
+        3
+        (\plan -> "Implement this plan fully in the current repository — edit the files directly, then summarise what you changed:\n\n" <> plan)
+        "pick-best"
+        ( \results ->
+            T.unlines
+              [ "Three workers each implemented the plan in their OWN git worktree (summaries + worktree paths below)."
+              , "Inspect the three worktrees, pick the best implementation (or synthesise across them), and apply it in the CURRENT repository — edit the files directly. Summarise what you applied and why."
+              , ""
+              , results
+              ]
         )
     -- The cadence, unrolled by ordinary Haskell (§0.2), mirroring the legacy
     -- ShipFeature loop: commit on a 5-beat, build on a 3-beat, review on a 2-beat,

@@ -3,5 +3,7 @@ result-*
 dist-newstyle/
 .ghc.environment.*
 
-# agent-functor world-acting run worktrees (leftover if a run is killed)
+# agent-functor world-acting run worktrees (leftover if a run is killed):
+# --sandbox run isolation, and one per racing worker (raceN/raceWorkers)
 .agent-functor-worktree-*
+.agent-functor-worker-*
