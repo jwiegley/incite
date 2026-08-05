@@ -335,6 +335,7 @@
         default = agent-pm.lib.mkPromptsPackage pkgs {
           inherit prompts;
           tools.claude.enable = true;
+          tools.codex.enable = true;
         };
 
         # Incite's OWN workflows, defined locally in ./workflows (typed Flow
