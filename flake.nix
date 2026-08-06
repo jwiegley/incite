@@ -15,20 +15,18 @@
     # pinned nixpkgs (its Haskell deps are built against nixos-24.11), so it does
     # NOT follow incite's unstable.
     #
-    # __Temporary, for testing the file-backed-prompt work.__ Points at the
-    # `user-prompts` WORKTREE. Two reasons it is not the old
-    # `/home/isaac/_/agent-functor`: that path is a container of git worktrees
-    # rather than a repository (so it cannot be fetched or updated at all), and
-    # the workflows here need the `Agent.Prompt` API that only exists on this
-    # branch.
+    # Points at the `master` worktree — the primary repository of the
+    # agent-functor worktree set (its sibling dirs `agent-deck`, `mcplease`,
+    # `nohomo`, `thinking`, `user-prompts` are linked worktrees of it). All of
+    # that work has landed on master — file-backed prompts (`Agent.Prompt`),
+    # per-node backends (`withBackend`), the MCP server, fork/resume recording,
+    # and reasoning display — so this is the integration point.
     #
     # Locked to a real revision — keep it that way. Committing agent-functor
     # before re-locking means `nix flake update agent-functor` just works; an
     # uncommitted branch forces a `dirtyRev` NAR-hash pin that is not
     # reproducible and breaks on the next edit to agent-functor.
-    #
-    # Repoint this at the repo (`…/master`) once the work lands there.
-    agent-functor.url = "git+file:///home/isaac/_/agent-functor/user-prompts";
+    agent-functor.url = "git+file:///home/isaac/_/agent-functor/master";
   };
 
   outputs = { self, nixpkgs, agent-pm, macha, agent-functor }:
@@ -107,7 +105,7 @@
           # agent on those tools instead.
           degradation = "skip";
           mode = "subagent";
-          model = "anthropic/claude-sonnet-4-20250514";
+          model = "anthropic/claude-sonnet-5";
           extraFrontmatter = {
             temperature = 0.1;
             tools = { write = false; edit = false; bash = false; };
@@ -120,7 +118,7 @@
           name = "compiler";
           description = "Compiler engineering specialist for language implementation, type systems, and formal methods";
           mode = "subagent";
-          model = "anthropic/claude-opus-4-20250514";
+          model = "anthropic/claude-opus-5";
           extraFrontmatter = { temperature = 0.2; };
           body = builtins.readFile ./agents/compiler.md;
         }
