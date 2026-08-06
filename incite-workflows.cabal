@@ -1,0 +1,28 @@
+cabal-version:      2.4
+name:               incite-workflows
+version:            0.1.0.0
+synopsis:           Isaac's local agent-functor workflows (consumes the agent-functor library)
+
+-- Rooted at the REPO root, not ./workflows, even though the only source file is
+-- ./workflows/Main.hs. `Agent.Prompt.promptFile` checks its path at compile time
+-- against the package root and resolves it at run time against the working
+-- directory — so rooting the package where you stand when you run the binary is
+-- what makes `prompts/plan.md` mean the same thing in both phases.
+extra-source-files:
+    prompts/*.md
+    prompts/explore/*.md
+    agents/*.md
+    skills/*.md
+
+-- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
+executable agent-functor
+    hs-source-dirs:     workflows
+    main-is:            Main.hs
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+                        QuasiQuotes
+    ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
+    build-depends:
+        base
+      , text
+      , agent-functor
