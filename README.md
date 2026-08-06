@@ -23,11 +23,13 @@ flake.nix          — every prompt definition + the two packages
 agents/            — sub-agent bodies
   voice.md         — personality agent
   code-review.md   — read-only security/correctness reviewer (Sonnet, no write/edit/bash)
+                     ALSO read as a workflow brief — see below
   compiler.md      — Haskell/type-theory specialist (Opus)
   fess-auditor.md  — evidence-backed honesty check on a finished session
 commands/          — slash command bodies (frontmatter lives in flake.nix)
 skills/            — skill bodies
   fix-all.md       — fix every finding found along the way, no "out of scope"
+                     ALSO read as a workflow brief — see below
   pr-review.md     — interactive, strictly read-only PR review in a worktree
   pr-comment.md    — draft one comment into the pending review
   pr-fix.md        — apply one change via a subagent, push to the PR head
@@ -49,6 +51,21 @@ is declared there, so read it rather than counting files.
 Two more prompts are read out of the private `macha` input rather than this
 repo: the `agentic-philosophy` instructions block and the `fstar-erlang-ell`
 command.
+
+### Prompts read twice
+
+`agents/` and `skills/` do double duty: agent-pm renders them to `~/.claude`,
+*and* the workflows read those same files as briefs at run time —
+`agents/code-review.md` is the reviewer leaf, `skills/fix-all.md` is the work
+beat of `ship-feature-full`'s loop. One copy, no paraphrase, so editing either
+file changes both the deployed prompt and the workflow.
+
+The bill for that is real: `code-review.md` is ~18 KB and every leaf using it
+sends the whole thing, so a workflow reading it costs materially more per turn
+than one with a one-line brief. `workflows/Main.hs` says so at the binding.
+Note that `cost` will *not* show you this — it reports worst-case leaf
+executions, the dominating bound and the node count, never tokens, so a leaf
+carrying 18 KB and a leaf carrying one line both count as 1.
 
 ### Prompt types
 
@@ -93,12 +110,22 @@ The split is deliberate: the reviewer never writes, the fixer never reviews.
 |---|---|---|
 | `agent-pm` | `gitlab:fresheyeball/flake-prompt` | the renderer |
 | `macha` | private ssh, `flake = false` | supplies two prompt bodies |
-| `agent-functor` | `git+file:///home/isaac/_/agent-functor` | **local path** |
+| `agent-functor` | `git+file:///home/isaac/_/agent-functor/user-prompts` | locked to `8da14bf`, `refs/heads/user-prompts` |
 
 `agent-functor` is pinned to its own nixpkgs (its Haskell deps want 24.11), so
-it deliberately does *not* `follows` incite's unstable. It is also a local
-filesystem input: this flake will not evaluate on a machine without
-`/home/isaac/_/agent-functor` checked out.
+it deliberately does *not* `follows` incite's unstable.
+
+It is also a **local filesystem input on an unmerged branch**, which is two
+separate landmines:
+
+- The URL is the `user-prompts` *worktree*, not `/home/isaac/_/agent-functor`
+  — that parent path is a container of worktrees rather than a repository, so
+  nix cannot fetch or update it at all.
+- This flake will not evaluate on any machine without that exact worktree
+  checked out. There is no fallback and no remote.
+
+Why that branch, and the rule for re-locking it, are in the comment above the
+input in `flake.nix`.
 
 ## Deploying the prompts
 
@@ -139,17 +166,30 @@ asymmetry is the degradation policy working, not a rendering bug.
 
 __Run these from the repo root.__ The workflow prompt bodies are
 `Agent.Prompt.promptFile` references — checked when the binary compiles, read
-from disk when it runs — and they resolve relative to the working directory. From
-anywhere else, set `AGENT_FUNCTOR_PROMPTS=/path/to/incite`; the error message
-tells you so, and lists every path it tried.
+from disk when it runs. A reference resolves through three candidates, first
+readable file wins:
+
+1. `$AGENT_FUNCTOR_PROMPTS/<path>` — set this to run from anywhere else
+2. `<cwd>/<path>` — the normal case, and why "from the repo root"
+3. the compile-time source directory — a live tree under plain `cabal`, a
+   deleted `/build/…` under `nix`
+
+A miss dies with every candidate listed, so the error tells you which one you
+wanted. The one to watch is #3: a `cabal build` binary finds its prompts from
+*any* directory, a `nix`-built one only from the repo root. Same source, two
+different behaviours — test the way you deploy.
 
 The upside of reading at run time: edit a `prompts/*.md` (or the `agents/` and
-`skills/` bodies the workflows reuse) and re-run. No rebuild.
+`skills/` bodies the workflows reuse) and re-run. No rebuild. Two prices for
+that: a prompt file is deliberately **not** a recompilation dependency, so
+deleting or renaming one is a *run*-time failure rather than a build error;
+and each body is read once per process, so editing a prompt mid-run does not
+take effect until the next run.
 
 ```bash
 nix run .#agent-functor -- list              # what's defined
 nix run .#agent-functor -- plan ship-feature # the flow skeleton, offline
-nix run .#agent-functor -- cost ship-feature # token estimate, offline
+nix run .#agent-functor -- cost ship-feature # worst-case leaf executions, offline
 nix run .#agent-functor -- run  ship-feature -i "add a --json flag"
 ```
 
@@ -174,8 +214,8 @@ Currently defined in `workflows/Main.hs`:
 | workflow | what it does |
 |---|---|
 | `ship-feature` | explore (3 stances) → plan → lens edits → multi-scale review. Prompt-only: touches nothing |
-| `ship-feature-full` | the above, then implement via 3 racing workers in separate worktrees, an 8-beat build/commit/review loop, a human gate, and a PR. World-acting; `execGrant` permits only `git`/`cabal`/`gh` |
-| `haskell-review` | review a function, then rewrite it fixing the issues |
+| `ship-feature-full` | the above, then implement via 3 racing workers in separate worktrees, an 8-beat build/commit/review loop, a human gate, and a PR. Review beats send `agents/code-review.md`, work beats send `skills/fix-all.md`. World-acting; `execGrant` permits only `git`/`cabal`/`gh` |
+| `haskell-review` | review a function with the full `code-review` agent prompt, then rewrite it fixing the issues |
 | `explain` | explain code in plain English |
 | `test-writer` | draft hspec tests → critique → finalize |
 
@@ -224,7 +264,18 @@ extra dependency); the module needs `{-# LANGUAGE QuasiQuotes #-}`, already on i
 `incite-workflows.cabal`.
 
 A new prompt directory must be added to the `fileset` in `flake.nix`, or the nix
-build sandbox will not see it and the compile-time check will fail.
+build sandbox will not see it and the compile-time check will fail. It currently
+unions the cabal file plus `workflows/`, `prompts/`, `agents/` and `skills/` —
+the last two are there precisely because workflows splice prompts out of them.
+Keeping it a `fileset` rather than `./.` means editing this README or a `flake.nix`
+prompt body does not rebuild the runner.
+
+The same directory must also be listed in `extra-source-files` in
+`incite-workflows.cabal`. That list is *not* what the nix build reads —
+`mkWorkflowRunner` goes through `callCabal2nix`, which copies whatever `src` the
+fileset produced — so a directory missing from the cabal file still builds under
+nix and only breaks `cabal sdist`. Two lists, one of which fails quietly: keep
+them in sync.
 
 Use `workflow` for a workflow with a baked-in input, `workflowReq` for one that
 demands an input, and `workflowGReq` when it acts on the world — the extra
