@@ -7,17 +7,17 @@
         "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1785975223,
-        "narHash": "sha256-jRVj0LF6Xj1s2rTKLNXmGxml/Vv+Sev94Ov9XXFdOPI=",
-        "ref": "refs/heads/user-prompts",
-        "rev": "8da14bf5a05b0fdd18a80c29be775abc19d3de8e",
-        "revCount": 139,
+        "lastModified": 1785987982,
+        "narHash": "sha256-DakwPfqXgA5QzJmehXwZbsJDrFHlXH+hb4jGC378esk=",
+        "ref": "refs/heads/master",
+        "rev": "2ac7a6ec482fb4c576e0b78fc311ae837d8bc314",
+        "revCount": 176,
         "type": "git",
-        "url": "file:///home/isaac/_/agent-functor/user-prompts"
+        "url": "file:///home/isaac/_/agent-functor/master"
       },
       "original": {
         "type": "git",
-        "url": "file:///home/isaac/_/agent-functor/user-prompts"
+        "url": "file:///home/isaac/_/agent-functor/master"
       }
     },
     "agent-pm": {
