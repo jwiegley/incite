@@ -14,7 +14,21 @@
     # agent-functor — the typed multi-agent workflow library. Kept on its own
     # pinned nixpkgs (its Haskell deps are built against nixos-24.11), so it does
     # NOT follow incite's unstable.
-    agent-functor.url = "git+file:///home/isaac/_/agent-functor";
+    #
+    # __Temporary, for testing the file-backed-prompt work.__ Points at the
+    # `user-prompts` WORKTREE. Two reasons it is not the old
+    # `/home/isaac/_/agent-functor`: that path is a container of git worktrees
+    # rather than a repository (so it cannot be fetched or updated at all), and
+    # the workflows here need the `Agent.Prompt` API that only exists on this
+    # branch.
+    #
+    # Locked to a real revision — keep it that way. Committing agent-functor
+    # before re-locking means `nix flake update agent-functor` just works; an
+    # uncommitted branch forces a `dirtyRev` NAR-hash pin that is not
+    # reproducible and breaks on the next edit to agent-functor.
+    #
+    # Repoint this at the repo (`…/master`) once the work lands there.
+    agent-functor.url = "git+file:///home/isaac/_/agent-functor/user-prompts";
   };
 
   outputs = { self, nixpkgs, agent-pm, macha, agent-functor }:
@@ -343,8 +357,26 @@
         # .#agent-functor -- list` shows them; `run <name>` drives your configured
         # ACP agent; `plan|cost <name>` are offline. Add a workflow by editing
         # ./workflows/Main.hs.
+        #
+        # The cabal project is rooted at the REPO root (not ./workflows) because
+        # the workflow briefs are `Agent.Prompt.promptFile` references: the path
+        # is checked at compile time against the package root and resolved at run
+        # time against the working directory, so those two must be the same
+        # directory — the one you stand in when you `nix run .#agent-functor`.
+        # Everything referenced by a promptFile splice must therefore be inside
+        # `src`, or the build sandbox cannot see it. `fileset` keeps a README or
+        # flake edit from rebuilding the runner.
         agent-functor = agent-functor.lib.${system}.mkWorkflowRunner {
-          src = ./workflows;
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./incite-workflows.cabal
+              ./workflows
+              ./prompts
+              ./agents
+              ./skills
+            ];
+          };
           name = "incite-workflows";
         };
       };
