@@ -39,6 +39,7 @@ Project facts (Paradox compiler, Haskell, at ${ROOT}):
 - .dox semantics: type = product, union = sum, valid Type: conditions = validation rules, wrap = transparent newtype, interface = resolved via instance map at check time.
 - CRITICAL: never add special Expression ADT constructors for interfaces (no For etc.) — interfaces resolve through normal application.
 - Semantic gates exist for some targets (Go: generated code must compile + pass go vet — nix/checks.nix, lib/test/Paradox/CodeGenSpec.hs).
+- The compiler supports 20 target languages (TargetLanguage enum): TypeScript, Haskell, Rust, Elixir, Python, Cpp, Scala, Csharp, Ocaml, Nix, BashLang, Java, Fstar, Golang, Json, Yaml, Html, Css, Sqlite, Postgresql. Every codegen target should participate in every test suite that runs per-language. Test suites: codegen-tests, eval-tests, strap-tests, parse-tests, state-tests, repl-tests, json-roundtrip-tests, atlas-tests, command-equiv (inside codegen-tests), lsp-tests.
 - Style: pure functional Haskell; avoid new modules when an existing one fits; orphan instances OK with -Wno-orphans.
 `
 
@@ -54,7 +55,8 @@ Search for:
    grep -rn "_ -> \\"\\"\\|_ -> mempty\\|_ -> pure ()\\|_ -> \\[\\]" ${ROOT}/lib/src/Paradox/CodeGen --include="*.hs" 2>/dev/null
 4. TODO/placeholder text leaking INTO generated output — grep the golden files themselves:
    grep -rn "TODO\\|FIXME\\|unimplemented\\|not implemented" ${ROOT}/lib/test/golden 2>/dev/null | head -60
-5. Golden test cases that exist for some targets but are missing for others: list ${ROOT}/lib/test/golden/CodeGen/*/ and compare which target extensions exist per case; read lib/test/Paradox/CodeGenSpec.hs to see which targets each case runs against.
+5. Golden test cases that exist for some targets but are missing for others: list ${ROOT}/lib/test/golden/CodeGen/*/ and compare which target extensions exist per case; read lib/test/Paradox/CodeGenSpec.hs to see which targets each case runs against. A case with .ts/.hs/.ex but no .go (or vice versa) is a finding.
+6. LANGUAGES MISSING FROM ENTIRE SUITES: for each per-language test suite (JSON roundtrip, evaluate, state, atlas, command-equiv, REPL), check which TargetLanguage constructors participate. A language present in codegen golden tests but ABSENT from json-roundtrip or atlas or any other suite is a HIGH finding — it means regressions for that target will ship undetected through the missing suite. Look for opt-in gates (doesFileExist, conditional branches) that silently exclude a language.
 
 For each finding report: file:line, what it is, whether it represents real debt or is legitimately intentional, and the concrete fill-in (test body, implementation, or golden case to add).
 
@@ -263,17 +265,28 @@ ${FACTS}
 
 Look for:
 1. SEMANTIC GATES: Go golden output is gated on compiling + go vet (nix/checks.nix, CodeGenSpec.hs). Which other targets emit real code but have NO compile gate (TypeScript via tsc, C# via dotnet, Scala via scalac, Python via py_compile, Rust via rustc...)? Each missing gate that is feasible in the nix env is a finding; check what compilers nix/checks.nix can reach.
-2. ROUNDTRIP PROPERTIES: parse . print == id for .dox formatting; encode/decode roundtrips per target wire format (JSONRoundtripSpec exists — what types/targets does it miss?).
-3. ERROR-PATH GOLDENS: malformed .dox inputs whose error messages are unpinned (Strap/ golden dir — what error classes have no case?).
-4. PIPELINE PROPERTIES: type checking total on arbitrary parse trees (no crash), evaluation fuel-bounded, sourcemap positions valid.
-5. NEW/RECENT features with thin coverage: check git log --oneline -30 for recently added constructs/backends, then check golden coverage for them.
-6. Boundary inputs: empty .dox, unicode identifiers, deeply nested types, name collisions with target reserved words — is each pinned by a test per target?
+2. CROSS-SUITE LANGUAGE PARITY: For each test suite that runs per-language (codegen golden, JSON roundtrip, evaluate, state machine, atlas, command-equiv, REPL), verify that ALL TargetLanguage constructors participate. The Paradox compiler supports 20 targets; every suite should include every applicable target. Specifically:
+   a. List which languages participate in each suite by reading the spec files:
+      - lib/test/Paradox/CodeGenSpec.hs (golden + compile gates + evaluate)
+      - lib/test/Paradox/JSONRoundtripSpec.hs (JSON roundtrip)
+      - lib/test/Paradox/State/EvalSpec.hs and GenerateSpec.hs (state machine)
+      - lib/test/Paradox/AtlasSpec.hs (atlas cross-submodule)
+      - lib/test/Paradox/CommandEquivSpec.hs (command equivalence)
+      - lib/test/Paradox/Repl/ReplSpec.hs (REPL parse/generate)
+   b. Build a matrix: suite × language participation.
+   c. Any language absent from a suite where peer languages (TS, Haskell, Elixir) are present is a HIGH-value finding — it means a codegen regression for that target would ship undetected through that suite.
+   d. Check for opt-in gates (doesFileExist, conditional branches) that silently exclude a language — these are especially insidious because the exclusion looks intentional.
+3. ROUNDTRIP PROPERTIES: parse . print == id for .dox formatting; encode/decode roundtrips per target wire format (JSONRoundtripSpec exists — what types/targets does it miss?). Check both type-shape coverage AND which backends participate (see cross-suite parity above).
+4. ERROR-PATH GOLDENS: malformed .dox inputs whose error messages are unpinned (Strap/ golden dir — what error classes have no case?).
+5. PIPELINE PROPERTIES: type checking total on arbitrary parse trees (no crash), evaluation fuel-bounded, sourcemap positions valid.
+6. NEW/RECENT features with thin coverage: check git log --oneline -30 for recently added constructs/backends, then check golden coverage for them.
+7. Boundary inputs: empty .dox, unicode identifiers, deeply nested types, name collisions with target reserved words — is each pinned by a test per target?
 
 For each gap: what bug class it leaves open, and the concrete test (spec body or golden case + which suite file it lands in).
 
 Return JSON:
 [{
-  "kind": "semantic_gate|roundtrip|error_golden|property|recent_feature|boundary",
+  "kind": "semantic_gate|language_parity|roundtrip|error_golden|property|recent_feature|boundary",
   "area": "...",
   "bug_class": "...",
   "proposed_test": "... concrete code or golden case ...",
