@@ -33,7 +33,14 @@ skills/            — skill bodies
   pr-fix.md        — apply one change via a subagent, push to the PR head
 workflows/
   Main.hs          — the typed workflows; `passMain` gives them a CLI
-  *.cabal          — builds a binary named `agent-functor`
+prompts/           — prompt bodies for the workflows, read at RUN time
+  plan.md          — turn exploration findings into a one-step-per-line plan
+  pick-best.md     — merge three racing workers' worktrees into this repo
+  review-step.md   — review one plan step for correctness/completeness/ordering
+  explore/*.md     — the three explore stances: intrepid, skeptic, contemplative
+incite-workflows.cabal  — builds a binary named `agent-functor`; rooted at the
+                          REPO ROOT so a `prompts/…` path means the same thing at
+                          compile time and at run time
 ```
 
 The `prompts` list in `flake.nix` is the authoritative inventory — every prompt
@@ -130,6 +137,15 @@ asymmetry is the degradation policy working, not a rendering bug.
 
 ## Running the workflows
 
+__Run these from the repo root.__ The workflow prompt bodies are
+`Agent.Prompt.promptFile` references — checked when the binary compiles, read
+from disk when it runs — and they resolve relative to the working directory. From
+anywhere else, set `AGENT_FUNCTOR_PROMPTS=/path/to/incite`; the error message
+tells you so, and lists every path it tried.
+
+The upside of reading at run time: edit a `prompts/*.md` (or the `agents/` and
+`skills/` bodies the workflows reuse) and re-run. No rebuild.
+
 ```bash
 nix run .#agent-functor -- list              # what's defined
 nix run .#agent-functor -- plan ship-feature # the flow skeleton, offline
@@ -189,6 +205,26 @@ CLI picks it up automatically.
 ```bash
 nix develop   # GHC with agent-functor in scope, plus cabal and HLS
 ```
+
+Put anything longer than a line in `prompts/` and reference it:
+
+```haskell
+myBrief :: Prompt
+myBrief = [promptFile|prompts/my-brief.md|]        -- checked now, read at run time
+
+refineWith "my-leaf" (brief myBrief) id            -- body, blank line, artifact
+refineWith "my-leaf" (\x -> [i|#{myBrief}          -- or interpolate, #{} holes
+                              Budget: #{n} steps
+                              #{x}|]) id
+```
+
+A bad path is a **compile** error. `[promptFile|…|]` and `[i|…|]` both come from
+`Agent.Prompt` (agent-functor re-exports `string-interpolate`, so there is no
+extra dependency); the module needs `{-# LANGUAGE QuasiQuotes #-}`, already on in
+`incite-workflows.cabal`.
+
+A new prompt directory must be added to the `fileset` in `flake.nix`, or the nix
+build sandbox will not see it and the compile-time check will fail.
 
 Use `workflow` for a workflow with a baked-in input, `workflowReq` for one that
 demands an input, and `workflowGReq` when it acts on the world — the extra
