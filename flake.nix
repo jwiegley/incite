@@ -373,6 +373,8 @@
               ./prompts
               ./agents
               ./skills
+              # fess-audit's brief; a promptFile splice checks it at build time.
+              ./commands/fess.md
             ];
           };
           name = "incite-workflows";
