@@ -21,7 +21,7 @@ module Main (main) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Flow (Flow, (>>>))
+import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, raceN, refineWith, reviewScales, steer, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
 import Agent.Grant (execGrant)
@@ -133,13 +133,18 @@ shipFeatureFull =
 explorePlanEdit :: Flow Text Text
 explorePlanEdit = explore >>> plan >>> edit
   where
+    -- Analysis-only: the three stances READ the codebase, they never edit it.
+    -- 'withMode Plan' runs every leaf here in the backend's read-only/plan mode,
+    -- so the constraint is enforced at the session level rather than trusted to
+    -- the prompt. Downstream 'plan'\/'edit' stay in the default Edit mode.
     explore =
-      exploreWith
-        [ ("intrepid", brief intrepid)
-        , ("skeptic", brief skeptic)
-        , ("contemplative", brief contemplative)
-        ]
-        (hierarchical ["skeptic", "contemplative", "intrepid"])
+      withMode Plan $
+        exploreWith
+          [ ("intrepid", brief intrepid)
+          , ("skeptic", brief skeptic)
+          , ("contemplative", brief contemplative)
+          ]
+          (hierarchical ["skeptic", "contemplative", "intrepid"])
     plan = refineWith "plan" (brief planBrief) id
     -- One-line lenses stay literal: a file would be indirection for its own sake.
     edit =
