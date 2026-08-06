@@ -36,6 +36,7 @@ workflows :: [Workflow]
 workflows =
   [ shipFeature
   , shipFeatureFull
+  , fessAudit
   , haskellReview
   , explainCode
   , testWriter
@@ -57,6 +58,17 @@ planBrief, pickBest, reviewStep :: Prompt
 planBrief = [promptFile|prompts/plan.md|]
 pickBest = [promptFile|prompts/pick-best.md|]
 reviewStep = [promptFile|prompts/review-step.md|]
+
+-- | The full @fess@ honesty rubric this repo ships as @~\/.claude\/commands\/fess.md@,
+-- used as the brief for the mid-run auditor. agent-functor prepends the worker's
+-- captured transcript, so the rubric is applied to what the worker actually did.
+fess :: Prompt
+fess = [promptFile|commands/fess.md|]
+
+-- | Told to the worker right after a commit: call the @fess-audit@ MCP tool and
+-- act on its findings.
+postCommitAudit :: Prompt
+postCommitAudit = [promptFile|prompts/post-commit-audit.md|]
 
 -- | The reviewer agent this repo installs as @~\/.claude\/agents\/code-review.md@,
 -- used directly as a workflow brief.
@@ -126,10 +138,15 @@ shipFeatureFull =
     -- Cost note: over 8 beats this is 3 review leaves (~18 KB each) and 2 work
     -- leaves (~4 KB each) of brief alone, before the threaded artifact.
     step n
-      | n `mod` 5 == 0 = commit [i|ship-feature: checkpoint #{n}|]
+      | n `mod` 5 == 0 = commit [i|ship-feature: checkpoint #{n}|] >>> auditBeat
       | n `mod` 3 == 0 = verify [("build", ["cabal", "build"])]
       | n `mod` 2 == 0 = withBackend opencode defaultModel (refineWith "review" (brief codeReview) id)
       | otherwise = refineWith "work" (brief fixAll) id
+    -- After each commit the worker fires the mid-run auditor ('fessAudit') via the
+    -- agent-functor MCP endpoint and acts on its findings — the wiggum/fess loop,
+    -- now first-class. agent-functor captures and passes the worker's transcript,
+    -- so this beat only has to tell the worker to make the call.
+    auditBeat = refineWith "audit" (brief postCommitAudit) id
 
 -- The shared analysis prefix of both ship-feature workflows: three-stance explore,
 -- plan, then lens edits — a reusable 'Flow' value.
@@ -160,6 +177,19 @@ explorePlanEdit = explore >>> plan >>> edit
         , ("risk", brief "Annotate each step with its RISK and a one-line mitigation. Keep one step per line:")
         , ("sequencing", brief "Reorder the steps into correct dependency SEQUENCE. Keep one step per line:")
         ]
+
+-- | The mid-run auditor a worker fires after each commit. agent-functor hands it
+-- the worker's full captured conversation as input (so it requires input but the
+-- trigger supplies it), and it runs read-only ('withMode' 'Plan') on __codex__ — a
+-- genuinely different backend from the claude-agent worker, so the honesty audit
+-- is independent. Listed in 'workflows', so @passMain@ exposes it as an MCP tool
+-- the running worker can call; the auditor never edits, it only reports.
+fessAudit :: Workflow
+fessAudit =
+  workflowReq
+    "fess-audit"
+    "Honesty-audit a worker's in-progress session (input is its captured transcript)"
+    $ withBackend codex defaultModel (withMode Plan (refineWith "fess" (brief fess) id))
 
 -- | Review a Haskell function for bugs\/style, then rewrite it fixing the issues.
 -- The reviewer runs the repo's own @code-review@ agent prompt.
