@@ -7,3 +7,6 @@ dist-newstyle/
 # --sandbox run isolation, and one per racing worker (raceN/raceWorkers)
 .agent-functor-worktree-*
 .agent-functor-worker-*
+
+# agent-functor run-record store (local run state, not source):
+.agent-functor/
