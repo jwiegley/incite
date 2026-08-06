@@ -105,7 +105,7 @@
           # agent on those tools instead.
           degradation = "skip";
           mode = "subagent";
-          model = "anthropic/claude-sonnet-5";
+          model = "claude-sonnet-5";
           extraFrontmatter = {
             temperature = 0.1;
             tools = { write = false; edit = false; bash = false; };
@@ -118,7 +118,7 @@
           name = "compiler";
           description = "Compiler engineering specialist for language implementation, type systems, and formal methods";
           mode = "subagent";
-          model = "anthropic/claude-opus-5";
+          model = "claude-opus-5";
           extraFrontmatter = { temperature = 0.2; };
           body = builtins.readFile ./agents/compiler.md;
         }
