@@ -22,7 +22,8 @@ module Main (main) where
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
-import Agent.Flow.Combinators (commit, exploreWith, hierarchical, humanGate, lensEdit, raceN, refineWith, reviewScales, steer, submitPR, verify, workLoop)
+import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
+import Agent.Flow.Combinators (commit, exploreFlows, hierarchical, humanGate, lensEdit, raceN, refineWith, reviewScales, steer, submitPR, verify, workLoop)
 import Agent.Flow.Extent (coarsenTo)
 import Agent.Grant (execGrant)
 import Agent.Prompt (Prompt, brief, i, promptFile)
@@ -86,7 +87,9 @@ shipFeature =
     explorePlanEdit >>> review
   where
     -- Review the edited plan at three scales: whole, joined neighbours, per step.
-    review = reviewScales T.lines (coarsenTo 40) (brief reviewStep)
+    -- Runs on codex — a different agent than the (claude-agent-default) plan/edit
+    -- stages, so the review is a genuinely independent second opinion.
+    review = withBackend codex defaultModel (reviewScales T.lines (coarsenTo 40) (brief reviewStep))
 
 -- | Full ship-feature parity: explore → plan → edit → __implement__ → a work loop
 -- (build\/commit\/work cadence) → human approval → open a PR. World-acting, so it
@@ -125,7 +128,7 @@ shipFeatureFull =
     step n
       | n `mod` 5 == 0 = commit [i|ship-feature: checkpoint #{n}|]
       | n `mod` 3 == 0 = verify [("build", ["cabal", "build"])]
-      | n `mod` 2 == 0 = refineWith "review" (brief codeReview) id
+      | n `mod` 2 == 0 = withBackend opencode defaultModel (refineWith "review" (brief codeReview) id)
       | otherwise = refineWith "work" (brief fixAll) id
 
 -- The shared analysis prefix of both ship-feature workflows: three-stance explore,
@@ -137,12 +140,16 @@ explorePlanEdit = explore >>> plan >>> edit
     -- 'withMode Plan' runs every leaf here in the backend's read-only/plan mode,
     -- so the constraint is enforced at the session level rather than trusted to
     -- the prompt. Downstream 'plan'\/'edit' stay in the default Edit mode.
+    -- Heterogeneous explore: the three stances run on three DIFFERENT agents
+    -- (a 'withBackend' scope each), so diverse models bring diverse
+    -- perspectives — intrepid on claude-agent, skeptic on codex, contemplative
+    -- on opencode. Still analysis-only: 'withMode Plan' wraps all three.
     explore =
       withMode Plan $
-        exploreWith
-          [ ("intrepid", brief intrepid)
-          , ("skeptic", brief skeptic)
-          , ("contemplative", brief contemplative)
+        exploreFlows
+          [ ("intrepid", withBackend claudeAgent defaultModel (refineWith "intrepid" (brief intrepid) id))
+          , ("skeptic", withBackend codex defaultModel (refineWith "skeptic" (brief skeptic) id))
+          , ("contemplative", withBackend opencode defaultModel (refineWith "contemplative" (brief contemplative) id))
           ]
           (hierarchical ["skeptic", "contemplative", "intrepid"])
     plan = refineWith "plan" (brief planBrief) id
