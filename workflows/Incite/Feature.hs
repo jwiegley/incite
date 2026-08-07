@@ -180,7 +180,7 @@ shipFeature =
 -- the panel. Every stage is a binding the code path already uses, so the two
 -- cannot drift in how they explore, plan, loop or fix.
 --
--- __It stops at 'remediate'.__ No 'humanGate' and no 'submitPR', and that is a
+-- __It stops at @remediate@.__ No 'humanGate' and no 'submitPR', and that is a
 -- safety property rather than an omission. An unattended run auto-answers the
 -- gate — @gateAnswer@ defaults to @\"yes\"@ — and @--sandbox@ isolates the
 -- working tree but not the network, so a PR leaf here would be an irreversible
@@ -193,7 +193,7 @@ shipFeature =
 -- 'retroFlow' is three more leaves per run.
 --
 -- @document@ receives a __plan__, not findings — it sits where @implement@ sits,
--- after @steer@ — and 'remediate' is where findings are fixed, in both
+-- after @steer@ — and @remediate@ is where findings are fixed, in both
 -- workflows.
 shipDocs :: Workflow
 shipDocs =

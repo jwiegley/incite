@@ -29,6 +29,12 @@ extra-source-files:
     commands/fess.md
     commands/post-commit-audit.md
     commands/wiggum.md
+    -- The recorded prompt bytes `test/Spec.hs` fences with `TIO.readFile`. Same
+    -- rule as the prompt globs above and a worse failure without it: a golden
+    -- read at run time is not checked when anything compiles, so an sdist that
+    -- drops one builds clean and then fails the test suite with
+    -- `openFile: does not exist`. `test/Spec.hs` asserts this cover too.
+    test/golden/*.txt
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 library
@@ -69,6 +75,10 @@ test-suite incite-test
     build-depends:
         base
       , text
+      -- For the packaging cover: it quantifies over what is ON DISK under
+      -- test/golden, not over a list in the test file, so the golden that goes
+      -- missing from an sdist cannot be the one nobody wrote down twice.
+      , directory
       , agent-functor
       , incite-workflows
       , tasty

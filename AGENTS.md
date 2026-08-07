@@ -61,7 +61,7 @@ nix run .#agent-functor -- plan <name>          # offline: print the flow skelet
 nix run .#agent-functor -- cost <name>          # offline: worst-case leaf-execution count + node count
 nix run .#agent-functor -- run <name> -i "..."  # drive an agent; live TUI on a tty, inline when piped
 nix develop                                     # GHC + agent-functor library + cabal + HLS for editing workflows
-nix develop -c cabal test                       # run the unit test suite (decideContinue, lensesOf, etc.)
+nix develop -c cabal test                       # run the unit test suite (see "Tests" below)
 ```
 
 `plan` and `cost` never touch an agent — safe to run anytime. `cost` reports
@@ -157,16 +157,38 @@ directories behind if killed mid-run; gitignored, safe to delete. The
 - Commit messages are sentence-case, present-tense, one logical change each
   (e.g. `Relock agent-functor to master (2ac7a6e)`).
 
+## Tests
+
+A unit test suite (`test/Spec.hs`, tasty + HUnit) covers the pure logic that was
+previously untestable because it was buried in `where` clauses:
+
+- `decideContinue` and `continueMarker` — the orchestrator loop's continuation
+  contract, stated from both sides: the decorations read through *and* the ones
+  that must not be.
+- `orient`, `preambleOf`, `preambleViolations` and the three named reframings
+  (`asReviewSubject`, `asRetroSubject`, `asDocsSubject`) — their bytes recorded
+  under `test/golden/`, with the golden table forced to cover the whole
+  `Orientation` enumeration.
+- `document` — the documentation worker's brief, round-tripped through
+  `decideContinue`.
+- `lensesOf` and `lensSetViolations` — review panel composition per `Subject`,
+  lens names *and* lens bodies.
+- The reorientations (`docsAccuracy`, `ponytailOfDocs`, `architectureOfChange`)
+  against the upstream rubrics they splice.
+- `promptLint` — the leaf text the shipped workflow actually sends, against
+  `test/golden/prompt-lint-brief.txt`.
+- Packaging — that `extra-source-files` carries every spliced prompt file and
+  every golden the suite reads, which is the one defect class no other check in
+  this repo can see (they all run in a git checkout).
+- Backend structure.
+
+The workflows themselves — the `Flow` values and combinators — remain under test
+in the `agent-functor` library repo. The suite runs as
+`checks.${system}.unit-test` in the flake; the dev shell includes `tasty` and
+`tasty-hunit` so `cabal test` works too.
+
 ## What is *not* here
 
-- A unit test suite (`test/Spec.hs`, tasty + HUnit) covers the pure logic
-  that was previously untestable because it was buried in `where` clauses:
-  `decideContinue` (orchestrator loop continuation marker matching),
-  `lensesOf` (review panel composition per `Subject`), `asReviewSubject`,
-  and backend structure. The workflows themselves — the `Flow` values and
-  combinators — remain under test in the `agent-functor` library repo. The
-  suite runs as `checks.${system}.unit-test` in the flake; the dev shell
-  includes `tasty` and `tasty-hunit` so `cabal test` works too.
 - No CI config in this repo — deployment flows through the consuming
   `nixos-dots` flake (`services.agent-pm` for the `isaac` user).
 - Two prompt bodies live outside this repo: the `agentic-philosophy` instructions

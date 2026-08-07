@@ -778,9 +778,19 @@
             touch $out
           '';
 
-        # The unit test suite for the pure workflow logic: `decideContinue`
-        # (orchestrator loop continuation), `lensesOf` (review panel
-        # composition), `asReviewSubject`, and backend structure. Built with
+        # The unit test suite for the pure workflow logic: `decideContinue` and
+        # `continueMarker` (the orchestrator loop's continuation contract, from
+        # both sides — the decorations that are read through and the ones that
+        # are not), `orient` with `preambleOf`/`preambleViolations` and the three
+        # named reframings (their bytes recorded under `test/golden/`),
+        # `document`'s worker brief, `lensesOf` with `lensSetViolations` (review
+        # panel composition per `Subject`, names AND bodies), the reorientation
+        # deltas against the upstream rubrics they splice, `promptLint`'s shipped
+        # leaf text, the `extra-source-files` cover, and backend structure.
+        #
+        # `test/golden/` is read with `TIO.readFile` relative to the package
+        # root, which is why `./test` is copied whole below rather than as
+        # `./test/Spec.hs`. Built with
         # `afHpkgs` (agent-functor's pinned nixpkgs) so the `agent-functor`
         # library dependency resolves correctly; `callCabal2nix` defaults to
         # `doCheck = true`, which runs the test-suite's `cabal test` phase.

@@ -1,11 +1,12 @@
 module Main (main) where
 
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (nub, (\\))
+import Data.List (nub, sort, (\\))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import System.Directory (listDirectory)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -174,10 +175,12 @@ summaryMarker = "<<SUMMARY>>"
 -- | Every reframing "Incite.Feature" applies before handing a worker's closing
 -- summary to a panel, each with the file recording its frame.
 --
--- All are pure @'Text' -> 'Text'@ and none is reachable from any other check in
--- this repository: they are applied by @dimap'@ inside a flow, so no leaf name
--- mentions them and @plan@ renders a flow skeleton that cannot see text. An
--- edit to one silently changes what a whole panel is pointed at.
+-- All are pure @'Text' -> 'Text'@ and none is reachable from a RUN. The two
+-- with consumers are applied by @dimap'@ inside a flow, so no leaf name
+-- mentions them and @plan@ renders a flow skeleton that cannot see text;
+-- 'asDocsSubject' has no consumer at all yet. An edit to one silently changes
+-- what a whole panel is pointed at, and these files are the only thing that
+-- would say so.
 --
 -- __This list covers 'Orientation', and @orientTests@ forces it to.__ Each
 -- entry is @'orient' c@ for one constructor, so an orientation with no entry
@@ -192,16 +195,34 @@ reframings =
   , ("asDocsSubject", asDocsSubject, "test/golden/as-docs-subject.txt")
   ]
 
--- | Three cases per reframing, and the third is the one that makes the other
--- two a fence rather than a snapshot.
+-- | Three cases per reframing, and which mutation each one kills is worth
+-- writing down exactly, because the three are not interchangeable and the
+-- golden alone is none of them.
 --
--- The golden pins the frame at one summary. On its own that leaves the splice
--- unstated — a frame that ignored its argument, or spliced it twice, or
--- appended it to the wrong paragraph, would record and pass just as happily.
--- The substitution case says the whole contract instead: the function IS this
--- recorded text with the marker replaced, for any summary. Recorded rather
--- than transcribed — both files were written by running the functions, so what
--- they fence is the code and not somebody's copy of it.
+-- Against the __recorded__ bytes case 1 kills everything: any edit to a frame
+-- moves them. So the question that decides what the other two are worth is
+-- which mutations survive __re-recording__ — which is what happens the moment
+-- someone regenerates a golden to get a build green:
+--
+-- * a frame that dropped its argument, or spliced it twice, dies at __case 2__.
+--   Re-recording moves the marker count to 0 or 2 and the count is asserted
+--   against 1, not against the file;
+-- * a frame that splices the marker faithfully and mangles the summary around
+--   it dies at __case 3__, and at nothing else here. That is the one family
+--   surviving both a re-record and a marker count, and the reason case 3 is
+--   written at all;
+-- * a frame that moved the splice to a different paragraph survives all three
+--   after a re-record. Splice __position__ is fenced in 'orientTests' instead:
+--   @every orientation leaves exactly one blank line above the account@ reads
+--   the rendered text and says the account is last, which no re-recording can
+--   satisfy. It covers these frames because @every orientation has a recorded
+--   frame@ makes each of them an 'orient'.
+--
+-- Recorded rather than transcribed: each file was written by running its own
+-- function, so what it fences is the code and not somebody's copy of it. That
+-- is provenance and no case below can prove it — it is written because a golden
+-- typed out by hand is a different artifact under the same name, and the
+-- difference is invisible afterwards.
 reframingTests :: TestTree
 reframingTests =
   testGroup
@@ -213,18 +234,37 @@ reframingTests =
           reframe summaryMarker @?= recorded
       , testCase "splices the summary exactly once" $ do
           recorded <- TIO.readFile path
-          length (T.breakOnAll summaryMarker recorded) @?= 1
-      , -- The contract in full: for ANY summary, the result is the recorded
-        -- frame with the marker replaced. A frame that dropped its argument or
-        -- reworded around it fails here while the golden above still passes.
-        testCase "is that frame with the summary substituted, for any summary" $ do
+          T.count summaryMarker recorded @?= 1
+      , -- NOT \"for any summary\": this is a sample, and it is chosen rather
+        -- than representative. 'orient' is affine by construction —
+        -- @preambleOf o <> \"\\n\\n\" <> summary@ — so the universal is a
+        -- property of the definition, and what these rows fence is that the
+        -- definition keeps that shape. Each one is here to kill a named frame,
+        -- and a row that kills nothing no other row kills is a row to delete.
+        testCase "is that frame with the summary substituted, over a chosen sample" $ do
           recorded <- TIO.readFile path
           mapM_
             (\s -> reframe s @?= T.replace summaryMarker s recorded)
             [ "one line"
             , "several\nlines\nof summary"
-            , "" -- an empty summary still leaves the instructions standing
-            , "a summary mentioning `git diff` and WORK REMAINS"
+            , -- An empty summary still leaves the instructions standing, and
+              -- whitespace is not the same as empty.
+              ""
+            , "   "
+            , -- The padded rows. A frame that ran `T.strip` over its argument
+              -- passed every other case in this file, including the golden:
+              -- `<<SUMMARY>>` has no padding to lose, so nothing else here can
+              -- see the difference.
+              "  padded  "
+            , "\nleading and trailing newlines\n"
+            , -- A summary that IS the marker, and one quoting it. A frame that
+              -- substituted twice, or that re-scanned its own output, differs
+              -- from `T.replace` only on these.
+              summaryMarker
+            , "a summary quoting " <> summaryMarker <> " inside it"
+            , -- The frame's own vocabulary, so a frame that rewrote what it
+              -- spliced to match its surrounding prose has somewhere to fail.
+              "a summary mentioning `git diff` and WORK REMAINS"
             ]
       ]
     | (name, reframe, path) <- reframings
@@ -248,7 +288,7 @@ documentTests =
   testGroup
     "document"
     [ testCase "is one leaf" $ do
-        sent <- flowLeafPrompts "document" document "FINDINGS"
+        sent <- flowLeafPrompts "document" document "THE PLAN"
         length sent @?= 1
     , -- Round trip through the decider, not a substring check on the marker.
       -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what has
@@ -260,20 +300,23 @@ documentTests =
       -- The bullet's trailing prose is deliberately not fed in: the brief says
       -- the status line stands alone, so the contract is about the token.
       testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
-        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
+        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
         let decorated = "`" <> continueMarker <> "`"
         assertBool
           "the brief does not show the marker in the decoration this asserts"
           (T.isInfixOf decorated leafText)
         decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
-    , testCase "hands the findings to the worker" $ do
-        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
-        assertBool "the input is not in the leaf" (T.isInfixOf "FINDINGS" leafText)
+    , -- The input is the plan, not the findings: @document@ sits where
+      -- @implement@ sits, after @steer@ and inside the loop. Findings are
+      -- 'Incite.Feature.remediate'\'s input, downstream of the panel.
+      testCase "hands the plan to the worker" $ do
+        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
+        assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
     , -- The one rule this brief exists to carry that @implement@ must not.
       -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
       -- the sentence being gone is.
       testCase "forbids editing code to make a sentence true" $ do
-        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
+        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
         assertBool
           "the brief does not forbid correcting the code instead of the prose"
           ( T.isInfixOf
@@ -768,6 +811,26 @@ splicedPromptPaths =
     . filter (not . T.isPrefixOf "--" . T.stripStart)
     . T.lines
 
+-- | Where the recorded prompt bytes live, and the golden the @prompt-lint@
+-- fence reads. Every other golden is a reframing\'s, named in 'reframings'.
+goldenDir :: FilePath
+goldenDir = "test/golden"
+
+promptLintGolden :: FilePath
+promptLintGolden = goldenDir <> "/prompt-lint-brief.txt"
+
+-- | Every golden this suite reads, as data rather than parsed back out of this
+-- file\'s source.
+--
+-- 'splicedPromptPaths' can read "Incite.Prompts" because a @promptFile@ splice
+-- is a quasiquoter and nothing else looks like one. A golden path is an
+-- ordinary string literal, which a fixture row or a failure message spells just
+-- as well, so the same trick here finds things that are not reads. The list is
+-- checked against the __directory__ instead, which is the set
+-- @extra-source-files@ has to carry in any case.
+goldensRead :: [FilePath]
+goldensRead = promptLintGolden : [path | (_, _, path) <- reframings]
+
 -- | The entries of the cabal file\'s @extra-source-files@ stanza: the indented
 -- non-comment lines after it, up to the next column-zero line.
 extraSourceFiles :: Text -> [Text]
@@ -782,15 +845,21 @@ extraSourceFiles cabalFile =
     indented l = T.null (T.strip l) || T.isPrefixOf " " l
 
 -- | Does one @extra-source-files@ entry carry this path? Two forms appear in
--- the stanza: a literal path, and a @dir\/*.md@ glob, which matches one
--- directory level only.
+-- the stanza: a literal path, and a @dir\/*.ext@ glob, which matches one
+-- directory level and one extension only.
+--
+-- The extension is read off the entry rather than fixed at @.md@, because the
+-- goldens are @.txt@ and a matcher that only understood @.md@ would answer
+-- \"not covered\" for every one of them — a cover test that fails loudly is
+-- fine, but one that could only ever fail is not a cover.
 covers :: Text -> Text -> Bool
-covers entry path = case T.stripSuffix "*.md" entry of
-  Nothing -> entry == path
-  Just dirPrefix ->
-    let rest = T.drop (T.length dirPrefix) path
+covers entry path = case T.breakOn "*" entry of
+  (_, "") -> entry == path
+  (dirPrefix, star) ->
+    let ext = T.drop 1 star
+        rest = T.drop (T.length dirPrefix) path
      in T.isPrefixOf dirPrefix path
-          && T.isSuffixOf ".md" rest
+          && T.isSuffixOf ext rest
           && not (T.isInfixOf "/" rest)
 
 packagingTests :: TestTree
@@ -818,6 +887,52 @@ packagingTests =
           | p <- paths
           , not (any (`covers` p) entries)
           ]
+    , -- The same defect one layer over, and a worse one. A `promptFile` path is
+      -- at least checked when "Incite.Prompts" compiles; a golden is read by
+      -- `TIO.readFile` at run time, so an sdist that drops one builds green and
+      -- then fails the suite with `openFile: does not exist`. Nothing else here
+      -- can see it either: `checks.unit-test` copies ./test wholesale, so the
+      -- one instrument that could notice is arranged not to.
+      --
+      -- Quantified over the DIRECTORY, so a golden is covered by existing.
+      testCase "extra-source-files carries every golden on disk" $ do
+        cabalFile <- TIO.readFile "incite-workflows.cabal"
+        onDisk <- listDirectory goldenDir
+        let entries = extraSourceFiles cabalFile
+        -- The listing proved before it is quantified over: an empty directory
+        -- would carry the report below over nothing at all.
+        assertBool "no goldens found on disk" (not (null onDisk))
+        report
+          [ "recorded but not packaged: " <> T.pack g
+          | f <- onDisk
+          , let g = goldenDir <> "/" <> f
+          , not (any (`covers` T.pack g) entries)
+          ]
+    , -- What keeps the case above honest in the other direction. Packaging a
+      -- golden nothing reads is a file that drifts from the code it was
+      -- recorded off with no test to say so, and packaging is exactly the step
+      -- that would keep it looking alive. Compared as sorted lists, so a
+      -- recorded-but-unfenced file and a read-but-unrecorded path both fail.
+      testCase "every golden on disk is one this suite fences" $ do
+        onDisk <- listDirectory goldenDir
+        sort (map ((goldenDir <> "/") <>) onDisk) @?= sort goldensRead
+    , -- The guard on the report above: it is only as strong as `covers`,
+      -- and a glob matcher that said True to everything would carry them over
+      -- any cabal file at all. One row per way an entry can fail to carry a
+      -- path — deeper directory, wrong extension, wrong literal.
+      testCase "an entry covers one directory level of one extension" $
+        map
+          (uncurry covers)
+          [ ("prompts/*.md", "prompts/plan.md")
+          , ("prompts/*.md", "prompts/explore/deep.md")
+          , ("prompts/*.md", "prompts/notes.txt")
+          , ("test/golden/*.txt", "test/golden/as-docs-subject.txt")
+          , ("test/golden/*.txt", "test/golden/nested/x.txt")
+          , ("test/golden/*.txt", "test/golden/as-docs-subject.md")
+          , ("commands/fess.md", "commands/fess.md")
+          , ("commands/fess.md", "commands/wiggum.md")
+          ]
+          @?= [True, False, False, True, False, False, True, False]
     ]
 
 -- | Every prompt a workflow's leaves actually send, in the order the sequential
@@ -874,12 +989,19 @@ promptLintTests :: TestTree
 promptLintTests =
   testGroup
     "promptLint"
-    [ -- Every place a prompt body lives, not just the directories. The three
-      -- reorientations are Haskell literals in "Incite.Review", so
-      -- @checks.ste-prompts@ — which lints @.md@ files — cannot see them, and a
-      -- directory list alone would leave the only prompt prose this repository
-      -- writes in code with no STE coverage from either instrument.
-      testCase "the leaf names every place a prompt body lives" $ do
+    [ -- Every DIRECTORY a prompt body lives in, @workflows\/@ included.
+      -- @checks.ste-prompts@ lints @.md@ files, so the prompt prose written as
+      -- Haskell string literals has no other STE reader; dropping
+      -- @workflows\/@ from the scope is what silently narrows this workflow to
+      -- half the prompts, and no plan skeleton or cost estimate moves when it
+      -- does.
+      --
+      -- Directories, not binding names. A row per reorientation would be a
+      -- fourth hand-kept copy of a list this file already owns twice
+      -- ('reorientations', 'expectedLensesOf') and the module owns once, and it
+      -- would fence nothing the directory does not: it goes green on a renamed
+      -- binding and silent on a new one.
+      testCase "the leaf names every directory a prompt body lives in" $ do
         leafText <- onlyLeafPrompt promptLint
         mapM_
           ( \d ->
@@ -891,10 +1013,7 @@ promptLintTests =
           , "commands/"
           , "agents/"
           , "skills/"
-          , "workflows/Incite/Review.hs"
-          , "architectureOfChange"
-          , "docsAccuracy"
-          , "ponytailOfDocs"
+          , "workflows/"
           ]
     , -- A FENCE, not a smoke test. Nothing else in this repository can see the
       -- text this workflow sends, so an edit to it is invisible everywhere
@@ -916,7 +1035,7 @@ promptLintTests =
       -- The @\\n\\n@ tail is 'Agent.Prompt.brief'\'s separator and the
       -- workflow\'s own input field, not a third copy of the brief.
       testCase "the leaf sends steSkill plus exactly the recorded local text" $ do
-        recorded <- TIO.readFile "test/golden/prompt-lint-brief.txt"
+        recorded <- TIO.readFile promptLintGolden
         leafText <- onlyLeafPrompt promptLint
         leafText
           @?= promptText steSkill <> recorded <> "\n\n" <> fromMaybe "" (wfInput promptLint)

@@ -167,9 +167,10 @@ reviewDocs =
 -- | 'reviewDocs' as a plain 'Flow', so the acting workflow of "Incite.Feature"
 -- can run the same panel inline rather than copying it.
 --
--- __One consumer today__, unlike 'reviewHeavyFlow'\'s two: 'reviewDocs' is the
--- only caller. The binding is written ahead of the second consumer, and that is
--- the whole reason it is separate from the workflow.
+-- __Two consumers__, like 'reviewHeavyFlow': the 'reviewDocs' workflow and
+-- "Incite.Feature".@shipDocs@, which runs the same panel inline as a stage. The
+-- binding landed ahead of the second consumer, and that is the whole reason it
+-- is separate from the workflow.
 --
 -- 'reviewSynthesis' is reused rather than copied for prose: it says
 -- \"reviewers\", \"finding\" and \"location\" and never \"code\", so what it
@@ -493,11 +494,16 @@ plannerAudit =
 -- Reports rather than rewrites: 'Incite.Feature'\'s @simple-english@ lens is
 -- where STE edits anything.
 --
--- __The reorientations are named explicitly__, because they are the prompts no
--- other STE check can reach: @checks.ste-prompts@ lints @.md@ files, and these
--- three are Haskell literals in this module, so a directory list alone leaves
--- the only prompt bodies this repository writes in code with no coverage at
--- all.
+-- __@workflows\/@ is in scope too__, and it is the half no other STE check can
+-- reach. @checks.ste-prompts@ lints @.md@ files; a growing share of the prompt
+-- prose this repository owns is written as Haskell string literals instead —
+-- the orientation preambles, the worker briefs, the reorientation adjustments,
+-- and this very brief. A list of @.md@ directories leaves all of it uncovered
+-- by either instrument.
+--
+-- Named as a __directory__ rather than as a list of bindings on purpose. A list
+-- is a copy of the module contents kept by hand: it goes stale when a binding is
+-- renamed, and says nothing at all about the next literal somebody writes.
 promptLint :: Workflow
 promptLint =
   workflow
@@ -509,10 +515,7 @@ promptLint =
     [iii|
       The prompt files under prompts/, commands/, agents/ and skills/ in the
       current working directory, and the prompt bodies written as Haskell
-      literals in workflows/Incite/Review.hs — architectureOfChange,
-      docsAccuracy and ponytailOfDocs — whose adjustment text is the only
-      prompt prose here that is in no .md file. Read them before reporting
-      anything.
+      string literals under workflows/. Read them before reporting anything.
     |]
     $ withBackend claudeAgent fable5
     $ withMode Plan
