@@ -19,6 +19,7 @@ module Incite.Feature
   , continueMarker
   , decideContinue
   , asReviewSubject
+  , asRetroSubject
   ) where
 
 import Data.Text (Text)

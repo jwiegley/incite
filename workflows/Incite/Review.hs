@@ -492,6 +492,12 @@ plannerAudit =
 --
 -- Reports rather than rewrites: 'Incite.Feature'\'s @simple-english@ lens is
 -- where STE edits anything.
+--
+-- __The reorientations are named explicitly__, because they are the prompts no
+-- other STE check can reach: @checks.ste-prompts@ lints @.md@ files, and these
+-- three are Haskell literals in this module, so a directory list alone leaves
+-- the only prompt bodies this repository writes in code with no coverage at
+-- all.
 promptLint :: Workflow
 promptLint =
   workflow
@@ -502,7 +508,11 @@ promptLint =
     |]
     [iii|
       The prompt files under prompts/, commands/, agents/ and skills/ in the
-      current working directory. Read them before reporting anything.
+      current working directory, and the prompt bodies written as Haskell
+      literals in workflows/Incite/Review.hs — architectureOfChange,
+      docsAccuracy and ponytailOfDocs — whose adjustment text is the only
+      prompt prose here that is in no .md file. Read them before reporting
+      anything.
     |]
     $ withBackend claudeAgent fable5
     $ withMode Plan

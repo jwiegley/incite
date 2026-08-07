@@ -1,0 +1,7 @@
+Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
+
+So take your evidence from the record. Run `git log --oneline`, `git diff` and `git status`, and read them. The account below is the closing summary of the review-and-remediation stage — what the panel raised and what was done about it — and it is a claim to check against the commits, not the session itself.
+
+Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.
+
+<<SUMMARY>>

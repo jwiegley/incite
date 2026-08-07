@@ -14,7 +14,7 @@ import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
-import Incite.Feature (asReviewSubject, continueMarker, decideContinue)
+import Incite.Feature (asRetroSubject, asReviewSubject, continueMarker, decideContinue)
 import Incite.Prompts
   ( codeReview
   , codeReviewerSecurity
@@ -51,7 +51,7 @@ tests =
     "incite-workflows"
     [ decideContinueTests
     , continueMarkerTests
-    , asReviewSubjectTests
+    , reframingTests
     , lensSetViolationsTests
     , lensesOfTests
     , reorientationTests
@@ -124,19 +124,62 @@ continueMarkerTests =
         continueMarker @?= "WORK REMAINS"
     ]
 
-asReviewSubjectTests :: TestTree
-asReviewSubjectTests =
+-- | The stand-in summary the reframing goldens are recorded against. Nothing
+-- in either frame can contain it, so \"appears exactly once\" is a statement
+-- about the splice and not about the prose around it.
+summaryMarker :: Text
+summaryMarker = "<<SUMMARY>>"
+
+-- | The two reframings "Incite.Feature" applies before handing a worker's
+-- closing summary to a panel, each with the file recording its frame.
+--
+-- Both are pure @'Text' -> 'Text'@ and neither is reachable from any other
+-- check in this repository: they are applied inside 'Incite.Feature.shipFeature'
+-- by @dimap'@, so no leaf name mentions them and @plan@ renders a flow skeleton
+-- that cannot see text. An edit to either one silently changes what 21
+-- reviewers are pointed at.
+reframings :: [(String, Text -> Text, FilePath)]
+reframings =
+  [ ("asReviewSubject", asReviewSubject, "test/golden/as-review-subject.txt")
+  , ("asRetroSubject", asRetroSubject, "test/golden/as-retro-subject.txt")
+  ]
+
+-- | Three cases per reframing, and the third is the one that makes the other
+-- two a fence rather than a snapshot.
+--
+-- The golden pins the frame at one summary. On its own that leaves the splice
+-- unstated — a frame that ignored its argument, or spliced it twice, or
+-- appended it to the wrong paragraph, would record and pass just as happily.
+-- The substitution case says the whole contract instead: the function IS this
+-- recorded text with the marker replaced, for any summary. Recorded rather
+-- than transcribed — both files were written by running the functions, so what
+-- they fence is the code and not somebody's copy of it.
+reframingTests :: TestTree
+reframingTests =
   testGroup
-    "asReviewSubject"
-    [ testCase "prepends review instructions" $
-        assertBool "starts with review instruction" $
-          T.isPrefixOf "Review the change" (asReviewSubject "summary")
-    , testCase "includes the summary verbatim" $
-        assertBool "ends with the summary" $
-          T.isSuffixOf "summary" (asReviewSubject "summary")
-    , testCase "mentions git diff" $
-        assertBool "contains git diff instruction" $
-          T.isInfixOf "git diff" (asReviewSubject "summary")
+    "reframings"
+    [ testGroup
+      name
+      [ testCase "renders exactly the recorded frame" $ do
+          recorded <- TIO.readFile path
+          reframe summaryMarker @?= recorded
+      , testCase "splices the summary exactly once" $ do
+          recorded <- TIO.readFile path
+          length (T.breakOnAll summaryMarker recorded) @?= 1
+      , -- The contract in full: for ANY summary, the result is the recorded
+        -- frame with the marker replaced. A frame that dropped its argument or
+        -- reworded around it fails here while the golden above still passes.
+        testCase "is that frame with the summary substituted, for any summary" $ do
+          recorded <- TIO.readFile path
+          mapM_
+            (\s -> reframe s @?= T.replace summaryMarker s recorded)
+            [ "one line"
+            , "several\nlines\nof summary"
+            , "" -- an empty summary still leaves the instructions standing
+            , "a summary mentioning `git diff` and WORK REMAINS"
+            ]
+      ]
+    | (name, reframe, path) <- reframings
     ]
 
 -- | A stand-in body. Every law 'lensSetViolations' states is a statement about
@@ -637,7 +680,12 @@ promptLintTests :: TestTree
 promptLintTests =
   testGroup
     "promptLint"
-    [ testCase "the leaf names every directory it is pointed at" $ do
+    [ -- Every place a prompt body lives, not just the directories. The three
+      -- reorientations are Haskell literals in "Incite.Review", so
+      -- @checks.ste-prompts@ — which lints @.md@ files — cannot see them, and a
+      -- directory list alone would leave the only prompt prose this repository
+      -- writes in code with no STE coverage from either instrument.
+      testCase "the leaf names every place a prompt body lives" $ do
         leafText <- onlyLeafPrompt promptLint
         mapM_
           ( \d ->
@@ -645,7 +693,15 @@ promptLintTests =
                 (T.unpack d <> " is not in the leaf text")
                 (T.isInfixOf d leafText)
           )
-          ["prompts/", "commands/", "agents/", "skills/"]
+          [ "prompts/"
+          , "commands/"
+          , "agents/"
+          , "skills/"
+          , "workflows/Incite/Review.hs"
+          , "architectureOfChange"
+          , "docsAccuracy"
+          , "ponytailOfDocs"
+          ]
     , -- A FENCE, not a smoke test. Nothing else in this repository can see the
       -- text this workflow sends, so an edit to it is invisible everywhere
       -- else. Total equality, so a reordering, a separator change or one
