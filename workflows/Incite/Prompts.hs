@@ -45,6 +45,8 @@ module Incite.Prompts
   , reviewTests
   , reviewArchitecture
   , reviewSynthesis
+  , docsCompleteness
+  , docsStructure
     -- * Review regroupings (views, not judges)
   , reviewUnits
   , reviewSequence
@@ -142,6 +144,22 @@ reviewComplexity = [promptFile|prompts/review/complexity.md|]
 reviewTests = [promptFile|prompts/review/tests.md|]
 reviewArchitecture = [promptFile|prompts/review/architecture.md|]
 reviewSynthesis = [promptFile|prompts/review/synthesis.md|]
+
+-- | The documentation review lenses, and the pair that only a prose artifact
+-- admits. 'docsCompleteness' reads for what a reader cannot do — the unstated
+-- prerequisite, the undescribed parameter, the failure with no recovery, the
+-- term used before it is defined. 'docsStructure' reads the shape instead: the
+-- order, the headings, the fact stated three times, and whether this is the
+-- right kind of document at all.
+--
+-- Neither judges whether a claim is TRUE. That is the accuracy lens, which is
+-- 'fess' pointed at prose ("Incite.Review".@docsAccuracy@) rather than a file
+-- of its own — the honesty rubric already reads a claim against the record, and
+-- a second copy of it here would be one of the three homes 'docsStructure' is
+-- written to report.
+docsCompleteness, docsStructure :: Prompt
+docsCompleteness = [promptFile|prompts/review/docs-completeness.md|]
+docsStructure = [promptFile|prompts/review/docs-structure.md|]
 
 -- | The review-audit regroupings: re-express the change into logical units, or
 -- into the commits it should have been. Views, not judges — except

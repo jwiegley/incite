@@ -20,6 +20,8 @@ module Incite.Review
   , retroFlow
   , plannerAudit
   , promptLint
+  , promptLintBrief
+  , promptLintScope
   , Subject (..)
   , lensesOf
   ) where
@@ -128,18 +130,32 @@ reviewAudit =
     auditLenses = lensesOf OfChange
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
--- | What a panel is pointed at — the only axis on which the lens set varies.
--- Two lenses are subject-dependent: ponytail ships one rubric for a diff and
--- another for a whole tree, and architecture is a question only a change can
--- answer.
+-- | The __kind of artifact__ a panel is pointed at. Not a switch over which
+-- lenses differ — a name for what is under review, from which the lens set
+-- follows. A subject that shares no lens with the others is still a 'Subject';
+-- the type says what is being read, and 'lensesOf' says what reading it admits.
 data Subject
   = -- | 'reviewHeavy': the diff, and nothing wider.
     OfDiff
   | -- | 'reviewAudit': the change, and the shape it moves the code toward.
     OfChange
+  deriving (Eq, Show, Bounded, Enum)
 
--- | The lenses for a subject. Total in 'Subject', so a third one cannot be
--- added without answering both questions it raises.
+-- | The lenses that artifact admits, in the order their blocks are read.
+--
+-- Three laws hold at every constructor, and 'lensSetViolations' is where they
+-- are written down as code:
+--
+-- * the list is __non-empty__ — a subject with no lens is a panel with nothing
+--   to fan out;
+-- * the leaf names are __pairwise distinct__ — 'panelAcross' keys blocks by
+--   @lens\@backend@, so a repeat makes two reviewers indistinguishable in the
+--   reduction;
+-- * @\"ponytail\"@ is __present__ — every artifact admits the question of what
+--   should not exist, and each subject picks the rubric pointed at it.
+--
+-- Total in 'Subject', so a new constructor cannot be added without answering
+-- what its artifact admits.
 lensesOf :: Subject -> [(LeafName, Prompt)]
 lensesOf subject =
   [ ("correctness", reviewCorrectness)
@@ -306,12 +322,26 @@ promptLint =
     |]
     $ withBackend claudeAgent fable5
     $ withMode Plan
-    $ refineWith "ste" (brief promptLintBrief) id
+    $ refineWith "ste" (brief (promptLintBrief promptLintScope)) id
 
--- | 'steSkill' plus the scoping that makes a prose rubric usable on a prompt
--- repository.
-promptLintBrief :: Prompt
-promptLintBrief =
+-- | What @prompt-lint@ is pointed at. A parameter of 'promptLintBrief' rather
+-- than a line inside it, so a second panel can borrow the STE rubric without
+-- telling its model it is reading a prompt repository.
+promptLintScope :: Text
+promptLintScope = "You are reading the prompt files of a repository whose product IS prompts."
+
+-- | 'steSkill' plus the scoping that makes a prose rubric usable on a body of
+-- text — @scope@ names what the reader is looking at, and everything else is
+-- fixed.
+--
+-- __The rule-numbers clause is a brief, not a fence.__ \"Cite only rule numbers
+-- that exist in the text above\" is grounded by the 'steSkill' splice being
+-- present above it, which is a property of this function and holds at every
+-- @scope@. That the model then obeys it is not checked anywhere, here or
+-- downstream. Widening @scope@ costs nothing; dropping the splice would take
+-- the grounding with it.
+promptLintBrief :: Text -> Prompt
+promptLintBrief scope =
   [__i|
     #{steSkill}
 
@@ -323,7 +353,7 @@ promptLintBrief =
     inventing STE rule numbers applies to you. If you cannot ground a number,
     name the rule instead.
 
-    You are reading the prompt files of a repository whose product IS prompts.
+    #{scope}
     Scope, and this decides whether the report is worth reading:
 
     - Report ONLY on PROCEDURAL passages — the instruction the agent must

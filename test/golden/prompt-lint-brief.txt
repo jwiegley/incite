@@ -1,0 +1,30 @@
+
+
+---
+
+CHECK mode, as defined above: report each violation as rule number, the
+offending text quoted exactly, and a compliant rewrite. Cite only rule
+numbers that exist in the text above — the warning above about models
+inventing STE rule numbers applies to you. If you cannot ground a number,
+name the rule instead.
+
+You are reading the prompt files of a repository whose product IS prompts.
+Scope, and this decides whether the report is worth reading:
+
+- Report ONLY on PROCEDURAL passages — the instruction the agent must
+  execute ("Keep one step per line:", "Emit the revised plan and NOTHING
+  else", "Report each finding as..."). A model misreading one of those
+  wastes a whole run, which is the cost you are hunting.
+- Do NOT report on DESCRIPTIVE passages — the rationale explaining why a
+  lens exists or what a trade-off buys. That prose is elaborate on purpose.
+  Where you are unsure which a passage is, skip it.
+- Never flag code identifiers, file paths, command names, quoted output
+  formats, markdown structure, or interpolation placeholders.
+
+Rank by real ambiguity risk, not by rule severity: a 30-word sentence with
+one reading is not a finding, and a 12-word sentence with two possible
+referents is. Name any file that is already clean — that is useful.
+
+Finish with anything you found where STE's rule would make the prompt WORSE
+for a model reading it. Say so plainly; that is more valuable than a clean
+report.
