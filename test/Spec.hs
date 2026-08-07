@@ -203,6 +203,22 @@ lensesOfTests =
               , "doctrine"
               , "architecture"
               ]
+    , testCase "OfDocs has 4 lenses" $
+        length (lensesOf OfDocs) @?= 4
+    , testCase "OfDocs lens names" $
+        map (leafNameText . fst) (lensesOf OfDocs)
+          @?= [ "accuracy"
+              , "completeness"
+              , "structure"
+              , "ponytail"
+              ]
+    , -- The point of the docs subject, as an assertion rather than a comment:
+      -- its lenses are its own, and @ponytail@ is the only name it shares with
+      -- a code panel because every artifact admits that one question.
+      testCase "OfDocs shares only ponytail with OfDiff" $
+        filter (`elem` map (leafNameText . fst) (lensesOf OfDiff))
+          (map (leafNameText . fst) (lensesOf OfDocs))
+          @?= ["ponytail"]
     , testCase "no duplicate names in OfDiff" $
         noDuplicates (map (leafNameText . fst) (lensesOf OfDiff))
     , testCase "no duplicate names in OfChange" $
@@ -223,8 +239,8 @@ lensesOfTests =
     , -- The guard on the assertion above. Without it a law quantified over an
       -- enumeration that silently grew stays green over the subjects it used to
       -- cover; this line forces the edit that proves the enumeration is live.
-      testCase "Subject enumerates 2 constructors" $
-        length ([minBound .. maxBound] :: [Subject]) @?= 2
+      testCase "Subject enumerates 3 constructors" $
+        length ([minBound .. maxBound] :: [Subject]) @?= 3
     ]
 
 -- | The brief @prompt-lint@ ships today. One binding, so parameterising

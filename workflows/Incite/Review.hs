@@ -15,6 +15,8 @@ module Incite.Review
   , reviewHeavy
   , reviewHeavyFlow
   , reviewAudit
+  , reviewDocs
+  , reviewDocsFlow
   , fessAudit
   , retro
   , retroFlow
@@ -130,6 +132,35 @@ reviewAudit =
     auditLenses = lensesOf OfChange
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
+-- | The same shape pointed at prose: four lenses that only a document admits,
+-- each answered by all three backends, then the same synthesis leaf.
+--
+-- __No regroupings.__ 'reviewAudit' buys its third tier by re-expressing a
+-- change as logical units and as the commits it should have been. Neither view
+-- exists for a document — a README has no commit sequence it should have been —
+-- so this tier is the panel and the reduction, and nothing else.
+reviewDocs :: Workflow
+reviewDocs =
+  workflowReq
+    "review-docs"
+    [iii|
+      Review documentation with four lenses only prose admits (accuracy against
+      the code, completeness for a reader who follows it, structure, ponytail
+      cuts), each run on all three backends, then synthesise one ranked list
+    |]
+    reviewDocsFlow
+
+-- | 'reviewDocs' as a plain 'Flow', so 'Incite.Feature'\'s acting half can run
+-- the same panel inline. One definition, two consumers — the same reason
+-- 'reviewHeavyFlow' is a binding.
+--
+-- 'reviewSynthesis' is reused rather than copied for prose: it says
+-- \"reviewers\", \"finding\" and \"location\" and never \"code\", so what it
+-- de-duplicates and ranks is already artifact-agnostic.
+reviewDocsFlow :: Flow Text Text
+reviewDocsFlow =
+  panel (lensesOf OfDocs) >>> refineWith "synthesis" (brief reviewSynthesis) id
+
 -- | The __kind of artifact__ a panel is pointed at. Not a switch over which
 -- lenses differ — a name for what is under review, from which the lens set
 -- follows. A subject that shares no lens with the others is still a 'Subject';
@@ -139,6 +170,8 @@ data Subject
     OfDiff
   | -- | 'reviewAudit': the change, and the shape it moves the code toward.
     OfChange
+  | -- | 'reviewDocs': prose, and the code it makes claims about.
+    OfDocs
   deriving (Eq, Show, Bounded, Enum)
 
 -- | The lenses that artifact admits, in the order their blocks are read.
@@ -160,6 +193,12 @@ lensesOf :: Subject -> [(LeafName, Prompt)]
 lensesOf subject = case subject of
   OfDiff -> codeLenses ponytailReviewRubric
   OfChange -> codeLenses ponytailAuditRubric <> [("architecture", architectureOfChange)]
+  OfDocs ->
+    [ ("accuracy", docsAccuracy)
+    , ("completeness", docsCompleteness)
+    , ("structure", docsStructure)
+    , ("ponytail", ponytailOfDocs)
+    ]
   where
     codeLenses ponytailRubric =
       [ ("correctness", reviewCorrectness)
@@ -193,6 +232,86 @@ architectureOfChange =
     alone does not show you the shape it is landing in.
 
     If the change leaves the shape no worse, say `Sound.` and stop.
+  |]
+
+-- | 'fess' audits an account against the artifact it describes. A document is
+-- an account of a system, so the rubric transfers whole; what changes is whose
+-- account it is and where the record lives.
+--
+-- A reorientation rather than a file, for the reason "Incite.Prompts" gives on
+-- 'docsCompleteness': a second copy of the honesty rubric is one of the three
+-- homes 'docsStructure' is written to report.
+docsAccuracy :: Prompt
+docsAccuracy =
+  [__i|
+    #{fess}
+
+    ---
+
+    ONE ADJUSTMENT to the above: the account is not yours. It is a __document__ —
+    a README, a guide, a reference — and the record it is answerable to is the
+    code in this repository.
+
+    So read the document as the claim and the code as the record. Every command
+    it tells the reader to run, and every flag, path, identifier, default and
+    version it names: open the code and check it. Cite file:line on both sides —
+    where the document says it, and where the code says otherwise.
+
+    The rubric's shapes carry over to prose:
+
+    * verification gap — a claim nothing in the repository backs up;
+    * spec drift — a behaviour the code changed and the document still describes
+      the old way;
+    * quiet downgrade — prose left describing what was there before a change.
+      That is the rubric's own last shape, and here it is most of the work.
+
+    Two things are not yours. Whether a fact is MISSING belongs to the
+    completeness reviewer, and where it SITS belongs to the structure reviewer.
+    You judge only whether what is written is true. Where you cannot reach the
+    code that settles a claim, say so and name what you would read; do not grade
+    it either way.
+
+    If every claim you checked holds, say `Sound.` and stop.
+  |]
+
+-- | The ponytail question — what should not exist — asked of prose.
+--
+-- __A reorientation, not 'ponytailAuditRubric' raw.__ That rubric scopes itself
+-- to over-engineering and complexity, and hunts dependencies, factories,
+-- wrappers and dead flags. Pointed at a README it finds nothing or invents
+-- something, and a lens that emits noise costs more than no lens. The measure
+-- and the output format are kept; the hunt list is replaced.
+ponytailOfDocs :: Prompt
+ponytailOfDocs =
+  [__i|
+    #{ponytailAuditRubric}
+
+    ---
+
+    ONE ADJUSTMENT to the above: you are reading __documentation__, not a source
+    tree. The measure stands — what would deletion fix — and so do the tags, the
+    ranking and the output line. The hunt list does not.
+
+    Ignore the Hunt section above. Dependencies, factories and dead flags are not
+    what a document is made of. Hunt these instead:
+
+    * a paragraph that says what the paragraph above it already said;
+    * a section for something that no longer exists, or a step nobody performs;
+    * prose explaining what the one command below it already shows;
+    * a table or example held in step with the code by hand, where the code
+      answers the same question — name what to point the reader at instead;
+    * ceremony: a preamble before the instruction, a summary of the document
+      inside the document.
+
+    Three tags fire here. `delete:` for prose nothing needs, `yagni:` for a
+    section written for a reader who does not exist, and `shrink:` for the same
+    point in fewer lines — show the shorter form. Use `stdlib:` and `native:`
+    only where the document maintains by hand something the tooling already
+    prints, such as a help text or a generated table.
+
+    Report `[path]` as the file and the heading you would cut under. Length alone
+    is not a finding: a long passage the reader needs stays, and a cut you cannot
+    name a reader for is not a cut.
   |]
 
 -- | The cross-product: every lens answered by every backend, concurrently, over
