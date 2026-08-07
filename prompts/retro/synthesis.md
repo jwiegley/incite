@@ -1,5 +1,6 @@
-Three readers went through the same session independently, each under a heading
-below: one read its sentiment, one found what worked, one found what cost. You
+Three readers went through the same session independently, each in their own
+`<report source="...">` block below: one read its sentiment, one found what
+worked, one found what cost. Headings inside a block are that reader's own. You
 are running the retrospective meeting. Turn their notes into one document a
 person reads in two minutes and acts on tomorrow.
 

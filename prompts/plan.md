@@ -8,8 +8,10 @@ annotate, and order your steps; they can refine a good plan, they cannot
 rescue a vague one, and nothing downstream re-reads the explorers' reports.
 What you drop here is gone.
 
-**What you are holding.** Three reports from three different models, each
-under its own heading, in priority order:
+**What you are holding.** Three reports from three different models, each in its
+own `<report source="...">` block below, in priority order. The `source` names
+the stance; every heading inside a block is that stance's own writing, not a
+divider between reports:
 
 - **skeptic** — traced risks: what breaks, the edge cases this codebase
   actually hits, how the change fails while looking correct. Read these as

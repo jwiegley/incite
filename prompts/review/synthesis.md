@@ -1,5 +1,7 @@
-Several reviewers looked at this independently, each under a different heading
-below. Turn their findings into one ranked list. A person reads it from the top
+Several reviewers looked at this independently. Each one's findings are below in
+their own `<report source="...">` block, where the source names the lens and the
+model that answered it; any heading inside a block belongs to that reviewer, not
+to this input. Turn their findings into one ranked list. A person reads it from the top
 and acts on it in order.
 
 - **Merge duplicates.** The same defect found by two reviewers is one finding.
