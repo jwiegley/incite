@@ -7,11 +7,11 @@
         "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1786053277,
-        "narHash": "sha256-xku07NLNE3nfjWUcIJ8RWCJk0Z4UarkVsRFbxfAgeGM=",
+        "lastModified": 1786061837,
+        "narHash": "sha256-sxOwWGDDMpNfBh6ThKe9cKLp3QpV+ubhFp/P5XrsZWA=",
         "ref": "refs/heads/master",
-        "rev": "68e4e603d6d0673e9877411445b3bff61485ce31",
-        "revCount": 194,
+        "rev": "800ea38cb9a6d98960927ac3df8a2f19ec3f6013",
+        "revCount": 195,
         "type": "git",
         "url": "file:///home/isaac/_/agent-functor/master"
       },
@@ -39,6 +39,22 @@
         "owner": "fresheyeball",
         "repo": "flake-prompt",
         "type": "gitlab"
+      }
+    },
+    "awesome-prompts": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785992635,
+        "narHash": "sha256-vzAvhhI9kom81/kC9GkeyVIDD+vHmjRgazdUWjCCGOo=",
+        "owner": "ai-boost",
+        "repo": "awesome-prompts",
+        "rev": "d83eecce7754463fc582342faa4b102ee1175a68",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ai-boost",
+        "repo": "awesome-prompts",
+        "type": "github"
       }
     },
     "flake-utils": {
@@ -144,12 +160,64 @@
         "type": "github"
       }
     },
+    "ponytail": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784151135,
+        "narHash": "sha256-Y7d4s7uqjH6IbEXhqAiQ+yaxr6iiGcv2X64LuMtG1T8=",
+        "owner": "dietrichgebert",
+        "repo": "ponytail",
+        "rev": "16f29800fd2681bdf24f3eb4ccffe38be3baec6b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dietrichgebert",
+        "repo": "ponytail",
+        "type": "github"
+      }
+    },
+    "promptdeploy": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784239211,
+        "narHash": "sha256-6Bfun/MDuGDg8ukX6ozWgzML/Oa1mK0xTFceLzE5CjU=",
+        "owner": "jwiegley",
+        "repo": "promptdeploy",
+        "rev": "17c052b9406f91ff057bd8e3955301035968783a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jwiegley",
+        "repo": "promptdeploy",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "agent-functor": "agent-functor",
         "agent-pm": "agent-pm",
+        "awesome-prompts": "awesome-prompts",
         "macha": "macha",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "ponytail": "ponytail",
+        "promptdeploy": "promptdeploy",
+        "simple-english": "simple-english"
+      }
+    },
+    "simple-english": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786029826,
+        "narHash": "sha256-8eqnxhW9D6DXodh2wzReuTlVahruPzrZOu6GRmIxts0=",
+        "owner": "AminBlg",
+        "repo": "SimpleEnglish",
+        "rev": "8487d37c8b453bc194732770cf77871439f6f62a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "AminBlg",
+        "repo": "SimpleEnglish",
+        "type": "github"
       }
     },
     "systems": {

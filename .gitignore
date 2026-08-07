@@ -10,3 +10,9 @@ dist-newstyle/
 
 # agent-functor run-record store (local run state, not source):
 .agent-functor/
+
+# Upstream prompt briefs (ponytail, awesome-prompts). NOT source: a symlink into
+# /nix/store, dropped here by the devShell shellHook so a plain `cabal build`
+# passes promptFile's compile-time check. `nix build` grafts the same store path
+# into its own src and never looks at this.
+/prompts/upstream

@@ -1,8 +1,8 @@
 Review this plan step for correctness, completeness, and ordering.
 
 - **Correctness** — would doing exactly this produce the intended result?
-- **Completeness** — is anything the step implies but does not say (a migration,
-  a test, a call site that also has to change) missing?
+- **Completeness** — does the step imply work it does not name? Look for a
+  migration, a test, or a call site that also has to change.
 - **Ordering** — does this step depend on anything that has not happened yet?
   Name the missing prerequisite explicitly.
 

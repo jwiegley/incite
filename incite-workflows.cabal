@@ -11,13 +11,25 @@ synopsis:           Isaac's local agent-functor workflows (consumes the agent-fu
 extra-source-files:
     prompts/*.md
     prompts/explore/*.md
+    prompts/review/*.md
+    -- Grafted in from the `flake = false` inputs; never in git (flake.nix).
+    prompts/upstream/ponytail/*.md
+    prompts/upstream/awesome-prompts/*.md
     agents/*.md
     skills/*.md
+    -- Slash commands read back as workflow briefs (fess-audit, implement).
+    commands/fess.md
+    commands/post-commit-audit.md
+    commands/wiggum.md
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 executable agent-functor
     hs-source-dirs:     workflows
     main-is:            Main.hs
+    other-modules:      Incite.Prompts
+                        Incite.Backend
+                        Incite.Feature
+                        Incite.Review
     default-language:   GHC2021
     default-extensions: OverloadedStrings
                         QuasiQuotes
