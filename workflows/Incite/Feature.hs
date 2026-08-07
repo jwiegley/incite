@@ -20,6 +20,7 @@ module Incite.Feature
   , decideContinue
   , asReviewSubject
   , asRetroSubject
+  , asDocsSubject
   , Orientation (..)
   , orient
   , preambleOf
@@ -219,6 +220,9 @@ data Orientation
   | -- | The run's own record — its commits and what the panel did with them.
     -- 'shipFeature'\'s retrospective stage.
     AtRecord
+  | -- | The documents in the tree, read against the code they describe. The
+    -- docs panel's stage.
+    AtDocs
   deriving (Eq, Show, Bounded, Enum)
 
 -- | The preamble that points a stage at an 'Orientation'\'s evidence.
@@ -247,6 +251,12 @@ preambleOf o = case o of
 So take your evidence from the record. Run `git log --oneline`, `git diff` and `git status`, and read them. The account below is the closing summary of the review-and-remediation stage — what the panel raised and what was done about it — and it is a claim to check against the commits, not the session itself.
 
 Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.|]
+  AtDocs ->
+    [i|Review the documentation in the current working directory. The documents are the artifact under review and the code is the record they answer to, so read both: `git ls-files '*.md'` for what there is to read, and the modules, workflows and flake each document describes.
+
+Read the documents themselves before reporting anything. An account of them follows and it is a claim to check, not a substitute for the files — where it and a document disagree, the document is what ships.
+
+Cite the document and the code on both sides of every finding. A statement about prose that you cannot point at a file and a line for is a preference, and a preference is not a finding here.|]
 
 -- | Point a stage at an orientation's evidence and hand it the account beneath.
 --
@@ -289,6 +299,14 @@ asReviewSubject = orient AtChange
 -- retro, and saying which one it is beats producing the other one badly.
 asRetroSubject :: Text -> Text
 asRetroSubject = orient AtRecord
+
+-- | 'orient' at 'AtDocs', for the docs panel's stage in an acting workflow.
+--
+-- Written __ahead of its consumer__, like 'Incite.Review.reviewDocsFlow' and
+-- for the same reason: it is the piece the composition needs, and landing it
+-- alone is what lets its bytes be fenced before anything depends on them.
+asDocsSubject :: Text -> Text
+asDocsSubject = orient AtDocs
 
 -- | The one leaf that acts on a panel's findings — shared by both acting
 -- workflows, because fixing a doc finding and fixing a code finding is the

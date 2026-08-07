@@ -17,6 +17,7 @@ import Incite.Backend (backends, claudeAgentBackend)
 import Incite.Feature
   ( Orientation (..)
   , asRetroSubject
+  , asDocsSubject
   , asReviewSubject
   , continueMarker
   , decideContinue
@@ -141,18 +142,25 @@ continueMarkerTests =
 summaryMarker :: Text
 summaryMarker = "<<SUMMARY>>"
 
--- | The two reframings "Incite.Feature" applies before handing a worker's
--- closing summary to a panel, each with the file recording its frame.
+-- | Every reframing "Incite.Feature" applies before handing a worker's closing
+-- summary to a panel, each with the file recording its frame.
 --
--- Both are pure @'Text' -> 'Text'@ and neither is reachable from any other
--- check in this repository: they are applied inside 'Incite.Feature.shipFeature'
--- by @dimap'@, so no leaf name mentions them and @plan@ renders a flow skeleton
--- that cannot see text. An edit to either one silently changes what 21
--- reviewers are pointed at.
+-- All are pure @'Text' -> 'Text'@ and none is reachable from any other check in
+-- this repository: they are applied by @dimap'@ inside a flow, so no leaf name
+-- mentions them and @plan@ renders a flow skeleton that cannot see text. An
+-- edit to one silently changes what a whole panel is pointed at.
+--
+-- __This list covers 'Orientation', and @orientTests@ forces it to.__ Each
+-- entry is @'orient' c@ for one constructor, so an orientation with no entry
+-- here would be a frame with no golden. Rather than trust that,
+-- @every orientation has a recorded frame@ compares the two as sets: a new
+-- constructor with no entry fails it, and so does an entry that is not any
+-- constructor's frame.
 reframings :: [(String, Text -> Text, FilePath)]
 reframings =
   [ ("asReviewSubject", asReviewSubject, "test/golden/as-review-subject.txt")
   , ("asRetroSubject", asRetroSubject, "test/golden/as-retro-subject.txt")
+  , ("asDocsSubject", asDocsSubject, "test/golden/as-docs-subject.txt")
   ]
 
 -- | Three cases per reframing, and the third is the one that makes the other
@@ -240,8 +248,8 @@ orientTests =
               (null (preambleViolations ps))
     , -- The guard on the assertion above: it defends the hand-listed rows
       -- below, which do go stale, not the quantification, which does not.
-      testCase "Orientation enumerates 2 constructors" $
-        length ([minBound .. maxBound] :: [Orientation]) @?= 2
+      testCase "Orientation enumerates 3 constructors" $
+        length ([minBound .. maxBound] :: [Orientation]) @?= 3
     , -- The join as an OBSERVABLE property of the rendered text, not as a
       -- restatement of 'orient'. Asserting @orient o s == preambleOf o <> …@
       -- would be the definition written twice and could never fail; this reads
@@ -262,11 +270,23 @@ orientTests =
                       (not (T.isSuffixOf "\n\n\nACCOUNT" rendered))
           )
           ([minBound .. maxBound] :: [Orientation])
-    , -- The two named reframings ARE orientations, not copies that drifted.
+    , -- The named reframings ARE orientations, not copies that drifted.
       -- 'reframingTests' pins their bytes; this pins which constructor each is.
-      testCase "asReviewSubject is AtChange and asRetroSubject is AtRecord" $ do
+      testCase "each named reframing is its orientation" $ do
         asReviewSubject "x" @?= orient AtChange "x"
         asRetroSubject "x" @?= orient AtRecord "x"
+        asDocsSubject "x" @?= orient AtDocs "x"
+    , -- What keeps 'reframings' honest. Golden coverage is only as good as the
+      -- list naming the goldens, and that list is hand-written: a fourth
+      -- orientation would ship with its bytes unfenced and every existing test
+      -- still green. Compared as SETS in both directions, so a missing entry
+      -- and a stale one both fail.
+      testCase "every orientation has a recorded frame, and no frame is orphaned" $
+        let framed = [reframe summaryMarker | (_, reframe, _) <- reframings]
+            oriented = [orient o summaryMarker | o <- [minBound .. maxBound] :: [Orientation]]
+         in do
+              (framed \\ oriented) @?= []
+              (oriented \\ framed) @?= []
     ]
 
 -- | A stand-in body. Every law 'lensSetViolations' states is a statement about
