@@ -9,6 +9,7 @@ import qualified Data.Text.IO as TIO
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Agent.Flow (Flow)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, prompt, promptText)
@@ -21,6 +22,7 @@ import Incite.Feature
   , asReviewSubject
   , continueMarker
   , decideContinue
+  , document
   , orient
   , preambleOf
   , preambleViolations
@@ -64,6 +66,7 @@ tests =
     , reframingTests
     , preambleViolationsTests
     , orientTests
+    , documentTests
     , lensSetViolationsTests
     , lensesOfTests
     , reorientationTests
@@ -125,6 +128,32 @@ decideContinueTests =
         , testCase "marker on non-last line" $
             decideContinue "WORK REMAINS\nactually done"
               @?= Right "WORK REMAINS\nactually done"
+        ]
+    , -- The decoration alphabet, stated from BOTH sides. Every case above is
+      -- positive: each says one character is stripped, and together they leave
+      -- the set open at the top. Widen the strip to @isPunctuation@ and all of
+      -- them stay green while "WORK REMAINS?" starts spinning the loop — the
+      -- runaway 'decideContinue' exists to prevent.
+      --
+      -- So the negative rows are the load-bearing half. They are the characters
+      -- a model plausibly emits around a status line and which must NOT be
+      -- read through.
+      testGroup
+        "decoration alphabet"
+        [ testGroup
+            "stripped"
+            [ testCase [c] $
+                decideContinue (T.pack (c : "WORK REMAINS" <> [c]))
+                  @?= Left (T.pack (c : "WORK REMAINS" <> [c]))
+            | c <- "`*_ ."
+            ]
+        , testGroup
+            "not stripped"
+            [ testCase [c] $
+                decideContinue (T.pack (c : "WORK REMAINS" <> [c]))
+                  @?= Right (T.pack (c : "WORK REMAINS" <> [c]))
+            | c <- "?!:;,)]}>\"'#~-+="
+            ]
         ]
     ]
 
@@ -199,6 +228,58 @@ reframingTests =
             ]
       ]
     | (name, reframe, path) <- reframings
+    ]
+
+-- | The worker briefs, and the contract they share with the orchestrator that
+-- calls them.
+--
+-- __A brief that names the wrong marker strands its loop, and nothing shows
+-- it.__ The brief tells the worker how to ask for another trip and
+-- 'decideContinue' decides whether it asked; the two agree only because both go
+-- through 'continueMarker'. Spell it in a brief instead and the run burns every
+-- trip of its fuel and then aborts, with no output anywhere naming the cause.
+-- @plan@ cannot see it — it renders leaf names — so this is the check.
+--
+-- 'document' is the one that can be read here. @implement@ is bound inside
+-- 'Incite.Feature.shipFeature', which is why the second worker brief was
+-- written top-level.
+documentTests :: TestTree
+documentTests =
+  testGroup
+    "document"
+    [ testCase "is one leaf" $ do
+        sent <- flowLeafPrompts "document" document "FINDINGS"
+        length sent @?= 1
+    , -- Round trip through the decider, not a substring check on the marker.
+      -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what has
+      -- to hold is that the decorated form the worker copies is one
+      -- 'decideContinue' reads as "call me again". It fails if the brief wraps
+      -- the marker in something outside the decoration alphabet, or if the
+      -- marker itself grows a character that alphabet does not strip.
+      --
+      -- The bullet's trailing prose is deliberately not fed in: the brief says
+      -- the status line stands alone, so the contract is about the token.
+      testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
+        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
+        let decorated = "`" <> continueMarker <> "`"
+        assertBool
+          "the brief does not show the marker in the decoration this asserts"
+          (T.isInfixOf decorated leafText)
+        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+    , testCase "hands the findings to the worker" $ do
+        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
+        assertBool "the input is not in the leaf" (T.isInfixOf "FINDINGS" leafText)
+    , -- The one rule this brief exists to carry that @implement@ must not.
+      -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
+      -- the sentence being gone is.
+      testCase "forbids editing code to make a sentence true" $ do
+        [leafText] <- flowLeafPrompts "document" document "FINDINGS"
+        assertBool
+          "the brief does not forbid correcting the code instead of the prose"
+          ( T.isInfixOf
+              "never edit code to make a sentence true"
+              (T.unwords (T.words leafText))
+          )
     ]
 
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the
@@ -755,19 +836,25 @@ packagingTests =
 -- deterministic; the exec and ask handlers fail loudly because a review
 -- workflow that grew a world-acting leaf is news.
 workflowLeafPrompts :: Workflow -> IO [Text]
-workflowLeafPrompts wf = do
+workflowLeafPrompts wf =
+  flowLeafPrompts (T.unpack (wfName wf)) (wfFlow wf) (fromMaybe "" (wfInput wf))
+
+-- | 'workflowLeafPrompts' for a bare 'Flow', which is what a leaf written ahead
+-- of its workflow is. Named only for the failure messages.
+flowLeafPrompts :: String -> Flow Text Text -> Text -> IO [Text]
+flowLeafPrompts name flow input = do
   sent <- newIORef []
   _ <-
     interpret
       ( leafRunner
           LeafHandlers
             { lhPrompt = \rendered -> modifyIORef' sent (<> [rendered]) >> pure ""
-            , lhExec = \cmd -> assertFailure (T.unpack (wfName wf) <> " ran an exec leaf: " <> show cmd)
-            , lhAsk = \_ -> assertFailure (T.unpack (wfName wf) <> " reached an ask leaf")
+            , lhExec = \cmd -> assertFailure (name <> " ran an exec leaf: " <> show cmd)
+            , lhAsk = \_ -> assertFailure (name <> " reached an ask leaf")
             }
       )
-      (wfFlow wf)
-      (fromMaybe "" (wfInput wf))
+      flow
+      input
   readIORef sent
 
 -- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather

@@ -21,6 +21,7 @@ module Incite.Feature
   , asReviewSubject
   , asRetroSubject
   , asDocsSubject
+  , document
   , Orientation (..)
   , orient
   , preambleOf
@@ -170,6 +171,54 @@ shipFeature =
       dimap' id merge (fanout' Id (dimap' asRetroSubject id retroFlow))
       where
         merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
+
+-- | The worker leaf of a documentation run: the one leaf that edits prose.
+--
+-- 'shipFeature'\'s @implement@ with the subject changed, and the differences
+-- are the whole point of having two. It gets 'ponytailLadder' and 'wiggum' —
+-- how much, how long — but __not__ 'agenticCoder', which is a brief about
+-- writing code. In its place it gets the rule a documentation worker breaks:
+-- the fix for a false sentence is the sentence, and changing the code so that a
+-- document becomes true is the one move that is never in scope here.
+--
+-- Top-level rather than bound inside its workflow, so that the test can see
+-- that it splices 'continueMarker' rather than spelling it. A worker brief that
+-- names a marker its orchestrator does not match strands the loop until the
+-- fuel runs out, and that is not visible from any output.
+document :: Flow Text Text
+document =
+  refineWith
+    "document"
+    ( brief
+        [__i|
+          #{ponytailLadder}
+
+          #{wiggum}
+
+          Fix the documentation findings below, in this repository, by editing
+          the documents.
+
+          The document is the artifact and the code is the record. Where the two
+          disagree, correct the DOCUMENT — never edit code to make a sentence
+          true. Where a finding is wrong, say so and why rather than skipping it
+          in silence.
+
+          Prefer deleting a false sentence to rewriting it, and prefer pointing
+          the reader at the code to restating what the code says: a fact kept in
+          two places is the next finding.
+
+          You are running under an orchestrator that will call you again with
+          your own summary as its input, so write the summary for your
+          successor: which findings you closed, which you rejected and why, and
+          what is left.
+
+          End with a status line, alone on the last line:
+
+          - `#{continueMarker}` — findings remain. You will be called again.
+          - `WORK COMPLETE` — every finding is closed or answered.
+        |]
+    )
+    id
 
 -- | The marker a worker ends on to ask the orchestrator for another trip.
 -- Bound rather than written twice: the @implement@ brief tells the worker to
