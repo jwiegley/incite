@@ -1,22 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
--- | Turning a feature request into a plan, and a plan into a pull request.
+-- | Turning a request into a plan, and a plan into a pull request.
 --
--- Two workflows over one shared prefix. 'explorePlanEdit' is the analysis half —
--- explore, plan, edit through lenses — and it is a plain 'Flow' value, so
--- 'planFeature' stops there while 'shipFeature' continues into the acting half.
--- That is the whole reason the prefix is a binding rather than a copy: the two
--- workflows cannot drift in how they analyse.
+-- Two workflows over one shared prefix. 'explorePlanEdit' is the analysis
+-- half — explore, plan, edit through lenses — and it is a plain 'Flow' value,
+-- so 'planFeature' stops there while 'shipFeature' continues into the acting
+-- half: the orchestrator loop ('keepGoing'), the findings-fixer ('remediate'),
+-- the retrospective and the gate-then-PR tail. The shared pieces are bindings
+-- rather than copies for one reason: the two cannot drift in how they analyse.
+--
+-- The acting half is written to take a second consumer — 'remediate',
+-- 'keepGoing' and 'continueMarker' are all top-level and none of them mentions
+-- code — but it has only one today.
 module Incite.Feature
   ( planFeature
   , shipFeature
+  , continueMarker
+  , decideContinue
+  , asReviewSubject
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
-import Agent.Flow (Flow (Id), Mode (Plan), dimap', withMode, (>>>))
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
   , hierarchical
@@ -32,7 +40,7 @@ import Agent.Prompt (brief, i, iii, __i)
 import Agent.Run (Workflow, workflowGReq, workflowReq)
 
 import Incite.Backend (fable5)
-import Incite.Review (reviewHeavyFlow)
+import Incite.Review (retroFlow, reviewHeavyFlow)
 import Incite.Prompts
     ( intrepid,
       skeptic,
@@ -96,6 +104,7 @@ shipFeature =
       >>> loopUntil 8 (implement >>> keepGoing)
       >>> reviewChange
       >>> remediate
+      >>> retrospective
       >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
@@ -134,45 +143,111 @@ shipFeature =
             |]
         )
         id
-    -- 'Right' ends the loop, 'Left' feeds the summary back as the next input.
-    -- Continue only when asked to: see the note on exhaustion above.
-    keepGoing :: Flow Text (Either Text Text)
-    keepGoing = dimap' id decide Id
-      where
-        decide out
-          | T.toLower continueMarker `T.isInfixOf` T.toLower out = Left out
-          | otherwise = Right out
     -- The panel's lenses are written for a diff, and the artifact here is the
-    -- worker's closing summary. A pure prepend points them at the working tree
-    -- — a leaf to say this would be an agent turn spent on one sentence.
+    -- worker's closing summary: 'asReviewSubject' points them at the tree.
     reviewChange = dimap' asReviewSubject id reviewHeavyFlow
-    asReviewSubject summary =
-      [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.
-
-#{summary}|]
-    -- The one leaf that acts on the panel's findings. Read-only reviewers
-    -- cannot fix what they find, which is why this exists separately.
-    remediate =
-      refineWith
-        "remediate"
-        ( brief
-            [__i|
-              #{ponytailLadder}
-
-              #{fixAll}
-
-              The ranked review findings follow. Fix every one of them in this
-              repository, in the shortest change that fixes it. Where you judge
-              a finding wrong, say so and why rather than silently skipping it:
-            |]
-        )
-        id
+    -- Close the run with 'Incite.Review.retroFlow'\'s three columns.
+    --
+    -- __Before the gate, not after the PR.__ 'humanGate' halts the workflow when
+    -- you decline, so anything downstream of it never runs on a no — and a change
+    -- you declined is precisely the run worth holding a retrospective on.
+    --
+    -- __A fanout, not a plain '>>>'.__ 'submitPR' quotes the value it receives as
+    -- \"work so far\", and handing that leaf a retrospective would describe the
+    -- session where it needs the change. So the worker's account flows on
+    -- untouched and the retro is appended under its own heading, which keeps it
+    -- in the run's final artifact without becoming the brief for the next leaf.
+    retrospective =
+      dimap' id merge (fanout' Id (dimap' asRetroSubject id retroFlow))
+      where
+        merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
 -- | The marker a worker ends on to ask the orchestrator for another trip.
--- Bound once: the 'implement' brief tells the worker to emit it and 'keepGoing'
--- matches on it, and the two drifting apart would strand the loop.
+-- Bound rather than written twice: the 'implement' brief tells the worker to
+-- emit it and 'keepGoing' matches on it, and the two drifting apart would
+-- strand the loop. Exported for the same reason — a second worker brief must
+-- splice this and not its own spelling.
 continueMarker :: Text
 continueMarker = "WORK REMAINS"
+
+-- | 'Right' ends an orchestrator loop, 'Left' feeds the worker's summary back
+-- as the next trip's input. Continue only on the explicit marker: see the note
+-- on exhaustion in 'shipFeature'.
+--
+-- The match is the briefs' own contract — the marker alone on the last line —
+-- not an infix scan of the whole summary: prose like "no work remains"
+-- contains the marker and would spin the loop until the fuel aborts it.
+decideContinue :: Text -> Either Text Text
+decideContinue out
+  | lastNonEmptyLine out == T.toLower continueMarker = Left out
+  | otherwise = Right out
+
+lastNonEmptyLine :: Text -> Text
+lastNonEmptyLine =
+  T.toLower
+    . T.dropAround (`elem` ("`*_ ." :: String))
+    . lastOrDefault T.empty
+    . filter (not . T.null . T.strip)
+    . T.lines
+
+lastOrDefault :: a -> [a] -> a
+lastOrDefault d [] = d
+lastOrDefault _ xs = last xs
+
+keepGoing :: Flow Text (Either Text Text)
+keepGoing = dimap' id decideContinue Id
+
+-- | Every panel's lenses are written for a diff, and the artifact after an
+-- orchestrator loop is the worker's closing summary. A pure prepend points
+-- them at the working tree — a leaf to say this would be an agent turn spent
+-- on one sentence.
+asReviewSubject :: Text -> Text
+asReviewSubject summary =
+  [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.
+
+#{summary}|]
+
+-- | The retro's columns are written for a __captured session transcript__, and
+-- inline there is none: 'Incite.Review.retro' gets one because the trigger
+-- endpoint substitutes it ('Agent.Run.withCapturedTranscript'), but a stage in a
+-- chain sees only the previous leaf's output. This says so, rather than letting
+-- three lenses infer a conversation from a summary and quote lines nobody wrote.
+--
+-- It also names where the evidence actually is. The columns ask for grounding —
+-- a moment, a quote, a consequence — and here that lives in the run's artifacts:
+-- the commits, the review findings the panel raised, and what remediation did
+-- with them. A retro on the record rather than on the dialogue is a narrower
+-- retro, and saying which one it is beats producing the other one badly.
+asRetroSubject :: Text -> Text
+asRetroSubject summary =
+  [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
+
+So take your evidence from the record. Run `git log --oneline`, `git diff` and `git status`, and read them. The account below is the closing summary of the review-and-remediation stage — what the panel raised and what was done about it — and it is a claim to check against the commits, not the session itself.
+
+Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.
+
+#{summary}|]
+
+-- | The one leaf that acts on a panel's findings — shared by both acting
+-- workflows, because fixing a doc finding and fixing a code finding is the
+-- same contract. Read-only reviewers cannot fix what they find, which is why
+-- this exists separately.
+remediate :: Flow Text Text
+remediate =
+  refineWith
+    "remediate"
+    ( brief
+        [__i|
+          #{ponytailLadder}
+
+          #{fixAll}
+
+          The ranked review findings follow. Fix every one of them in this
+          repository, in the shortest change that fixes it. Where you judge
+          a finding wrong, say so and why rather than silently skipping it:
+        |]
+    )
+    id
 
 -- | The shared analysis prefix of both feature workflows.
 explorePlanEdit :: Flow Text Text

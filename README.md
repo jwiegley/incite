@@ -58,6 +58,9 @@ prompts/           — prompt bodies for the workflows, read at RUN time
                      are NOT lenses: synthesis.md (the reducer brief) and
                      units.md / sequence.md, which re-express a change for
                      `review-audit`'s granularity axis without judging it
+  retro/*.md       — the `retro` columns, read over a SESSION rather than a
+                     diff: sentiment, went-well, went-wrong, and synthesis.md,
+                     the meeting brief that turns them into `## next time`
   upstream/        — NOT IN THIS REPO. A /nix/store path supplied by the
                      `ponytail` and `awesome-prompts` inputs; gitignored, and
                      a devShell symlink locally. See "Upstream prompts" below
@@ -417,31 +420,28 @@ inline transcript and those same blocking points drop to plain stdin asks, so
 an unattended `ship-feature` still stops at its gate. `plan` and `cost`
 never touch an agent, so they work anywhere.
 
-Currently defined in `workflows/Main.hs`:
+The inventory in `workflows/Main.hs` — each workflow is defined in
+`Incite.Feature` or `Incite.Review`, and only what that list names is exposed:
 
 | workflow | what it does |
 |---|---|
 | `plan-feature` | explore (3 stances) → plan → 6 lens edits (`ponytail`, `denotational`, `risk`, `verification`, `lookahead`, `simple-english`). Prompt-only: touches nothing |
-| `ship-feature` | the above, then implement in place, an 8-beat build/commit/review loop, a human gate, and a PR. The implementer is briefed with `agentic-coder` + ponytail's ladder + `commands/wiggum.md`; review beats send `agents/code-review.md`, work beats send `skills/fix-all.md` + the ladder. World-acting; `execGrant` permits only `git`/`cabal`/`gh` |
+| `ship-feature` | the above, then a steer gate, implementation in place under an orchestrator loop of up to 8 trips (the worker decides when it is done), the full `review-heavy` panel, a remediation leaf, a human gate, and a PR. The implementer is briefed with `agentic-coder` + ponytail's ladder + `commands/wiggum.md`; remediation sends `skills/fix-all.md` + the ladder. World-acting; `execGrant` permits only `nix*` — the agent's own `git` and `gh` run as its own tools, behind its permission modal |
 | `fess-audit` | honesty-audit a worker's in-progress session; read-only, on codex. Fired over MCP by the worker after each commit |
-| `ponytail-review` | review a diff for over-engineering only — what to delete, what the stdlib or platform already does — ending in a net line count. Read-only, on codex, also callable over MCP |
-| `ponytail-audit` | the same cuts over a whole tree instead of a diff, ranked biggest first. Input defaults to "the repository in the current working directory", so it needs no argument. Read-only, on codex, also callable over MCP |
-| `review-lite` | a diff through 2 concurrent reviewers — correctness + ponytail complexity — reduced by a *pure* fold, correctness first. No synthesis leaf: two turns total, cheap enough for a per-commit beat, which is what `wiggum` uses it for |
-| `review-heavy` | a diff through 7 concurrent reviewers — correctness, security, tests, performance, Haskell, ponytail complexity, and AI-generated-code failure modes — then an agent synthesises one ranked, de-duplicated list. Pre-PR, not per-commit |
+| `retro` | a human-style retrospective on a worker's session: three columns gathered concurrently on three backends — sentiment, what went well, what did not — then a meeting leaf that emits them plus a `## next time` section of concrete changes. Read-only. Same captured-transcript input as `fess-audit`, but end-of-session rather than per-commit, and its subject is the *process*, not the account |
+| `review-lite` | a commit through 4 concurrent reviewers — correctness, the `fess` claims-versus-diff audit, reshape complexity, ponytail cuts — one lens per backend, reduced by a *pure* fold. No synthesis leaf: cheap enough for the per-commit beat, which is what `wiggum` uses it for |
+| `review-heavy` | a diff through 7 review lenses — correctness, security, tests, performance, Haskell, ponytail complexity, and AI-generated-code failure modes — each answered by all three backends (**21 reviewers**), plus both regroupings answered on claude-agent alone, then an agent synthesises one ranked, de-duplicated list. Pre-PR, not per-commit |
 | `review-audit` | the exhaustive tier: `review-heavy`'s panel **plus architecture** — 8 lenses × 3 backends — run over the change **three times at three granularities** (full diff, logical units, ideal sequential edits), then one synthesis. **75 leaves.** Deliberate, never on a beat |
-| `planner-audit` | audits an agent's **planner design**, not its code: plan shape, lookahead depth, reward estimation, replan triggers, compute budget. Input defaults to this repo's own `workflows/`. Read-only, on codex |
 | `prompt-lint` | checks the **prompts** against ASD-STE100 — rule, offending text, rewrite — over *procedural* instructions only. On target because the prompts are the product here, and every review tier reads code instead. Read-only |
-| `haskell-review` | review a function with the full `code-review` agent prompt, then rewrite it fixing the issues |
-| `explain` | explain code in plain English |
-| `test-writer` | draft hspec tests → critique → finalize |
 
 Where the [upstream briefs](#upstream-prompts) land:
 
 - ponytail's **ladder** — the `ponytail` lens runs **first** in the shared edit
   stage, so the later lenses only annotate steps that survive it, and it rides
   along with `fix-all` on every work beat.
-- ponytail's **review** and **audit** rubrics — one workflow each, same shape,
-  differing only in what they are pointed at.
+- ponytail's **review** and **audit** rubrics — panel lenses, same tags and
+  scoring, pointed at a diff (`review-lite` and the `review-heavy` panel) or at
+  the whole change (`review-audit`).
 - **agentic-coder** — opens the brief for the implementer in `ship-feature`, the
   first leaf in either workflow that writes to a file. That is where
   read-before-editing and the security checklist have to land, not at the review
@@ -476,11 +476,17 @@ They are MCP calls back into **this very binary**: both are workflows in the
 `output`. No subagents, no context snapshot to assemble, and no filesystem
 coordination — the old `doc/observations/` protocol is gone.
 
-`fess-audit` is the only workflow here marked **`withCapturedTranscript`**, and
+`fess-audit` is one of two workflows here marked **`withCapturedTranscript`**, and
 that mark is what makes it work. A run advertises its own MCP endpoint to the
 sessions it opens; a workflow with that mark, called through it, gets the worker's
 captured conversation as input instead of whatever the caller passed, and its
 input requirement is bypassed. Its subject genuinely *is* the session.
+
+`retro` is the other one, and it carries the mark for the same reason — a
+retrospective is about the session or it is about nothing. It is not on this
+beat: `fess-audit` asks *is this account true* after every commit, `retro` asks
+*how did this session go* once, at the end, and answers with changes to make next
+time.
 
 Nothing else declares it, deliberately. The endpoint serves the whole `workflows`
 list, so `review-lite` — fired on the same beat — keeps the caller's input and
@@ -568,15 +574,17 @@ thing being audited *is* an agent; in a general repo audit it would return a des
 document about a planner that does not exist.
 
 It defaults to this repo's own `workflows/`, which is exactly its subject matter —
-and it has something to say there: `ship-feature`'s `workLoop 8` is a
-fixed-depth unrolled loop with no replan trigger, which the rubric calls "a greedy
-policy in disguise."
+and it has already earned its keep there: `ship-feature`'s work loop used to be a
+fixed-depth `workLoop 8` with no replan trigger — a greedy policy in disguise, in
+the rubric's terms — which is why it is now `loopUntil`, ended by the worker's
+own summary.
 
 The same rubric is *also* the `lookahead` lens in `plan-feature`'s edit stage —
-applied to a plan there rather than to a planner. It runs **last**, after
-`sequencing`: it reorders for irreversibility and inserts checkpoints, and doing
-that before the dependency order is right would be adjusting a sequence about to
-change anyway. What it asks of a plan: mark the irreversible steps and get a
+applied to a plan there rather than to a planner. It runs **late** — after
+`risk` and `verification`, with only the `simple-english` wording pass behind
+it: it reorders for irreversibility and puts cheap reversible checks in front of
+the expensive steps, and doing that before the steps' risks are annotated and
+checked would be adjusting a sequence about to change anyway. What it asks of a plan: mark the irreversible steps and get a
 cheap reversible check in front of them, name the evidence that would show an
 approach is wrong and gather it *first*, and cut ordering that is locally
 convenient but forecloses a better route later.

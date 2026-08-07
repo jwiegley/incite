@@ -61,6 +61,7 @@ nix run .#agent-functor -- plan <name>          # offline: print the flow skelet
 nix run .#agent-functor -- cost <name>          # offline: worst-case leaf-execution count + node count
 nix run .#agent-functor -- run <name> -i "..."  # drive an agent; live TUI on a tty, inline when piped
 nix develop                                     # GHC + agent-functor library + cabal + HLS for editing workflows
+nix develop -c cabal test                       # run the unit test suite (decideContinue, lensesOf, etc.)
 ```
 
 `plan` and `cost` never touch an agent — safe to run anytime. `cost` reports
@@ -110,25 +111,33 @@ skill `author`/`invocation`), and `degradation = "skip"` (drop on tools that lac
 the native concept rather than degrading into a collision — only `code-review`
 sets this today). Commit + rebuild. Done.
 
-**A workflow**: write a `Workflow` in `workflows/Main.hs` and add it to the
-`workflows` list — the CLI picks it up automatically. Use `workflow` (baked-in
-input), `workflowReq` (demands input), or `workflowGReq` (acts on the world; the
-extra arg is the `execGrant` whitelist, everything not listed is denied). For
-briefs longer than a line, add a file under `prompts/` and reference it with
-`[promptFile|prompts/...|]`; the module already has `OverloadedStrings` and
-`QuasiQuotes`. `string-interpolate` is re-exported by agent-functor as `i` for
-`#{}` holes.
+**A workflow**: define a `Workflow` in `workflows/Incite/Feature.hs` (request →
+plan → PR) or `workflows/Incite/Review.hs` (the review and audit tiers), and add
+it to the `workflows` inventory list in `workflows/Main.hs` — a workflow not in
+that list is not exposed as a subcommand or MCP tool, no matter how well
+defined. Use `workflow` (baked-in input), `workflowReq` (demands input), or
+`workflowGReq` (acts on the world; the extra arg is the `execGrant` whitelist,
+everything not listed is denied). Prompt bodies live in files under `prompts/`,
+bound once in `Incite.Prompts` with `[promptFile|prompts/...|]`; a NEW prompt
+directory also needs a glob in `incite-workflows.cabal`'s `extra-source-files`
+and, to be STE-linted, a line in `flake.nix`'s `stePromptSrc` fileset.
+`string-interpolate` is re-exported by agent-functor as `i` for `#{}` holes.
 
 ## Defined workflows
 
+The `workflows` list in `workflows/Main.hs` is the inventory; this table follows
+it.
+
 | name | kind | notes |
 |---|---|---|
-| `ship-feature` | prompt-only | explore (3 stances) → plan → lens edits → multi-scale review. Touches nothing. |
-| `ship-feature-full` | world-acting | the above, then implement via 3 racing workers in separate worktrees, an 8-beat build/commit/review loop, a human gate, and a PR. `execGrant` permits only `git*`/`cabal*`/`gh*`. |
-| `fess-audit` | prompt-only, MCP-exposed | honesty audit of a worker's captured transcript; runs read-only on a different backend. The worker triggers it via `fess-audit` MCP tool after each commit. |
-| `haskell-review` | prompt-only | review a function with `code-review` agent prompt, then rewrite. |
-| `explain` | prompt-only | explain code in plain English. |
-| `test-writer` | prompt-only | draft hspec tests → critique → finalize. |
+| `plan-feature` | prompt-only | explore (3 stances) → plan → 6 lens edits. Touches nothing. |
+| `ship-feature` | world-acting | the above, then implement in place under an orchestrator loop of up to 8 trips, the 21-reviewer panel, remediation, a human gate, and a PR. `execGrant` permits only `nix*`. |
+| `fess-audit` | prompt-only | honesty audit of a worker's captured transcript; read-only on codex. The worker fires it over MCP after each commit. |
+| `retro` | prompt-only | retrospective over a captured session: sentiment / went-well / went-wrong columns, then a `## next time` synthesis. |
+| `review-lite` | prompt-only | a commit through 4 reviewers, one lens per backend, reduced by a pure fold; the per-commit beat. |
+| `review-heavy` | prompt-only | a diff through 7 lenses on all 3 backends plus regroupings, then one synthesis; pre-PR. |
+| `review-audit` | prompt-only | 8 lenses × 3 backends × 3 granularities — 75 leaves. Deliberate, never on a beat. |
+| `prompt-lint` | prompt-only | ASD-STE100 check over this repo's own prompts, procedural passages only. |
 
 World-acting runs leave `.agent-functor-worktree-*` / `.agent-functor-worker-*`
 directories behind if killed mid-run; gitignored, safe to delete. The
@@ -150,8 +159,14 @@ directories behind if killed mid-run; gitignored, safe to delete. The
 
 ## What is *not* here
 
-- No test suite. The workflows are the thing under test in the `agent-functor`
-  library repo, not here.
+- A unit test suite (`test/Spec.hs`, tasty + HUnit) covers the pure logic
+  that was previously untestable because it was buried in `where` clauses:
+  `decideContinue` (orchestrator loop continuation marker matching),
+  `lensesOf` (review panel composition per `Subject`), `asReviewSubject`,
+  and backend structure. The workflows themselves — the `Flow` values and
+  combinators — remain under test in the `agent-functor` library repo. The
+  suite runs as `checks.${system}.unit-test` in the flake; the dev shell
+  includes `tasty` and `tasty-hunit` so `cabal test` works too.
 - No CI config in this repo — deployment flows through the consuming
   `nixos-dots` flake (`services.agent-pm` for the `isaac` user).
 - Two prompt bodies live outside this repo: the `agentic-philosophy` instructions

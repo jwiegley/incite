@@ -9,6 +9,12 @@ For each behavior this change introduces or alters:
   Three test shapes pass whether or not the code works: a test that asserts the
   function was called; a test that re-implements the logic it checks; a test
   that asserts on a mock's return value. Say what to assert instead.
+- **Does the double match reality?** A mock authored to return what the code
+  under test expects rather than what the real dependency returns; a fixture
+  frozen at an old version of the contract; stubs updated in lockstep with an
+  interface change so the suite passes against the obsolete shape. The test
+  can be specific and thorough and still prove nothing. Ask what verified the
+  double against the real system.
 - **Which edge is missing?** Empty input, the boundary, the error path, and the
   case that produced the bug you are fixing. A regression fix with no test
   naming the regression is incomplete.

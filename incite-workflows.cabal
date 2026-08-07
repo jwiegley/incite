@@ -12,6 +12,7 @@ extra-source-files:
     prompts/*.md
     prompts/explore/*.md
     prompts/review/*.md
+    prompts/retro/*.md
     -- Grafted in from the `flake = false` inputs; never in git (flake.nix).
     prompts/upstream/ponytail/*.md
     prompts/upstream/awesome-prompts/*.md
@@ -23,13 +24,24 @@ extra-source-files:
     commands/wiggum.md
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
-executable agent-functor
+library
     hs-source-dirs:     workflows
-    main-is:            Main.hs
-    other-modules:      Incite.Prompts
+    exposed-modules:    Incite.Prompts
                         Incite.Backend
                         Incite.Feature
                         Incite.Review
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+                        QuasiQuotes
+    ghc-options:        -Wall
+    build-depends:
+        base
+      , text
+      , agent-functor
+
+executable agent-functor
+    hs-source-dirs:     workflows
+    main-is:            Main.hs
     default-language:   GHC2021
     default-extensions: OverloadedStrings
                         QuasiQuotes
@@ -38,3 +50,19 @@ executable agent-functor
         base
       , text
       , agent-functor
+      , incite-workflows
+
+test-suite incite-test
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     test
+    main-is:            Spec.hs
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
+    build-depends:
+        base
+      , text
+      , agent-functor
+      , incite-workflows
+      , tasty
+      , tasty-hunit

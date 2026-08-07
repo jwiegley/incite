@@ -4,29 +4,24 @@
 -- | The review and audit tiers: fan independent reviewers over one artifact
 -- concurrently, then reduce.
 --
--- One shape, escalating along three independent axes, and each buys something
--- different:
+-- One shape at three prices, escalating along three axes: __lenses__ buy
+-- coverage, __backends__ buy confidence (three models agreeing, not one model's
+-- opinion), and __granularity__ buys findings the other two cannot reach.
 --
--- * __lenses__ buy coverage — 'reviewLite' runs four, 'reviewHeavy' seven,
---   'reviewAudit' eight;
--- * __backends__ buy confidence — from 'reviewHeavy' up, every lens is answered
---   by all three models, so agreement is confirmation and disagreement is
---   signal rather than one model's opinion;
--- * __granularity__ buys a kind of finding the others structurally cannot
---   reach, and only 'reviewAudit' pays for it.
---
--- Every reviewer is read-only ('withMode' 'Plan' inside
--- 'Incite.Backend.reviewer'), so no tier can edit what it is reading. ponytail
--- is one lens among several, never the whole review — its own rubric refuses
--- correctness and security work.
+-- Every reviewer is read-only — 'Incite.Backend.reviewer' scopes it 'Plan' — so
+-- no tier can edit what it is reading.
 module Incite.Review
   ( reviewLite
   , reviewHeavy
   , reviewHeavyFlow
   , reviewAudit
   , fessAudit
+  , retro
+  , retroFlow
   , plannerAudit
   , promptLint
+  , Subject (..)
+  , lensesOf
   ) where
 
 import Data.Text (Text)
@@ -37,18 +32,16 @@ import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief, iii, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
-import Incite.Backend (backends, fable5, reviewer)
+import Incite.Backend (backends, claudeAgentBackend, fable5, reviewer)
 import Incite.Prompts
 
--- | The cheap tier, fired by @wiggum@ after every commit: four reviewers over
--- one artifact, reduced by a pure fold — one concurrent wave, no synthesis
--- leaf. 'hierarchical' ranks correctness > fess > complexity > ponytail.
+-- | The cheap tier, fired by @wiggum@ after every commit: four reviewers, one
+-- wave, reduced by a pure fold with no synthesis leaf.
 --
--- Deliberately __not__ 'withCapturedTranscript' even though fess is a lens
--- here: every 'exploreFlows' leaf reads the same input, so the mark would hand
--- the three code lenses a conversation log too. This fess audits claims
--- against the diff (\"the message says tests were added; are they in it?\");
--- 'fessAudit' is the marked, whole-session version.
+-- Deliberately __not__ 'withCapturedTranscript' even though fess is a lens: all
+-- four leaves read the same input, so the mark would hand the code lenses a
+-- conversation log. Here fess audits claims against the diff; 'fessAudit' is
+-- the whole-session version.
 reviewLite :: Workflow
 reviewLite =
   workflowReq
@@ -66,11 +59,10 @@ reviewLite =
       ]
       (hierarchical ["correctness", "fess", "complexity", "ponytail"])
 
--- | The thorough tier: the full cross-product — seven review lenses, each run
--- on all three backends, 21 reviewers summed by 'unionFindings' — then a
--- synthesis leaf de-duplicates and ranks. Where 'reviewLite' spreads its
--- lenses across backends for cheap independence, this buys the real thing.
--- Use before a PR, not on a beat.
+-- | The thorough tier: seven lenses answered by all three backends, then a
+-- synthesis leaf that de-duplicates and ranks. Where 'reviewLite' spreads its
+-- lenses across backends for cheap independence, this buys the real thing. Use
+-- before a PR, not on a beat.
 reviewHeavy :: Workflow
 reviewHeavy =
   workflowReq
@@ -83,21 +75,31 @@ reviewHeavy =
     |]
     reviewHeavyFlow
 
--- | 'reviewHeavy' as a plain 'Flow', so 'Incite.Feature' can run the same panel
--- inline after implementation instead of copying it. One definition, two
--- consumers, no drift — the same reason 'Incite.Feature.explorePlanEdit' is a
--- binding.
+-- | 'reviewHeavy' as a plain 'Flow', so 'Incite.Feature' runs the same panel
+-- inline after implementation instead of copying it.
+--
+-- Both regroupings run on claude-agent alone. Fanning them across all three
+-- backends as well is what makes 'reviewAudit' a 75-leaf tier, and this one has
+-- to stay firable after a commit.
 reviewHeavyFlow :: Flow Text Text
 reviewHeavyFlow =
-  panel (lensesOf OfDiff)
-    >>> refineWith "synthesis" (brief reviewSynthesis) id
+    exploreFlows
+      [ ("full", panel auditLenses)
+      , ("units", regroup "units" reviewUnits)
+      , ("sequence", regroup "sequence" reviewSequence)
+      ]
+      unionFindings
+      >>> refineWith "synthesis" (brief reviewSynthesis) id
+  where
+    auditLenses = lensesOf OfDiff
+    regroup name how =
+      refineWith ("regroup:" <> name) (brief how) id >>> panelAcross [claudeAgentBackend] auditLenses
 
 -- | The exhaustive tier: 'reviewHeavy'\'s panel plus a change-reframed
--- architecture lens, run at __three granularities__ — the diff as landed,
--- regrouped into logical units ('reviewUnits'), and re-expressed as the
--- commits it should have been ('reviewSequence', whose @## divergence@ is the
--- finding only that view produces) — then one synthesis over the lot.
--- 75 leaves: run it deliberately, never on a beat.
+-- architecture lens, at three granularities — the diff as landed, regrouped
+-- into logical units, and re-expressed as the commits it should have been
+-- (whose @## divergence@ is the finding only that view produces). The full
+-- panel answers each. 75 leaves: run it deliberately, never on a beat.
 --
 -- The regroupings are agent leaves, not a pure split: \"logical unit\" and
 -- \"ideal sequence\" are semantic, unlike @T.lines@ on a plan.
@@ -124,15 +126,12 @@ reviewAudit =
       >>> refineWith "synthesis" (brief reviewSynthesis) id
   where
     auditLenses = lensesOf OfChange
-    -- Re-express the change, then put the whole panel on the re-expression.
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
 -- | What a panel is pointed at — the only axis on which the lens set varies.
---
--- Two lenses are subject-dependent and the rest are not, so this is the
--- distinction that decides both: ponytail ships one rubric for a diff and
--- another for a whole tree, and architecture is a question you can only ask of
--- a change (a diff on its own does not show the shape it lands in).
+-- Two lenses are subject-dependent: ponytail ships one rubric for a diff and
+-- another for a whole tree, and architecture is a question only a change can
+-- answer.
 data Subject
   = -- | 'reviewHeavy': the diff, and nothing wider.
     OfDiff
@@ -140,8 +139,7 @@ data Subject
     OfChange
 
 -- | The lenses for a subject. Total in 'Subject', so a third one cannot be
--- added without answering both questions it raises — which is the point of
--- doing this with a type rather than by rewriting entries in a list.
+-- added without answering both questions it raises.
 lensesOf :: Subject -> [(LeafName, Prompt)]
 lensesOf subject =
   [ ("correctness", reviewCorrectness)
@@ -158,11 +156,9 @@ lensesOf subject =
       OfDiff -> (ponytailReviewRubric, [])
       OfChange -> (ponytailAuditRubric, [("architecture", architectureOfChange)])
 
--- | 'reviewArchitecture' is whole-tree by its own contract, and says so. This
--- reorientation keeps its questions — leaking boundaries, arrows pointing the
--- wrong way, one decision in many homes — and points them at the shape a change
--- moves toward. The file itself is untouched, so the standalone agent stays
--- whole-tree.
+-- | 'reviewArchitecture' is whole-tree by its own contract. This reorientation
+-- keeps its questions and points them at the shape a change moves toward; the
+-- file is untouched, so the standalone agent stays whole-tree.
 architectureOfChange :: Prompt
 architectureOfChange =
   [__i|
@@ -188,22 +184,28 @@ architectureOfChange =
 -- one artifact. Leaf names are @lens\@backend@, so 'unionFindings' heads each
 -- block with which lens on which model produced it.
 panel :: [(LeafName, Prompt)] -> Flow Text Text
-panel lenses =
+panel = panelAcross backends
+
+-- | 'panel' over a chosen set of backends, and the generalisation 'panel' is
+-- defined by — a narrowed panel cannot drift from the full one in leaf naming
+-- or reduction. The @\@backend@ suffix stays even for a singleton, because
+-- these blocks are read alongside a full panel's.
+panelAcross :: [(LeafName, Flow Text Text -> Flow Text Text)] -> [(LeafName, Prompt)] -> Flow Text Text
+panelAcross bs lenses =
   exploreFlows
     [ reviewer scope (name <> "@" <> backendTag) lens
     | (name, lens) <- lenses
-    , (backendTag, scope) <- backends
+    , (backendTag, scope) <- bs
     ]
     unionFindings
 
 -- | The mid-run honesty auditor: read-only on codex, independent of the
--- claude-agent worker; reports, never edits.
+-- claude-agent worker.
 --
--- The one workflow marked 'withCapturedTranscript': called from a run's
--- trigger endpoint, its input becomes the worker's captured conversation and
--- the input requirement is bypassed. Undeclared workflows on the same beat
--- ('reviewLite') keep the caller's input — that distinction is the point. On a
--- plain @agent-functor mcp@ server the mark is inert.
+-- Marked 'withCapturedTranscript', so called from a run's trigger endpoint its
+-- input is the worker's conversation rather than whatever was passed.
+-- Undeclared workflows on the same beat ('reviewLite') keep the caller's input;
+-- on a plain @agent-functor mcp@ server the mark is inert.
 fessAudit :: Workflow
 fessAudit =
   withCapturedTranscript
@@ -215,10 +217,54 @@ fessAudit =
       |]
     $ withBackend codex defaultModel (withMode Plan (refineWith "fess" (brief fess) id))
 
--- | Audit an agent's __planner design__ against the lookahead rubric. Defaults
--- to this repo's own @workflows\/@, its real subject; point it elsewhere via
--- the input. Deliberately not a 'reviewAudit' lens — in a general repo it
--- would design a planner that does not exist. Read-only on codex.
+-- | The human retrospective, over a session instead of an artifact: sentiment,
+-- what went well and what it cost, then the meeting leaf that turns them into a
+-- @## next time@ section.
+--
+-- 'withCapturedTranscript' for the same reason as 'fessAudit', but asked once at
+-- the end rather than per commit, and about the process rather than the account.
+-- Any @input@ arrives beside the transcript as steering.
+--
+-- The columns are a wave, not a chain, for the reason a facilitator has people
+-- write cards before anyone speaks: a reader who has seen the cost column writes
+-- a shorter good-news column. The synthesis is scoped 'Plan' explicitly because
+-- this runs while the worker is still going.
+retro :: Workflow
+retro =
+  withCapturedTranscript
+    $ workflowReq
+      "retro"
+      [iii|
+        Hold a retrospective on a worker's session (input is its captured
+        transcript): sentiment, what went well, what did not, then the changes
+        to make next time
+      |]
+      retroFlow
+
+-- | 'retro' as a plain 'Flow', so 'Incite.Feature' can close a run with the same
+-- three columns instead of copying them. One definition, two consumers — the
+-- same reason 'reviewHeavyFlow' is a binding.
+--
+-- __The two consumers do not get the same input, and the difference is not
+-- cosmetic.__ As the 'retro' workflow it is 'withCapturedTranscript': started
+-- from a worker's trigger endpoint, its input is that worker's own conversation,
+-- which is what the columns are written for (they ask for quoted lines). Inline
+-- there is no such thing to hand it — a stage sees the previous leaf's output —
+-- so 'Incite.Feature' reframes it first. The lenses are unchanged either way;
+-- only what they are pointed at differs.
+retroFlow :: Flow Text Text
+retroFlow =
+  exploreFlows
+    [ reviewer (withBackend claudeAgent fable5) "sentiment" retroSentiment
+    , reviewer (withBackend codex defaultModel) "went-well" retroWentWell
+    , reviewer (withBackend opencode defaultModel) "went-wrong" retroWentWrong
+    ]
+    unionFindings
+    >>> withMode Plan (refineWith "retro" (brief retroSynthesis) id)
+
+-- | Audit an agent's __planner design__ against the lookahead rubric, defaulting
+-- to this repo's own @workflows\/@. Not a 'reviewAudit' lens: in a general repo
+-- it would design a planner that does not exist. Read-only on codex.
 plannerAudit :: Workflow
 plannerAudit =
   workflow
@@ -235,26 +281,17 @@ plannerAudit =
     $ withBackend codex defaultModel
     $ withMode Plan (refineWith "lookahead" (brief lookaheadPlanningSpecialist) id)
 
--- | Check this repo's own prompts against ASD-STE100, in the skill's CHECK mode:
--- rule number, offending text, compliant rewrite.
+-- | Check this repo's own prompts against ASD-STE100 in the skill's CHECK mode:
+-- rule number, offending text, compliant rewrite. On target because __the
+-- prompts are the product here__ and every review tier reads code instead.
 --
--- On target because __the prompts are the product here__. A brief that reads two
--- ways is a defect with a price — an agent that misreads @Keep one step per
--- line@ wastes a whole run — and unlike prose defects elsewhere, nothing else in
--- this repo looks for it: every review tier reads code.
+-- Two things in 'promptLintBrief' keep it from crying wolf: procedural passages
+-- only (unscoped, it flags the whole repo), and 'steSkill' rather than
+-- 'steRules' — the full skill is the only grade carrying the CHECK contract and
+-- its warning that models invent STE rule numbers.
 --
--- Two things keep it from crying wolf, and both are in the brief:
---
--- * __Procedural passages only.__ STE's own split. The instruction an agent
---   executes has to survive one read; the rationale around it is deliberately
---   elaborate and is not a defect. Unscoped, this lens flags the whole repo.
--- * __'steSkill', not 'steRules'.__ The full skill is the only one carrying the
---   CHECK contract, including its warning that the rule numbering is
---   unintuitive and models cite it from memory — it names a real observed case.
---   A linter citing invented rule numbers is worse than no linter.
---
--- Read-only, and it reports rather than rewrites: 'Incite.Feature'\'s
--- @simple-english@ lens is where STE actually edits anything.
+-- Reports rather than rewrites: 'Incite.Feature'\'s @simple-english@ lens is
+-- where STE edits anything.
 promptLint :: Workflow
 promptLint =
   workflow

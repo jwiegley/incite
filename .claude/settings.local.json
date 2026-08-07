@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/isaac/_/incite status --short)",
+      "Bash(git -C /home/isaac/_/incite log --oneline -2)",
+      "Bash(nix build *)"
+    ]
+  }
+}

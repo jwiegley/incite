@@ -48,6 +48,11 @@ module Incite.Prompts
     -- * Review regroupings (views, not judges)
   , reviewUnits
   , reviewSequence
+    -- * Retrospective columns
+  , retroSentiment
+  , retroWentWell
+  , retroWentWrong
+  , retroSynthesis
     -- * Upstream: ponytail
   , ponytailLadder
   , ponytailReviewRubric
@@ -144,6 +149,22 @@ reviewSynthesis = [promptFile|prompts/review/synthesis.md|]
 reviewUnits, reviewSequence :: Prompt
 reviewUnits = [promptFile|prompts/review/units.md|]
 reviewSequence = [promptFile|prompts/review/sequence.md|]
+
+-- Retrospective columns -----------------------------------------------------------
+
+-- | The retrospective columns, read over a __session__ rather than a diff, plus
+-- the meeting brief that turns them into changes.
+--
+-- Two rules in the briefs keep them out of the review lenses' work. The subject
+-- is the __process__ — a code defect is a review finding, and reaches here only
+-- where the process let it through. The output is a __change__, not a grade:
+-- 'retroWentWell' drops any entry that cannot name what should trigger it again.
+-- 'retroSentiment' reports quoted text, never an inferred inner state.
+retroSentiment, retroWentWell, retroWentWrong, retroSynthesis :: Prompt
+retroSentiment = [promptFile|prompts/retro/sentiment.md|]
+retroWentWell = [promptFile|prompts/retro/went-well.md|]
+retroWentWrong = [promptFile|prompts/retro/went-wrong.md|]
+retroSynthesis = [promptFile|prompts/retro/synthesis.md|]
 
 -- Upstream ------------------------------------------------------------------------
 

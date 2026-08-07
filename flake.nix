@@ -218,6 +218,7 @@
           ./prompts/plan-verification.md
           ./prompts/explore
           ./prompts/review
+          ./prompts/retro
           ./commands/fess.md
           ./commands/post-commit-audit.md
           ./commands/wiggum.md
@@ -767,14 +768,46 @@
       # So this catches the mechanical half and says so. It cannot catch an
       # ambiguous pronoun or a garden-path sentence — no regex can, and the
       # linter's own docstring says as much.
-      checks.${system}.ste-prompts =
-        pkgs.runCommand "ste-prompts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-          # Prove the linter before trusting it — upstream ships its own fixture
-          # pair (a slop paragraph and a clean one) and asserts both directions.
-          python3 ${simple-english}/evals/ste_lint.py --self-test
-          python3 ${steGate} ${simple-english}/evals/ste_lint.py ${stePromptSrc}
-          touch $out
-        '';
+      checks.${system} = {
+        ste-prompts =
+          pkgs.runCommand "ste-prompts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            # Prove the linter before trusting it — upstream ships its own fixture
+            # pair (a slop paragraph and a clean one) and asserts both directions.
+            python3 ${simple-english}/evals/ste_lint.py --self-test
+            python3 ${steGate} ${simple-english}/evals/ste_lint.py ${stePromptSrc}
+            touch $out
+          '';
+
+        # The unit test suite for the pure workflow logic: `decideContinue`
+        # (orchestrator loop continuation), `lensesOf` (review panel
+        # composition), `asReviewSubject`, and backend structure. Built with
+        # `afHpkgs` (agent-functor's pinned nixpkgs) so the `agent-functor`
+        # library dependency resolves correctly; `callCabal2nix` defaults to
+        # `doCheck = true`, which runs the test-suite's `cabal test` phase.
+        unit-test =
+          let
+            testSrc = pkgs.runCommand "incite-test-src" { } ''
+              cp -r --no-preserve=mode,ownership ${
+                pkgs.lib.fileset.toSource {
+                  root = ./.;
+                  fileset = pkgs.lib.fileset.unions [
+                    ./incite-workflows.cabal
+                    ./workflows
+                    ./test
+                    ./prompts
+                    ./agents
+                    ./skills
+                    ./commands/fess.md
+                    ./commands/post-commit-audit.md
+                    ./commands/wiggum.md
+                  ];
+                }
+              } $out
+              cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
+            '';
+          in
+          agent-functor.lib.${system}.afHpkgs.callCabal2nix "incite-workflows-test" testSrc { };
+      };
 
       # `nix develop` for editing ./workflows: GHC with the agent-functor library
       # in scope, plus HLS and cabal, so the Language Server resolves Agent.*.
@@ -786,7 +819,9 @@
       # agreeing with nix. It is a symlink to /nix/store and gitignored: not a
       # copy, nothing to keep in sync, and it moves on its own after a
       # `nix flake update ponytail`.
-      devShells.${system}.default = (agent-functor.lib.${system}.workflowsShell { }).overrideAttrs (old: {
+      devShells.${system}.default = (agent-functor.lib.${system}.workflowsShell {
+        extra = hp: [ hp.tasty hp.tasty-hunit ];
+      }).overrideAttrs (old: {
         # Guarded on the .cabal file: `nix develop /path/to/incite` from another
         # directory is a normal thing to do, and an unguarded `ln` there fails
         # (no ./prompts to put it in) and dirties the shell with an error.

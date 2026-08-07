@@ -10,6 +10,7 @@
 module Incite.Backend
   ( fable5
   , backends
+  , claudeAgentBackend
   , reviewer
   ) where
 
@@ -45,10 +46,16 @@ fable5 = claudeModel "fable"
 -- list comprehension rather than three hand-written copies.
 backends :: [(LeafName, Flow Text Text -> Flow Text Text)]
 backends =
-  [ ("claude-agent", withBackend claudeAgent fable5)
+  [ claudeAgentBackend
   , ("codex", withBackend codex defaultModel)
   , ("opencode", withBackend opencode defaultModel)
   ]
+
+-- | The claude-agent entry of 'backends', named so a flow can scope to just
+-- this one without indexing into that list. 'backends' is built from it, so tag
+-- and scope cannot drift between the fan-out and the single-backend use.
+claudeAgentBackend :: (LeafName, Flow Text Text -> Flow Text Text)
+claudeAgentBackend = ("claude-agent", withBackend claudeAgent fable5)
 
 -- | One reviewer in a fan-out: named, read-only, under a backend scope — built
 -- once here so no reviewer can drift in shape or acquire write access.
