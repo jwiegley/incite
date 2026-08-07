@@ -157,20 +157,19 @@ data Subject
 -- Total in 'Subject', so a new constructor cannot be added without answering
 -- what its artifact admits.
 lensesOf :: Subject -> [(LeafName, Prompt)]
-lensesOf subject =
-  [ ("correctness", reviewCorrectness)
-  , ("security", codeReviewerSecurity)
-  , ("tests", reviewTests)
-  , ("performance", perfReviewer)
-  , ("haskell", haskellReviewer)
-  , ("ponytail", ponytailRubric)
-  , ("doctrine", codeReview)
-  ]
-    <> extra
+lensesOf subject = case subject of
+  OfDiff -> codeLenses ponytailReviewRubric
+  OfChange -> codeLenses ponytailAuditRubric <> [("architecture", architectureOfChange)]
   where
-    (ponytailRubric, extra) = case subject of
-      OfDiff -> (ponytailReviewRubric, [])
-      OfChange -> (ponytailAuditRubric, [("architecture", architectureOfChange)])
+    codeLenses ponytailRubric =
+      [ ("correctness", reviewCorrectness)
+      , ("security", codeReviewerSecurity)
+      , ("tests", reviewTests)
+      , ("performance", perfReviewer)
+      , ("haskell", haskellReviewer)
+      , ("ponytail", ponytailRubric)
+      , ("doctrine", codeReview)
+      ]
 
 -- | 'reviewArchitecture' is whole-tree by its own contract. This reorientation
 -- keeps its questions and points them at the shape a change moves toward; the
