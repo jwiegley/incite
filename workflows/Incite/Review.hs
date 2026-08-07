@@ -141,8 +141,9 @@ reviewAudit =
     auditLenses = lensesOf OfChange
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
--- | The same shape pointed at prose: four lenses that only a document admits,
--- each answered by all three backends, then the same synthesis leaf.
+-- | The same shape pointed at prose: three lenses that only a document admits,
+-- plus the ponytail question every artifact admits, each answered by all three
+-- backends, then the same synthesis leaf.
 --
 -- __No regroupings.__ 'reviewAudit' buys its third tier by re-expressing a
 -- change as logical units and as the commits it should have been. Neither view
@@ -153,19 +154,29 @@ reviewDocs =
   workflowReq
     "review-docs"
     [iii|
-      Review documentation with four lenses only prose admits (accuracy against
-      the code, completeness for a reader who follows it, structure, ponytail
-      cuts), each run on all three backends, then synthesise one ranked list
+      Review documentation with three lenses only prose admits (accuracy against
+      the code, completeness for a reader who follows it, structure) plus the
+      ponytail cuts every artifact admits, each run on all three backends, then
+      synthesise one ranked list
     |]
     reviewDocsFlow
 
--- | 'reviewDocs' as a plain 'Flow', so 'Incite.Feature'\'s acting half can run
--- the same panel inline. One definition, two consumers — the same reason
--- 'reviewHeavyFlow' is a binding.
+-- | 'reviewDocs' as a plain 'Flow', so the acting workflow of "Incite.Feature"
+-- can run the same panel inline rather than copying it.
+--
+-- __One consumer today__, unlike 'reviewHeavyFlow'\'s two: 'reviewDocs' is the
+-- only caller. The binding is written ahead of the second consumer, and that is
+-- the whole reason it is separate from the workflow.
 --
 -- 'reviewSynthesis' is reused rather than copied for prose: it says
 -- \"reviewers\", \"finding\" and \"location\" and never \"code\", so what it
 -- de-duplicates and ranks is already artifact-agnostic.
+--
+-- __Do not union this panel with a code panel.__ Every subject carries a lens
+-- named @ponytail@ — the third law of 'lensesOf' — and 'panelAcross' keys its
+-- blocks @lens\@backend@, so one 'unionFindings' over both would head two
+-- different rubrics with the same @ponytail\@codex@, which is the collision the
+-- pairwise-distinct law exists to prevent. Reduce each panel separately.
 reviewDocsFlow :: Flow Text Text
 reviewDocsFlow =
   panel (lensesOf OfDocs) >>> refineWith "synthesis" (brief reviewSynthesis) id
@@ -243,13 +254,10 @@ architectureOfChange =
     If the change leaves the shape no worse, say `Sound.` and stop.
   |]
 
--- | 'fess' audits an account against the artifact it describes. A document is
--- an account of a system, so the rubric transfers whole; what changes is whose
--- account it is and where the record lives.
---
--- A reorientation rather than a file, for the reason "Incite.Prompts" gives on
--- 'docsCompleteness': a second copy of the honesty rubric is one of the three
--- homes 'docsStructure' is written to report.
+-- | The honesty rubric pointed at a document. A reorientation rather than a
+-- file under @prompts\/review@, for the reason "Incite.Prompts" gives on
+-- 'docsCompleteness': a second copy of 'fess' is one of the three homes
+-- 'docsStructure' is written to report.
 docsAccuracy :: Prompt
 docsAccuracy =
   [__i|
@@ -257,39 +265,43 @@ docsAccuracy =
 
     ---
 
-    ONE ADJUSTMENT to the above: the account is not yours. It is a __document__ —
-    a README, a guide, a reference — and the record it is answerable to is the
-    code in this repository.
+    ONE ADJUSTMENT to the above, and it is a change of referent. You are a
+    reviewer; the account is not yours. It is a __document__ in this repository,
+    written by somebody else, and the record it answers to is the code. Wherever
+    the rubric says you, your account, a claim you made or the work you claimed,
+    read the document and its author instead.
 
-    So read the document as the claim and the code as the record. Every command
-    it tells the reader to run, and every flag, path, identifier, default and
-    version it names: open the code and check it. Cite file:line on both sides —
-    where the document says it, and where the code says otherwise.
+    So: the document is the claim, the code is the record. Every command it
+    tells the reader to run, and every flag, path, identifier, default and
+    version it names — open the code, check it, cite file:line on both sides.
 
-    The rubric's shapes carry over to prose:
+    Of the four shapes above, three repoint and one is void:
 
     * verification gap — a claim nothing in the repository backs up;
-    * spec drift — a behaviour the code changed and the document still describes
-      the old way;
-    * quiet downgrade — prose left describing what was there before a change.
-      That is the rubric's own last shape, and here it is most of the work.
+    * spec drift — a behaviour the code changed, still described the old way;
+    * quiet downgrades — prose left describing what was there before a change;
+      here that is most of the work;
+    * scope creep — VOID. A document modifies no file. Do not report it, and do
+      not report "none" for it either.
 
-    Two things are not yours. Whether a fact is MISSING belongs to the
-    completeness reviewer, and where it SITS belongs to the structure reviewer.
-    You judge only whether what is written is true. Where you cannot reach the
-    code that settles a claim, say so and name what you would read; do not grade
-    it either way.
+    The closing paragraph above is VOID as well. There is no list of gaps "you
+    did not report", and "correcting means doing the work you claimed, not
+    editing the claim" inverts the remedy here: the claim IS the artifact, so
+    correcting a false sentence means editing that sentence, and never means
+    changing the code to match it.
+
+    A fact that is MISSING belongs to the completeness reviewer, and one in the
+    wrong PLACE to the structure reviewer; you judge only whether what is
+    written is true. Where you cannot reach the code that settles a claim, name
+    what you would read and do not grade it either way.
 
     If every claim you checked holds, say `Sound.` and stop.
   |]
 
--- | The ponytail question — what should not exist — asked of prose.
---
--- __A reorientation, not 'ponytailAuditRubric' raw.__ That rubric scopes itself
--- to over-engineering and complexity, and hunts dependencies, factories,
--- wrappers and dead flags. Pointed at a README it finds nothing or invents
--- something, and a lens that emits noise costs more than no lens. The measure
--- and the output format are kept; the hunt list is replaced.
+-- | The ponytail question — what should not exist — asked of prose. Raw,
+-- 'ponytailAuditRubric' hunts dependencies, factories and dead flags, so
+-- pointed at a README it finds nothing or invents something, and a lens that
+-- emits noise costs more than no lens.
 ponytailOfDocs :: Prompt
 ponytailOfDocs =
   [__i|
@@ -297,12 +309,13 @@ ponytailOfDocs =
 
     ---
 
-    ONE ADJUSTMENT to the above: you are reading __documentation__, not a source
-    tree. The measure stands — what would deletion fix — and so do the tags, the
-    ranking and the output line. The hunt list does not.
+    ONE ADJUSTMENT to the above, and it is a change of subject: you are reading
+    __documentation__, not a source tree. The measure stands — what would
+    deletion fix — and so does the ranking. Its named sections do not, and each
+    one is replaced here outright.
 
-    Ignore the Hunt section above. Dependencies, factories and dead flags are not
-    what a document is made of. Hunt these instead:
+    __Hunt.__ The list above (deps, interfaces, factories, wrappers, dead flags,
+    hand-rolled stdlib) is VOID; a document is made of none of them. Hunt these:
 
     * a paragraph that says what the paragraph above it already said;
     * a section for something that no longer exists, or a step nobody performs;
@@ -312,15 +325,21 @@ ponytailOfDocs =
     * ceremony: a preamble before the instruction, a summary of the document
       inside the document.
 
-    Three tags fire here. `delete:` for prose nothing needs, `yagni:` for a
-    section written for a reader who does not exist, and `shrink:` for the same
-    point in fewer lines — show the shorter form. Use `stdlib:` and `native:`
-    only where the document maintains by hand something the tooling already
-    prints, such as a help text or a generated table.
+    __Tags.__ `delete:` is prose nothing needs; `yagni:` a section written for a
+    reader who does not exist; `shrink:` the same point in fewer lines, with the
+    shorter form shown. `stdlib:` and `native:` fire only where the document
+    maintains by hand what the tooling already prints, such as a help text.
 
-    Report `[path]` as the file and the heading you would cut under. Length alone
-    is not a finding: a long passage the reader needs stays, and a cut you cannot
-    name a reader for is not a cut.
+    __Output.__ One line per finding, ranked, as above, and `[path]` is the file
+    and the heading you would cut under. A document has no dependencies to
+    count, so the deps figure is VOID: end with `net: -<N> lines possible.`
+    Nothing to cut: `Lean already. Ship.`
+
+    __Boundaries.__ Read "over-engineering and complexity" as prose that should
+    not exist. What the document gets WRONG belongs to the accuracy reviewer,
+    what it LEAVES OUT to completeness, where a section SITS to structure.
+    Length alone is not a finding: a long passage the reader needs stays, and a
+    cut you cannot name a reader for is not a cut.
   |]
 
 -- | The cross-product: every lens answered by every backend, concurrently, over

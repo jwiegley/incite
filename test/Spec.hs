@@ -18,10 +18,12 @@ import Incite.Prompts
   , codeReviewerSecurity
   , docsCompleteness
   , docsStructure
+  , fess
   , haskellReviewer
   , perfReviewer
   , ponytailAuditRubric
   , ponytailReviewRubric
+  , reviewArchitecture
   , reviewCorrectness
   , reviewTests
   , steSkill
@@ -49,7 +51,9 @@ tests =
     , asReviewSubjectTests
     , lensSetViolationsTests
     , lensesOfTests
+    , reorientationTests
     , promptLintTests
+    , packagingTests
     , backendTests
     ]
 
@@ -291,11 +295,11 @@ lensesOfTests :: TestTree
 lensesOfTests =
   testGroup
     "lensesOf"
-    [ testCase "OfDiff has 7 lenses" $
-        length (lensesOf OfDiff) @?= 7
-    , testCase "OfChange has 8 lenses" $
-        length (lensesOf OfChange) @?= 8
-    , testCase "OfDiff lens names" $
+    [ -- No @length … \@?= N@ cases here: every lens set below is asserted as a
+      -- whole name LIST, which fixes the count and the order and the spelling
+      -- at once. A count beside it is a second, weaker statement of the same
+      -- thing, and one more line to edit when a lens lands.
+      testCase "OfDiff lens names" $
         map (leafNameText . fst) (lensesOf OfDiff)
           @?= [ "correctness"
               , "security"
@@ -316,8 +320,6 @@ lensesOfTests =
               , "doctrine"
               , "architecture"
               ]
-    , testCase "OfDocs has 4 lenses" $
-        length (lensesOf OfDocs) @?= 4
     , testCase "OfDocs lens names" $
         map (leafNameText . fst) (lensesOf OfDocs)
           @?= [ "accuracy"
@@ -372,6 +374,202 @@ lensesOfTests =
           let bodies = map (promptText . snd) (lensesOf s)
               repeats = bodies \\ nub bodies
            in map (("repeated lens body: " <>) . bodyTag) (nub repeats)
+    ]
+
+-- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
+-- adjustment, each paired with the rubric it is a delta against.
+--
+-- __A reorientation is a coupling, and nothing else here can see it.__ Its
+-- correctness is a statement about text it does not contain: it repoints part
+-- of the base and voids the rest, so an upstream edit breaks it __silently__ —
+-- rename the section a delta voids and the voided section is live again; add a
+-- fifth shape and nothing maps it, with no error anywhere. These cases are
+-- where the base\'s structure is asserted at the point the delta enters it.
+reorientations :: [(String, Prompt, Prompt)]
+reorientations =
+  [ ("docsAccuracy", fess, docsAccuracy)
+  , ("ponytailOfDocs", ponytailAuditRubric, ponytailOfDocs)
+  , ("architectureOfChange", reviewArchitecture, architectureOfChange)
+  ]
+
+-- | The text a reorientation adds __below__ the rubric it splices. Meaningful
+-- only where the base is a prefix, which is what
+-- @every reorientation splices its base rubric verbatim@ establishes first.
+adjustmentOf :: Prompt -> Prompt -> Text
+adjustmentOf base reorientation =
+  T.drop (T.length (promptText base)) (promptText reorientation)
+
+-- | The section headings of a rubric, __derived rather than listed__: a line
+-- that is entirely a bold span (the shapes 'fess' names) or a markdown @##@
+-- heading (the parts 'ponytailAuditRubric' is built from).
+--
+-- Derived, because a hand-written list is the failure this check exists to
+-- stop: a fifth section added upstream must arrive here on its own and go red
+-- unmapped, rather than stay unmapped and silent.
+sectionsOf :: Text -> [Text]
+sectionsOf = concatMap headingOf . map T.strip . T.lines
+  where
+    headingOf l
+      | Just h <- T.stripPrefix "## " l = [T.strip h]
+      | T.isPrefixOf "**" l && T.isSuffixOf "**" l && T.length l > 4 =
+          [T.strip (T.takeWhile (/= '—') (T.dropEnd 2 (T.drop 2 l)))]
+      | otherwise = []
+
+-- | Per reorientation: the sentences of its base that force an answer, and the
+-- answer that must be in the adjustment.
+--
+-- Both sides are asserted. The __base__ needle is what makes the answer
+-- necessary, so an upstream edit that drops the sentence goes red here rather
+-- than leaving an answer to a question nobody asks any more.
+voidedSentences :: [(String, Prompt, Prompt, [(Text, Text)])]
+voidedSentences =
+  [
+    ( "docsAccuracy"
+    , fess
+    , docsAccuracy
+    , -- The self-audit frame, the section with no document analogue, and the
+      -- closing rule whose remedy inverts for prose: correcting a false
+      -- sentence in a document IS editing the claim.
+      [ ("Assume you have been dishonest", "the account is not yours")
+      , ("Audit yourself against these", "read the document and its author instead")
+      , ("List every file you modified", "scope creep — VOID")
+      , ("not editing the claim", "editing that sentence")
+      ]
+    )
+  ,
+    ( "ponytailOfDocs"
+    , ponytailAuditRubric
+    , ponytailOfDocs
+    , -- A document has no dependencies, so the output line the rubric fixes
+      -- carries a figure prose cannot produce, and its scope sentence names
+      -- over-engineering rather than prose.
+      [ ("net: -<N> lines, -<M> deps possible.", "net: -<N> lines possible.")
+      , ("Deps the stdlib or platform already ships", "is VOID")
+      , ("over-engineering and complexity only", "over-engineering and complexity")
+      , ("Lean already. Ship.", "Lean already. Ship.")
+      ]
+    )
+  ]
+
+reorientationTests :: TestTree
+reorientationTests =
+  testGroup
+    "reorientations"
+    [ testCase "every reorientation splices its base rubric verbatim" $
+        report
+          [ T.pack label <> " does not start with its base rubric"
+          | (label, base, reorientation) <- reorientations
+          , not (T.isPrefixOf (promptText base) (promptText reorientation))
+          ]
+    , -- 'architectureOfChange' is absent on purpose: its delta is TOTAL
+      -- (\"Everything else stands\"), so it maps every section at once and has
+      -- nothing to enumerate. The two docs deltas void part of their base, and
+      -- a part that is neither repointed nor voided is a section still pointed
+      -- at code.
+      testCase "every voiding reorientation names every section of its base" $
+        report
+          [ T.pack label <> " leaves section " <> tshow section <> " unmapped"
+          | (label, base, reorientation, _) <- voidedSentences
+          , let adjustment = T.toLower (adjustmentOf base reorientation)
+          , section <- sectionsOf (promptText base)
+          , not (T.isInfixOf (T.toLower section) adjustment)
+          ]
+    , testCase "every reorientation answers the base sentences it voids" $
+        report
+          [ complaint
+          | (label, base, reorientation, pairs) <- voidedSentences
+          , let adjustment = adjustmentOf base reorientation
+          , (inBase, inAdjustment) <- pairs
+          , complaint <-
+              concat
+                [ [ T.pack label <> ": base no longer says " <> tshow inBase
+                  | not (T.isInfixOf inBase (promptText base))
+                  ]
+                , [ T.pack label <> ": adjustment does not say " <> tshow inAdjustment
+                  | not (T.isInfixOf inAdjustment adjustment)
+                  ]
+                ]
+          ]
+    , -- The guard on the two cases above: both quantify over lists derived from
+      -- the bases, and a derivation that silently returned @[]@ would make them
+      -- pass over nothing at all.
+      testCase "the section reader finds the sections it is quantified over" $ do
+        sectionsOf (promptText fess)
+          @?= ["Verification gap", "Spec drift", "Scope creep", "Quiet downgrades"]
+        sectionsOf (promptText ponytailAuditRubric)
+          @?= ["Tags", "Hunt", "Output", "Boundaries"]
+    ]
+
+-- | Fail with every complaint named, or pass on @[]@.
+report :: [Text] -> Assertion
+report [] = pure ()
+report problems = assertFailure (T.unpack (T.intercalate "\n" problems))
+
+-- | Every @promptFile@ path spliced in "Incite.Prompts", read out of the source
+-- rather than listed here, so a brief added tomorrow is covered by being
+-- written.
+--
+-- Comment lines are dropped first: the module haddock quotes the splice syntax
+-- to explain it, and prose about a splice is not a splice.
+splicedPromptPaths :: Text -> [Text]
+splicedPromptPaths =
+  map (T.takeWhile (/= '|'))
+    . drop 1
+    . T.splitOn "[promptFile|"
+    . T.unlines
+    . filter (not . T.isPrefixOf "--" . T.stripStart)
+    . T.lines
+
+-- | The entries of the cabal file\'s @extra-source-files@ stanza: the indented
+-- non-comment lines after it, up to the next column-zero line.
+extraSourceFiles :: Text -> [Text]
+extraSourceFiles cabalFile =
+  [ entry
+  | l <- takeWhile indented (drop 1 (dropWhile (not . T.isPrefixOf "extra-source-files:") (T.lines cabalFile)))
+  , let entry = T.strip l
+  , not (T.null entry)
+  , not (T.isPrefixOf "--" entry)
+  ]
+  where
+    indented l = T.null (T.strip l) || T.isPrefixOf " " l
+
+-- | Does one @extra-source-files@ entry carry this path? Two forms appear in
+-- the stanza: a literal path, and a @dir\/*.md@ glob, which matches one
+-- directory level only.
+covers :: Text -> Text -> Bool
+covers entry path = case T.stripSuffix "*.md" entry of
+  Nothing -> entry == path
+  Just dirPrefix ->
+    let rest = T.drop (T.length dirPrefix) path
+     in T.isPrefixOf dirPrefix path
+          && T.isSuffixOf ".md" rest
+          && not (T.isInfixOf "/" rest)
+
+packagingTests :: TestTree
+packagingTests =
+  testGroup
+    "packaging"
+    [ -- A `promptFile` path is checked when "Incite.Prompts" COMPILES and read
+      -- when a leaf runs, and `extra-source-files` is what an sdist carries. So
+      -- a directory spliced from but not listed is a package that builds in a
+      -- git checkout and nowhere else — invisible to every other check here,
+      -- because they all run in the checkout.
+      testCase "extra-source-files carries every spliced prompt file" $ do
+        promptsSource <- TIO.readFile "workflows/Incite/Prompts.hs"
+        cabalFile <- TIO.readFile "incite-workflows.cabal"
+        let paths = splicedPromptPaths promptsSource
+            entries = extraSourceFiles cabalFile
+        -- Both readers proved before either list is quantified over: an empty
+        -- list on either side would make the assertion below pass over nothing.
+        assertBool "no promptFile splices read" $
+          "prompts/upstream/simple-english/skill.md" `elem` paths
+        assertBool "no extra-source-files entries read" $
+          "prompts/*.md" `elem` entries
+        report
+          [ "spliced but not packaged: " <> p
+          | p <- paths
+          , not (any (`covers` p) entries)
+          ]
     ]
 
 -- | The brief @prompt-lint@ ships today. One binding, so parameterising

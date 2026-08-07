@@ -14,8 +14,15 @@ extra-source-files:
     prompts/review/*.md
     prompts/retro/*.md
     -- Grafted in from the `flake = false` inputs; never in git (flake.nix).
+    -- Every directory `Incite.Prompts` splices a `promptFile` from must be
+    -- here: `extra-source-files` is what an sdist carries, and a `promptFile`
+    -- path is checked when the module COMPILES, so a missing glob is a package
+    -- that does not build outside a git checkout. `test/Spec.hs` asserts the
+    -- cover, because nothing else in this repo can see the gap.
     prompts/upstream/ponytail/*.md
     prompts/upstream/awesome-prompts/*.md
+    prompts/upstream/promptdeploy/*.md
+    prompts/upstream/simple-english/*.md
     agents/*.md
     skills/*.md
     -- Slash commands read back as workflow briefs (fess-audit, implement).
