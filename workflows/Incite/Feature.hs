@@ -10,12 +10,15 @@
 -- the retrospective and the gate-then-PR tail. The shared pieces are bindings
 -- rather than copies for one reason: the two cannot drift in how they analyse.
 --
--- The acting half is written to take a second consumer — @remediate@,
+-- The acting half was written to take a second consumer — @remediate@,
 -- @keepGoing@ and 'continueMarker' are all top-level and none of them mentions
--- code — but it has only one today.
+-- code — and 'shipDocs' is it. The two acting workflows differ in exactly three
+-- places: which worker the loop runs, which panel reviews the result, and where
+-- each one stops.
 module Incite.Feature
   ( planFeature
   , shipFeature
+  , shipDocs
   , continueMarker
   , decideContinue
   , asReviewSubject
@@ -49,7 +52,7 @@ import Agent.Prompt (brief, i, iii, __i)
 import Agent.Run (Workflow, workflowGReq, workflowReq)
 
 import Incite.Backend (fable5)
-import Incite.Review (retroFlow, reviewHeavyFlow)
+import Incite.Review (retroFlow, reviewDocsFlow, reviewHeavyFlow)
 import Incite.Prompts
     ( intrepid,
       skeptic,
@@ -66,7 +69,7 @@ import Incite.Prompts
       steRules )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
--- worktree, no git, no PR; 'shipFeature' is the acting half.
+-- worktree, no git, no PR; 'shipFeature' and 'shipDocs' are the acting halves.
 planFeature :: Workflow
 planFeature =
   workflowReq
@@ -172,6 +175,46 @@ shipFeature =
       where
         merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
+-- | 'shipFeature' for prose: the same analysis prefix and the same orchestrator
+-- loop, with @document@ as the worker and "Incite.Review".'reviewDocsFlow' as
+-- the panel. Every stage is a binding the code path already uses, so the two
+-- cannot drift in how they explore, plan, loop or fix.
+--
+-- __It stops at 'remediate'.__ No 'humanGate' and no 'submitPR', and that is a
+-- safety property rather than an omission. An unattended run auto-answers the
+-- gate — @gateAnswer@ defaults to @\"yes\"@ — and @--sandbox@ isolates the
+-- working tree but not the network, so a PR leaf here would be an irreversible
+-- action with nothing in the run able to stop it. The change lands in the tree;
+-- opening the pull request stays a human's push.
+--
+-- __And no retrospective.__ 'shipFeature' holds one because it has a gate for
+-- the retro to sit in front of, and a declined change is the run worth
+-- reflecting on. With no gate there is nothing to sit in front of, and
+-- 'retroFlow' is three more leaves per run.
+--
+-- @document@ receives a __plan__, not findings — it sits where @implement@ sits,
+-- after @steer@ — and 'remediate' is where findings are fixed, in both
+-- workflows.
+shipDocs :: Workflow
+shipDocs =
+  workflowGReq
+    "ship-docs"
+    [iii|
+      Explore a documentation request, plan it, then write under an orchestrator
+      that re-runs the worker until it reports the plan finished; review the
+      result with the four-lens documentation panel and remediate the findings
+    |]
+    (execGrant ["nix*"])
+    $ explorePlanEdit
+      >>> steer "Review the plan — add any guidance before writing begins"
+      >>> loopUntil 8 (document >>> keepGoing)
+      >>> reviewDocuments
+      >>> remediate
+  where
+    -- The docs lenses read an artifact; what reaches them is the worker's
+    -- closing account. 'asDocsSubject' points them at the files instead.
+    reviewDocuments = dimap' asDocsSubject id reviewDocsFlow
+
 -- | The worker leaf of a documentation run: the one leaf that edits prose.
 --
 -- 'shipFeature'\'s @implement@ with the subject changed, and the differences
@@ -195,13 +238,13 @@ document =
 
           #{wiggum}
 
-          Fix the documentation findings below, in this repository, by editing
-          the documents.
+          Write this documentation plan fully in the current repository — edit
+          the documents directly.
 
           The document is the artifact and the code is the record. Where the two
           disagree, correct the DOCUMENT — never edit code to make a sentence
-          true. Where a finding is wrong, say so and why rather than skipping it
-          in silence.
+          true. Where the plan asks for something the code does not support, say
+          so and why rather than skipping it in silence.
 
           Prefer deleting a false sentence to rewriting it, and prefer pointing
           the reader at the code to restating what the code says: a fact kept in
@@ -209,13 +252,15 @@ document =
 
           You are running under an orchestrator that will call you again with
           your own summary as its input, so write the summary for your
-          successor: which findings you closed, which you rejected and why, and
+          successor: which documents you changed, what you rejected and why, and
           what is left.
 
           End with a status line, alone on the last line:
 
-          - `#{continueMarker}` — findings remain. You will be called again.
-          - `WORK COMPLETE` — every finding is closed or answered.
+          - `#{continueMarker}` — the plan is not finished. You will be called
+            again.
+          - `WORK COMPLETE` — every part of the plan is written or answered.
+            Review comes next.
         |]
     )
     id
@@ -349,11 +394,12 @@ asReviewSubject = orient AtChange
 asRetroSubject :: Text -> Text
 asRetroSubject = orient AtRecord
 
--- | 'orient' at 'AtDocs', for the docs panel's stage in an acting workflow.
+-- | 'orient' at 'AtDocs', for the docs panel's stage in 'shipDocs'.
 --
--- Written __ahead of its consumer__, like 'Incite.Review.reviewDocsFlow' and
--- for the same reason: it is the piece the composition needs, and landing it
--- alone is what lets its bytes be fenced before anything depends on them.
+-- Landed __ahead of its consumer__, together with
+-- "Incite.Review".'reviewDocsFlow' and for the same reason: it is the piece the
+-- composition needs, and landing it alone is what let its bytes be fenced
+-- before anything depended on them.
 asDocsSubject :: Text -> Text
 asDocsSubject = orient AtDocs
 
