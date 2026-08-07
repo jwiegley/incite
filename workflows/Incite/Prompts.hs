@@ -2,9 +2,10 @@
 
 -- | Every prompt body the workflows send, in one place.
 --
--- This module is __data, not logic__: nothing here composes a 'Flow' or decides
--- anything. It exists so that "what do we say to the agent" is one file you can
--- read end to end, separately from "how are the agents wired together".
+-- This module is __data, not logic__: nothing here composes a "Agent.Flow".Flow
+-- or decides anything. It exists so that "what do we say to the agent" is one
+-- file you can read end to end, separately from "how are the agents wired
+-- together".
 --
 -- Each binding is a top-level CAF, so each file is read once per process.
 -- @[promptFile|…|]@ is checked when this module compiles and read when a leaf

@@ -3,15 +3,15 @@
 
 -- | Turning a request into a plan, and a plan into a pull request.
 --
--- Two workflows over one shared prefix. 'explorePlanEdit' is the analysis
+-- Two workflows over one shared prefix. @explorePlanEdit@ is the analysis
 -- half — explore, plan, edit through lenses — and it is a plain 'Flow' value,
 -- so 'planFeature' stops there while 'shipFeature' continues into the acting
--- half: the orchestrator loop ('keepGoing'), the findings-fixer ('remediate'),
+-- half: the orchestrator loop (@keepGoing@), the findings-fixer (@remediate@),
 -- the retrospective and the gate-then-PR tail. The shared pieces are bindings
 -- rather than copies for one reason: the two cannot drift in how they analyse.
 --
--- The acting half is written to take a second consumer — 'remediate',
--- 'keepGoing' and 'continueMarker' are all top-level and none of them mentions
+-- The acting half is written to take a second consumer — @remediate@,
+-- @keepGoing@ and 'continueMarker' are all top-level and none of them mentions
 -- code — but it has only one today.
 module Incite.Feature
   ( planFeature
@@ -72,21 +72,22 @@ planFeature =
 -- git worktree.
 --
 -- __The orchestrator is 'loopUntil', not a fixed unroll.__ Trip count is
--- runtime and the worker decides it: each trip is one 'implement' turn taking
+-- runtime and the worker decides it: each trip is one @implement@ turn taking
 -- the previous trip's own summary as its input, and the loop ends the moment
 -- that summary does not ask to continue. Fuel is the ceiling, not the plan — a
 -- feature finished on trip two costs two turns, where @workLoop n@ always cost
 -- @n@ and could not stop.
 --
 -- The default direction is deliberate. 'loopUntil' __aborts on exhaustion__ by
--- upstream design (there is no yield-what-you-have policy), so 'keepGoing'
+-- upstream design (there is no yield-what-you-have policy), so @keepGoing@
 -- continues only on an explicit marker and treats everything else as finished:
 -- a confused worker ends the loop and gets reviewed, rather than burning the
 -- fuel and halting the run with the work stranded.
 --
--- Review is the same panel 'reviewHeavy' exposes as a tool — 21 reviewers, then
--- one synthesis — and 'remediate' is the only leaf that acts on it. Reviewers
--- are read-only by construction, so nothing can fix its own findings.
+-- Review is the same panel "Incite.Review".reviewHeavy exposes as a tool — 21
+-- reviewers, then one synthesis — and @remediate@ is the only leaf that acts on
+-- it. Reviewers are read-only by construction, so nothing can fix its own
+-- findings.
 shipFeature :: Workflow
 shipFeature =
   workflowGReq
@@ -163,8 +164,8 @@ shipFeature =
         merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
 -- | The marker a worker ends on to ask the orchestrator for another trip.
--- Bound rather than written twice: the 'implement' brief tells the worker to
--- emit it and 'keepGoing' matches on it, and the two drifting apart would
+-- Bound rather than written twice: the @implement@ brief tells the worker to
+-- emit it and @keepGoing@ matches on it, and the two drifting apart would
 -- strand the loop. Exported for the same reason — a second worker brief must
 -- splice this and not its own spelling.
 continueMarker :: Text

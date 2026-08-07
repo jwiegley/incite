@@ -26,6 +26,7 @@ module Incite.Review
   , promptLintScope
   , Subject (..)
   , lensesOf
+  , lensSetViolations
     -- * Reorientations
     --
     -- | The lens bodies this module writes itself, rather than reading from a
@@ -37,11 +38,13 @@ module Incite.Review
   , ponytailOfDocs
   ) where
 
+import Data.List (nub, (\\))
 import Data.Text (Text)
+import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
-import Agent.Op (LeafName)
+import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
@@ -173,7 +176,7 @@ reviewDocs =
 -- de-duplicates and ranks is already artifact-agnostic.
 --
 -- __Do not union this panel with a code panel.__ Every subject carries a lens
--- named @ponytail@ — the third law of 'lensesOf' — and 'panelAcross' keys its
+-- named @ponytail@ — the third law of 'lensesOf' — and @panelAcross@ keys its
 -- blocks @lens\@backend@, so one 'unionFindings' over both would head two
 -- different rubrics with the same @ponytail\@codex@, which is the collision the
 -- pairwise-distinct law exists to prevent. Reduce each panel separately.
@@ -183,8 +186,15 @@ reviewDocsFlow =
 
 -- | The __kind of artifact__ a panel is pointed at. Not a switch over which
 -- lenses differ — a name for what is under review, from which the lens set
--- follows. A subject that shares no lens with the others is still a 'Subject';
--- the type says what is being read, and 'lensesOf' says what reading it admits.
+-- follows. The type says what is being read, and 'lensesOf' says what reading
+-- it admits.
+--
+-- A subject that shares no __rubric__ with the others is still a 'Subject':
+-- 'OfDocs' is one, and not one body in its panel is a body a code panel sends.
+-- It is not free of the others in its __names__, and cannot be — 'lensesOf'\'s
+-- third law puts @\"ponytail\"@ in every subject's set, so that one name is
+-- shared by construction and is the only one 'OfDocs' has in common with
+-- 'OfDiff'.
 data Subject
   = -- | 'reviewHeavy': the diff, and nothing wider.
     OfDiff
@@ -201,7 +211,7 @@ data Subject
 --
 -- * the list is __non-empty__ — a subject with no lens is a panel with nothing
 --   to fan out;
--- * the leaf names are __pairwise distinct__ — 'panelAcross' keys blocks by
+-- * the leaf names are __pairwise distinct__ — @panelAcross@ keys blocks by
 --   @lens\@backend@, so a repeat makes two reviewers indistinguishable in the
 --   reduction;
 -- * @\"ponytail\"@ is __present__ — every artifact admits the question of what
@@ -229,6 +239,34 @@ lensesOf subject = case subject of
       , ("ponytail", ponytailRubric)
       , ("doctrine", codeReview)
       ]
+
+-- | 'lensesOf'\'s three laws as a refutable check: one 'Text' per law the set
+-- breaks, and @[]@ for a set that holds all three.
+--
+-- __Beside 'lensesOf' rather than in the test suite__, because the laws are
+-- stated on 'lensesOf' and an executable statement that lives somewhere else is
+-- one a reader of this module cannot reach — the haddock above linked a name
+-- that was not in scope here. A new 'Subject' now answers its laws in one file.
+--
+-- __A report rather than an assertion__, and that is the whole reason it is a
+-- separate binding. Quantified over 'Subject' these laws pass by construction,
+-- so a check that could only ever be pointed at 'lensesOf' would be a law
+-- nobody knows is wired to anything. Returning what is wrong instead of
+-- throwing is what lets a caller point it at a set that BREAKS each law and
+-- read back the right complaint.
+--
+-- Emptiness has no single-defect witness: @[]@ reports the missing ponytail
+-- too, because a set with no lenses has no ponytail lens either.
+lensSetViolations :: [(LeafName, Prompt)] -> [Text]
+lensSetViolations lenses =
+  concat
+    [ ["empty lens set" | null names]
+    , ["duplicate lens names: " <> T.pack (show dups) | not (null dups)]
+    , ["no ponytail lens" | "ponytail" `notElem` names]
+    ]
+  where
+    names = map (leafNameText . fst) lenses
+    dups = names \\ nub names
 
 -- | 'reviewArchitecture' is whole-tree by its own contract. This reorientation
 -- keeps its questions and points them at the shape a change moves toward; the

@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (nub, (\\))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -8,8 +9,9 @@ import qualified Data.Text.IO as TIO
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, leafNameText)
-import Agent.Prompt (Prompt, brief, promptText)
+import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
 import Incite.Feature (asReviewSubject, continueMarker, decideContinue)
@@ -32,6 +34,7 @@ import Incite.Review
   ( Subject (..)
   , architectureOfChange
   , docsAccuracy
+  , lensSetViolations
   , lensesOf
   , ponytailOfDocs
   , promptLint
@@ -136,67 +139,63 @@ asReviewSubjectTests =
           T.isInfixOf "git diff" (asReviewSubject "summary")
     ]
 
--- | The three laws of 'lensesOf', written as a refutable check: one 'Text' per
--- law the set breaks, and @[]@ for a set that holds all three.
---
--- Separate from the assertions so the laws can be shown to FAIL. Quantified
--- over 'Subject' they pass by construction, and a law that never failed is a
--- law nobody knows is wired to anything.
-lensSetViolations :: [(LeafName, Prompt)] -> [Text]
-lensSetViolations lenses =
-  concat
-    [ ["empty lens set" | null names]
-    , ["duplicate lens names: " <> T.pack (show dups) | not (null dups)]
-    , ["no ponytail lens" | "ponytail" `notElem` names]
-    ]
-  where
-    names = map (leafNameText . fst) lenses
-    dups = names \\ nub names
-
--- | A stand-in body: these fixtures exercise the NAMES, and every law is a
--- statement about names alone.
+-- | A stand-in body. Every law 'lensSetViolations' states is a statement about
+-- NAMES, so the body here is noise — and an empty one says so, where naming a
+-- production prompt would suggest these fixtures had something to do with that
+-- reviewer.
 anyPrompt :: Prompt
-anyPrompt = reviewCorrectness
+anyPrompt = prompt ""
 
-emptyLenses, duplicateLenses, ponytaillessLenses, wellFormedLenses :: [(LeafName, Prompt)]
-emptyLenses = []
-duplicateLenses = [("correctness", anyPrompt), ("ponytail", anyPrompt), ("correctness", anyPrompt)]
-ponytaillessLenses = [("correctness", anyPrompt), ("security", anyPrompt)]
-wellFormedLenses = [("correctness", anyPrompt), ("ponytail", anyPrompt)]
+-- | One row per law: a set that breaks it, the report breaking it produces __in
+-- full__, and the __minimal repair__ — the smallest edit to that same set which
+-- makes it lawful.
+--
+-- __The full report, not a membership check.__ \"This fixture has exactly one
+-- defect\" is a claim about the whole report, and @elem@ cannot see it: it
+-- passes on a fixture breaking two other laws as well. Written out, the
+-- non-empty row shows a fact rather than hiding it — @[]@ reports the missing
+-- ponytail too, and no fixture can break emptiness alone, because a set with no
+-- lenses has no ponytail lens either.
+--
+-- __A repair per row, not one shared well-formed set.__ Three rows pointed at
+-- one lawful fixture are three spellings of a single assertion, and the two
+-- laws not under test in a row would carry it. Each repair here is reached from
+-- that row's own broken set by the one edit its own law asks for, so the row is
+-- the only thing that can make it pass.
+lensSetLaws :: [(String, [(LeafName, Prompt)], [Text], [(LeafName, Prompt)])]
+lensSetLaws =
+  [
+    ( "non-empty"
+    , []
+    , ["empty lens set", "no ponytail lens"]
+    , [("ponytail", anyPrompt)]
+    )
+  ,
+    ( "pairwise distinct"
+    , [("correctness", anyPrompt), ("ponytail", anyPrompt), ("correctness", anyPrompt)]
+    , ["duplicate lens names: [\"correctness\"]"]
+    , [("correctness", anyPrompt), ("ponytail", anyPrompt)]
+    )
+  ,
+    ( "ponytail present"
+    , [("correctness", anyPrompt), ("security", anyPrompt)]
+    , ["no ponytail lens"]
+    , [("correctness", anyPrompt), ("security", anyPrompt), ("ponytail", anyPrompt)]
+    )
+  ]
 
 lensSetViolationsTests :: TestTree
 lensSetViolationsTests =
   testGroup
     "lensSetViolations"
     [ testGroup
-        "non-empty"
-        [ testCase "empty set is reported" $
-            assertBool "expected an emptiness violation" $
-              "empty lens set" `elem` lensSetViolations emptyLenses
-        , testCase "report stops once the set is non-empty" $
-            assertBool "emptiness still reported" $
-              "empty lens set" `notElem` lensSetViolations wellFormedLenses
-        ]
-    , testGroup
-        "pairwise distinct"
-        [ testCase "a repeated name is reported" $
-            assertBool "expected a duplicate violation" $
-              any (T.isPrefixOf "duplicate lens names") (lensSetViolations duplicateLenses)
-        , testCase "report stops once the repeat is removed" $
-            assertBool "duplicates still reported" $
-              not (any (T.isPrefixOf "duplicate lens names") (lensSetViolations wellFormedLenses))
-        ]
-    , testGroup
-        "ponytail present"
-        [ testCase "a set without ponytail is reported" $
-            assertBool "expected a missing-ponytail violation" $
-              "no ponytail lens" `elem` lensSetViolations ponytaillessLenses
-        , testCase "report stops once ponytail is added" $
-            assertBool "missing ponytail still reported" $
-              "no ponytail lens" `notElem` lensSetViolations wellFormedLenses
-        ]
-    , testCase "a well-formed set has no violations" $
-        lensSetViolations wellFormedLenses @?= []
+      law
+      [ testCase "a set that breaks it reports exactly this" $
+          lensSetViolations broken @?= expected
+      , testCase "the minimal repair clears the report" $
+          lensSetViolations repaired @?= []
+      ]
+    | (law, broken, expected, repaired) <- lensSetLaws
     ]
 
 -- | The lens table this repository intends to ship, written out flat: every
@@ -334,15 +333,17 @@ lensesOfTests =
         filter (`elem` map (leafNameText . fst) (lensesOf OfDiff))
           (map (leafNameText . fst) (lensesOf OfDocs))
           @?= ["ponytail"]
-    , testCase "no duplicate names in OfDiff" $
-        noDuplicates (map (leafNameText . fst) (lensesOf OfDiff))
-    , testCase "no duplicate names in OfChange" $
-        noDuplicates (map (leafNameText . fst) (lensesOf OfChange))
     , testCase "OfChange is OfDiff plus architecture" $
         map (leafNameText . fst) (lensesOf OfChange)
           @?= map (leafNameText . fst) (lensesOf OfDiff) <> ["architecture"]
     , -- Over the ENUMERATION, not a hardcoded list: a new constructor is
       -- covered on arrival rather than when someone remembers to add it here.
+      --
+      -- This subsumes the per-subject duplicate-name cases that used to sit
+      -- above it, and strictly: they read a second copy of the distinctness law
+      -- written here in the test file, and they covered two subjects where this
+      -- covers every one. 'lensSetViolations' is now the single place any of the
+      -- three laws is written down.
       testCase "every subject holds all three laws" $
         mapM_
           ( \s ->
@@ -351,9 +352,25 @@ lensesOfTests =
                 (null (lensSetViolations (lensesOf s)))
           )
           [minBound .. maxBound :: Subject]
-    , -- The guard on the assertion above. Without it a law quantified over an
-      -- enumeration that silently grew stays green over the subjects it used to
-      -- cover; this line forces the edit that proves the enumeration is live.
+    , -- The second half of the ponytail law, which nothing else here reads. The
+      -- quantified assertion above sees that every subject HAS a ponytail lens;
+      -- that each one picks the rubric pointed at it is a claim about bodies,
+      -- and every other case in this group reads @fst@. Point two subjects at
+      -- one rubric and this is what says so.
+      testCase "each subject's ponytail lens is its own rubric" $
+        let rubrics =
+              [ promptText body
+              | s <- [minBound .. maxBound :: Subject]
+              , (name, body) <- lensesOf s
+              , leafNameText name == "ponytail"
+              ]
+         in (length rubrics, length (nub rubrics)) @?= (3, 3)
+    , -- The guard on the hardcoded name lists above, NOT on the quantified law.
+      -- The law needs no guard: @[minBound .. maxBound]@ picks up a constructor
+      -- by itself, which is how @OfDocs@ arrived already covered by it. The name
+      -- lists are written one per constructor and go stale in silence, and so
+      -- does the rubric count on the case above. This line is what forces the
+      -- edit that notices a subject has appeared.
       testCase "Subject enumerates 3 constructors" $
         length ([minBound .. maxBound] :: [Subject]) @?= 3
     , -- The fence on the BODIES. Every assertion above reads @fst@, and so does
@@ -572,28 +589,61 @@ packagingTests =
           ]
     ]
 
--- | The brief @prompt-lint@ ships today. One binding, so parameterising
--- 'promptLintBrief' moves this line and leaves the recorded bytes alone.
-shippedPromptLintBrief :: Prompt
-shippedPromptLintBrief = promptLintBrief promptLintScope
+-- | Every prompt a workflow's leaves actually send, in the order the sequential
+-- interpretation reaches them — recovered by running the workflow's own 'Flow'
+-- with a handler that records the rendered text and answers @\"\"@.
+--
+-- __This is what makes the golden below a fence on the shipped workflow rather
+-- than on a re-derivation of it.__ Reading @'promptLintBrief' 'promptLintScope'@
+-- in the test rebuilds the expression the workflow inlines, so rewiring the
+-- workflow to a different scope — or to a different brief entirely — leaves
+-- every promptLint assertion green. There is nothing else with the resolution to
+-- catch that: @plan@ renders a flow SKELETON (node kinds, refs and leaf names),
+-- so replacing the whole brief with @\"\"@ leaves its output byte-identical.
+--
+-- 'interpret' is 'Agent.Interpret.sequentialStrategy', so this is pure and
+-- deterministic; the exec and ask handlers fail loudly because a review
+-- workflow that grew a world-acting leaf is news.
+workflowLeafPrompts :: Workflow -> IO [Text]
+workflowLeafPrompts wf = do
+  sent <- newIORef []
+  _ <-
+    interpret
+      ( leafRunner
+          LeafHandlers
+            { lhPrompt = \rendered -> modifyIORef' sent (<> [rendered]) >> pure ""
+            , lhExec = \cmd -> assertFailure (T.unpack (wfName wf) <> " ran an exec leaf: " <> show cmd)
+            , lhAsk = \_ -> assertFailure (T.unpack (wfName wf) <> " reached an ask leaf")
+            }
+      )
+      (wfFlow wf)
+      (fromMaybe "" (wfInput wf))
+  readIORef sent
 
--- | What @prompt-lint@\'s single leaf actually sends: the brief, a blank line,
--- then the artifact — which on a default run is the workflow\'s own input
--- description.
-promptLintLeafText :: Text
-promptLintLeafText =
-  promptText (brief shippedPromptLintBrief (fromMaybe "" (wfInput promptLint)))
+-- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather
+-- than picking one when it is not. @prompt-lint@ is a single @ste@ refinement
+-- under two scopes, so a second leaf appearing is a change to what it sends and
+-- belongs in the failure, not silently outside the fence.
+onlyLeafPrompt :: Workflow -> IO Text
+onlyLeafPrompt wf = do
+  sent <- workflowLeafPrompts wf
+  case sent of
+    [one] -> pure one
+    _ ->
+      assertFailure $
+        T.unpack (wfName wf) <> " sends " <> show (length sent) <> " prompts, expected 1"
 
 promptLintTests :: TestTree
 promptLintTests =
   testGroup
     "promptLint"
-    [ testCase "the leaf names every directory it is pointed at" $
+    [ testCase "the leaf names every directory it is pointed at" $ do
+        leafText <- onlyLeafPrompt promptLint
         mapM_
           ( \d ->
               assertBool
                 (T.unpack d <> " is not in the leaf text")
-                (T.isInfixOf d promptLintLeafText)
+                (T.isInfixOf d leafText)
           )
           ["prompts/", "commands/", "agents/", "skills/"]
     , -- A FENCE, not a smoke test. Nothing else in this repository can see the
@@ -601,15 +651,36 @@ promptLintTests =
       -- else. Total equality, so a reordering, a separator change or one
       -- reworded sentence all fail it — a suffix or infix check would not.
       --
+      -- Read off the SHIPPED workflow (see 'workflowLeafPrompts'), so the fence
+      -- stands between the recorded bytes and what @prompt-lint@ actually sends,
+      -- rather than between the recorded bytes and a second copy of the
+      -- expression that produced them.
+      --
       -- The upstream half is NAMED rather than copied. Recording 'steSkill'\'s
       -- ~19 KB here would mirror a flake input into git (which
       -- @prompts\/upstream@ is gitignored to avoid) and go red on
       -- @nix flake update@ — a fence that cries wolf gets regenerated, which is
       -- the one thing it must never be. Every byte this repository owns is in
       -- the golden file, verbatim.
-      testCase "the brief is steSkill plus exactly the recorded local text" $ do
+      --
+      -- The @\\n\\n@ tail is 'Agent.Prompt.brief'\'s separator and the
+      -- workflow\'s own input field, not a third copy of the brief.
+      testCase "the leaf sends steSkill plus exactly the recorded local text" $ do
         recorded <- TIO.readFile "test/golden/prompt-lint-brief.txt"
-        promptText shippedPromptLintBrief @?= promptText steSkill <> recorded
+        leafText <- onlyLeafPrompt promptLint
+        leafText
+          @?= promptText steSkill <> recorded <> "\n\n" <> fromMaybe "" (wfInput promptLint)
+    , -- The parameterisation itself, which nothing else checks. Splicing the
+      -- scope and then ignoring it, or splicing it twice, both leave the shipped
+      -- brief looking right to every other assertion here.
+      testCase "the scope reaches the brief exactly once" $
+        T.count promptLintScope (promptText (promptLintBrief promptLintScope)) @?= 1
+    , -- And it is the ONLY thing a scope moves: everything else 'promptLintBrief'
+      -- adds is fixed, which is what lets a second panel borrow the rubric.
+      testCase "the scope is the only thing a scope changes" $
+        let other = "You are reading the reference manuals of a documentation repository."
+         in promptText (promptLintBrief other)
+              @?= T.replace promptLintScope other (promptText (promptLintBrief promptLintScope))
     ]
 
 backendTests :: TestTree
@@ -625,8 +696,3 @@ backendTests =
         leafNameText (fst claudeAgentBackend)
           @?= leafNameText (fst (head backends))
     ]
-
-noDuplicates :: [Text] -> Assertion
-noDuplicates xs =
-  let dups = xs \\ nub xs
-   in assertBool ("duplicate names: " <> show dups) (null dups)
