@@ -13,8 +13,29 @@ import Agent.Prompt (Prompt, brief, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
 import Incite.Feature (asReviewSubject, continueMarker, decideContinue)
-import Incite.Prompts (reviewCorrectness, steSkill)
-import Incite.Review (Subject (..), lensesOf, promptLint, promptLintBrief, promptLintScope)
+import Incite.Prompts
+  ( codeReview
+  , codeReviewerSecurity
+  , docsCompleteness
+  , docsStructure
+  , haskellReviewer
+  , perfReviewer
+  , ponytailAuditRubric
+  , ponytailReviewRubric
+  , reviewCorrectness
+  , reviewTests
+  , steSkill
+  )
+import Incite.Review
+  ( Subject (..)
+  , architectureOfChange
+  , docsAccuracy
+  , lensesOf
+  , ponytailOfDocs
+  , promptLint
+  , promptLintBrief
+  , promptLintScope
+  )
 
 main :: IO ()
 main = defaultMain tests
@@ -174,6 +195,98 @@ lensSetViolationsTests =
         lensSetViolations wellFormedLenses @?= []
     ]
 
+-- | The lens table this repository intends to ship, written out flat: every
+-- @(name, body)@ pair named separately, for every 'Subject'.
+--
+-- __Why a second copy.__ 'lensesOf' shares one @codeLenses@ helper between two
+-- constructors, so a body dropped or swapped inside that helper leaves every
+-- name in place. Nothing else here can see a lens body: the assertions below
+-- read @fst@, and @plan@ renders a flow skeleton — node kinds, refs and leaf
+-- names — with no prompt text in it at all. This table is the independent
+-- statement the constructed one is checked against, and it is written flat
+-- rather than reusing a helper of its own so that no restructuring of
+-- 'lensesOf' can move both sides at once.
+--
+-- __The bodies are NAMED, not copied.__ Six of them are files under the
+-- gitignored @prompts\/upstream@, and recording their bytes would make this
+-- check go red on @nix flake update@ — the failure mode
+-- @test\/golden\/prompt-lint-brief.txt@ is written to avoid. Naming a body pins
+-- which brief each lens carries without pinning what upstream wrote in it.
+expectedLensesOf :: Subject -> [(LeafName, Prompt)]
+expectedLensesOf subject = case subject of
+  OfDiff ->
+    [ ("correctness", reviewCorrectness)
+    , ("security", codeReviewerSecurity)
+    , ("tests", reviewTests)
+    , ("performance", perfReviewer)
+    , ("haskell", haskellReviewer)
+    , ("ponytail", ponytailReviewRubric)
+    , ("doctrine", codeReview)
+    ]
+  OfChange ->
+    [ ("correctness", reviewCorrectness)
+    , ("security", codeReviewerSecurity)
+    , ("tests", reviewTests)
+    , ("performance", perfReviewer)
+    , ("haskell", haskellReviewer)
+    , ("ponytail", ponytailAuditRubric)
+    , ("doctrine", codeReview)
+    , ("architecture", architectureOfChange)
+    ]
+  OfDocs ->
+    [ ("accuracy", docsAccuracy)
+    , ("completeness", docsCompleteness)
+    , ("structure", docsStructure)
+    , ("ponytail", ponytailOfDocs)
+    ]
+
+-- | Where a lens set disagrees with the table it is supposed to be: one 'Text'
+-- per lens carrying the wrong body, and @[]@ for agreement.
+--
+-- Equality is over the __full__ rendered text. Only the message is abbreviated,
+-- because a report that printed two 20 KB briefs verbatim is a report nobody
+-- reads.
+lensBodyMismatches :: [(LeafName, Prompt)] -> [(LeafName, Prompt)] -> [Text]
+lensBodyMismatches expected actual
+  | names expected /= names actual =
+      [ "lens names differ: expected "
+          <> tshow (names expected)
+          <> ", got "
+          <> tshow (names actual)
+      ]
+  | otherwise =
+      [ leafNameText name
+          <> " carries "
+          <> bodyTag (promptText got)
+          <> ", expected "
+          <> bodyTag (promptText want)
+      | ((name, want), (_, got)) <- zip expected actual
+      , promptText want /= promptText got
+      ]
+  where
+    names = map (leafNameText . fst)
+
+-- | Enough of a body to identify it in a failure message, and no more. Never
+-- what equality is decided on.
+bodyTag :: Text -> Text
+bodyTag body =
+  tshow (T.length body) <> " chars starting " <> tshow (T.take 48 (T.unwords (T.words body)))
+
+tshow :: (Show a) => a -> Text
+tshow = T.pack . show
+
+-- | Run an assertion at every 'Subject', naming the one that failed. A new
+-- constructor is covered on arrival rather than when someone remembers.
+atEverySubject :: (Subject -> [Text]) -> Assertion
+atEverySubject complaints =
+  case [ tshow s <> ": " <> T.intercalate "; " cs
+       | s <- [minBound .. maxBound :: Subject]
+       , let cs = complaints s
+       , not (null cs)
+       ] of
+    [] -> pure ()
+    problems -> assertFailure (T.unpack (T.intercalate "\n" problems))
+
 lensesOfTests :: TestTree
 lensesOfTests =
   testGroup
@@ -241,6 +354,24 @@ lensesOfTests =
       -- cover; this line forces the edit that proves the enumeration is live.
       testCase "Subject enumerates 3 constructors" $
         length ([minBound .. maxBound] :: [Subject]) @?= 3
+    , -- The fence on the BODIES. Every assertion above reads @fst@, and so does
+      -- every other check this repository has: swap two entries inside the
+      -- shared @codeLenses@ helper and the names, the plan skeletons and the
+      -- cost estimates are all byte-identical while two panels quietly run the
+      -- wrong reviewer. This is the only check with the resolution to catch
+      -- that, so it is the one that must be refutable — see
+      -- 'expectedLensesOf'.
+      testCase "every subject carries the bodies its lenses name" $
+        atEverySubject (\s -> lensBodyMismatches (expectedLensesOf s) (lensesOf s))
+    , -- The guard that keeps the fence above load-bearing. Body equality can
+      -- only refute a swap while the bodies differ; two lenses rendering the
+      -- same text would make a permutation of them undetectable — and would
+      -- already be two reviewers doing one reviewer's work under two names.
+      testCase "no subject repeats a lens body" $
+        atEverySubject $ \s ->
+          let bodies = map (promptText . snd) (lensesOf s)
+              repeats = bodies \\ nub bodies
+           in map (("repeated lens body: " <>) . bodyTag) (nub repeats)
     ]
 
 -- | The brief @prompt-lint@ ships today. One binding, so parameterising

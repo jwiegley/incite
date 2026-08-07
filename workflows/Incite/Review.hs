@@ -26,6 +26,15 @@ module Incite.Review
   , promptLintScope
   , Subject (..)
   , lensesOf
+    -- * Reorientations
+    --
+    -- | The lens bodies this module writes itself, rather than reading from a
+    -- file: an upstream rubric plus one adjustment. Exported so a test can
+    -- name the body each lens is supposed to carry — see @lensesOf@\'s
+    -- expected table in @test\/Spec.hs@.
+  , architectureOfChange
+  , docsAccuracy
+  , ponytailOfDocs
   ) where
 
 import Data.Text (Text)
