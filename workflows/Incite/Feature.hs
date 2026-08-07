@@ -20,8 +20,14 @@ module Incite.Feature
   , decideContinue
   , asReviewSubject
   , asRetroSubject
+  , Orientation (..)
+  , orient
+  , preambleOf
+  , preambleViolations
   ) where
 
+import Data.Char (isSpace)
+import Data.List (nub)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
@@ -199,36 +205,90 @@ lastOrDefault _ xs = last xs
 keepGoing :: Flow Text (Either Text Text)
 keepGoing = dimap' id decideContinue Id
 
--- | Every panel's lenses are written for a diff, and the artifact after an
--- orchestrator loop is the worker's closing summary. A pure prepend points
--- them at the working tree — a leaf to say this would be an agent turn spent
--- on one sentence.
-asReviewSubject :: Text -> Text
-asReviewSubject summary =
-  [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.
-
-#{summary}|]
-
--- | The retro's columns are written for a __captured session transcript__, and
--- inline there is none: 'Incite.Review.retro' gets one because the trigger
--- endpoint substitutes it ('Agent.Run.withCapturedTranscript'), but a stage in a
--- chain sees only the previous leaf's output. This says so, rather than letting
--- three lenses infer a conversation from a summary and quote lines nobody wrote.
+-- | __What a stage is pointed at__ when the artifact reaching it is a worker's
+-- closing summary rather than the thing under review.
 --
--- It also names where the evidence actually is. The columns ask for grounding —
--- a moment, a quote, a consequence — and here that lives in the run's artifacts:
--- the commits, the review findings the panel raised, and what remediation did
--- with them. A retro on the record rather than on the dialogue is a narrower
--- retro, and saying which one it is beats producing the other one badly.
-asRetroSubject :: Text -> Text
-asRetroSubject summary =
-  [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
+-- Every lens in this repository is written for the artifact itself — a diff, a
+-- session, a document. After an orchestrator loop there is no such thing in
+-- hand: a stage in a chain sees the previous leaf's output, which is an
+-- account. An 'Orientation' names where the evidence actually is, so the lenses
+-- go and read it instead of inferring it from the account.
+data Orientation
+  = -- | The working tree, as a diff. 'shipFeature'\'s review stage.
+    AtChange
+  | -- | The run's own record — its commits and what the panel did with them.
+    -- 'shipFeature'\'s retrospective stage.
+    AtRecord
+  deriving (Eq, Show, Bounded, Enum)
+
+-- | The preamble that points a stage at an 'Orientation'\'s evidence.
+--
+-- Three laws hold at every constructor, and 'preambleViolations' is where they
+-- are written down as code:
+--
+-- * each preamble is __non-empty__ — an orientation that says nothing leaves
+--   the lenses reading the account as though it were the artifact, which is the
+--   whole failure this type exists to prevent;
+-- * the preambles are __pairwise distinct__ — two orientations with the same
+--   words are one orientation under two names;
+-- * no preamble __ends in whitespace__ — 'orient' joins with exactly one blank
+--   line, and a trailing newline here makes it two for that constructor alone.
+--   Byte drift in a prompt is invisible at every other check.
+--
+-- Total in 'Orientation', so a new constructor cannot be added without saying
+-- where its evidence lives.
+preambleOf :: Orientation -> Text
+preambleOf o = case o of
+  AtChange ->
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+  AtRecord ->
+    [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
 So take your evidence from the record. Run `git log --oneline`, `git diff` and `git status`, and read them. The account below is the closing summary of the review-and-remediation stage — what the panel raised and what was done about it — and it is a claim to check against the commits, not the session itself.
 
-Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.
+Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.|]
 
-#{summary}|]
+-- | Point a stage at an orientation's evidence and hand it the account beneath.
+--
+-- A pure prepend, not a leaf: a leaf to say one sentence is an agent turn spent
+-- on a sentence. One join for every orientation, so a new one cannot arrive
+-- with its own spacing.
+orient :: Orientation -> Text -> Text
+orient o summary = preambleOf o <> "\n\n" <> summary
+
+-- | The three laws of 'preambleOf', as a refutable check: one 'Text' per law
+-- the preamble breaks, and @[]@ for a set that holds all three.
+--
+-- Takes the whole list rather than one preamble because two of the three laws
+-- are statements about the set. Quantified over 'Orientation' the laws pass by
+-- construction, which is exactly why the refutable form lives here and is
+-- tested against sets that break each one.
+preambleViolations :: [Text] -> [Text]
+preambleViolations ps =
+  concat
+    [ ["empty preamble" | any T.null ps]
+    , ["duplicate preambles" | length (nub ps) /= length ps]
+    , ["preamble ends in whitespace" | any endsInSpace ps]
+    ]
+  where
+    endsInSpace p = not (T.null p) && isSpace (T.last p)
+
+-- | 'orient' at 'AtChange'. Named because "Incite.Review"\'s panel lenses are
+-- written for a diff and this is the one place that says which diff.
+asReviewSubject :: Text -> Text
+asReviewSubject = orient AtChange
+
+-- | 'orient' at 'AtRecord'.
+--
+-- The retro's columns are written for a __captured session transcript__, and
+-- inline there is none: 'Incite.Review.retro' gets one because the trigger
+-- endpoint substitutes it ('Agent.Run.withCapturedTranscript'), but a stage in a
+-- chain sees only the previous leaf's output. 'AtRecord' says so, rather than
+-- letting three lenses infer a conversation from a summary and quote lines
+-- nobody wrote. A retro on the record rather than on the dialogue is a narrower
+-- retro, and saying which one it is beats producing the other one badly.
+asRetroSubject :: Text -> Text
+asRetroSubject = orient AtRecord
 
 -- | The one leaf that acts on a panel's findings — shared by both acting
 -- workflows, because fixing a doc finding and fixing a code finding is the

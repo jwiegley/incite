@@ -14,7 +14,16 @@ import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
-import Incite.Feature (asRetroSubject, asReviewSubject, continueMarker, decideContinue)
+import Incite.Feature
+  ( Orientation (..)
+  , asRetroSubject
+  , asReviewSubject
+  , continueMarker
+  , decideContinue
+  , orient
+  , preambleOf
+  , preambleViolations
+  )
 import Incite.Prompts
   ( codeReview
   , codeReviewerSecurity
@@ -52,6 +61,8 @@ tests =
     [ decideContinueTests
     , continueMarkerTests
     , reframingTests
+    , preambleViolationsTests
+    , orientTests
     , lensSetViolationsTests
     , lensesOfTests
     , reorientationTests
@@ -180,6 +191,82 @@ reframingTests =
             ]
       ]
     | (name, reframe, path) <- reframings
+    ]
+
+-- | One row per law of 'preambleOf': a set of preambles that breaks it, the
+-- report in full, and the minimal repair of that same set.
+--
+-- Same shape as 'lensSetLaws' and for the same reason — a membership check
+-- passes on a fixture that breaks two other laws as well, so the assertion is
+-- on the whole report. The trailing-whitespace row is the one worth reading
+-- twice: it is a __byte__ law, and no other check in this repository can see a
+-- preamble's last character.
+preambleLaws :: [(String, [Text], [Text], [Text])]
+preambleLaws =
+  [ ("non-empty", ["a", ""], ["empty preamble"], ["a", "b"])
+  , ("pairwise distinct", ["a", "a"], ["duplicate preambles"], ["a", "b"])
+  ,
+    ( "no trailing whitespace"
+    , ["a", "b\n"]
+    , ["preamble ends in whitespace"]
+    , ["a", "b"]
+    )
+  ]
+
+preambleViolationsTests :: TestTree
+preambleViolationsTests =
+  testGroup
+    "preambleViolations"
+    [ testGroup
+      law
+      [ testCase "a set that breaks it reports exactly this" $
+          preambleViolations broken @?= expected
+      , testCase "the minimal repair clears the report" $
+          preambleViolations repaired @?= []
+      ]
+    | (law, broken, expected, repaired) <- preambleLaws
+    ]
+
+orientTests :: TestTree
+orientTests =
+  testGroup
+    "orient"
+    [ -- Over the ENUMERATION, so a new orientation answers the laws on arrival
+      -- rather than when someone remembers to add it here.
+      testCase "every orientation's preamble holds all three laws" $
+        let ps = map preambleOf ([minBound .. maxBound] :: [Orientation])
+         in assertBool
+              ("violates: " <> show (preambleViolations ps))
+              (null (preambleViolations ps))
+    , -- The guard on the assertion above: it defends the hand-listed rows
+      -- below, which do go stale, not the quantification, which does not.
+      testCase "Orientation enumerates 2 constructors" $
+        length ([minBound .. maxBound] :: [Orientation]) @?= 2
+    , -- The join as an OBSERVABLE property of the rendered text, not as a
+      -- restatement of 'orient'. Asserting @orient o s == preambleOf o <> …@
+      -- would be the definition written twice and could never fail; this reads
+      -- the result and says what separates the two halves, so it stays a real
+      -- statement however 'orient' is written. It goes red on a preamble ending
+      -- in a newline, which is what makes the third law load-bearing rather
+      -- than decorative.
+      testCase "every orientation leaves exactly one blank line above the account" $
+        mapM_
+          ( \o ->
+              let rendered = orient o "ACCOUNT"
+               in do
+                    assertBool
+                      (show o <> " does not end with one blank line then the account")
+                      (T.isSuffixOf "\n\nACCOUNT" rendered)
+                    assertBool
+                      (show o <> " leaves more than one blank line")
+                      (not (T.isSuffixOf "\n\n\nACCOUNT" rendered))
+          )
+          ([minBound .. maxBound] :: [Orientation])
+    , -- The two named reframings ARE orientations, not copies that drifted.
+      -- 'reframingTests' pins their bytes; this pins which constructor each is.
+      testCase "asReviewSubject is AtChange and asRetroSubject is AtRecord" $ do
+        asReviewSubject "x" @?= orient AtChange "x"
+        asRetroSubject "x" @?= orient AtRecord "x"
     ]
 
 -- | A stand-in body. Every law 'lensSetViolations' states is a statement about
