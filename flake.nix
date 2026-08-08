@@ -270,6 +270,36 @@
         )
       );
 
+      # The library-source inventory every Haskell consumer below needs: the
+      # cabal file, the library modules, the four prompt/skill directories,
+      # and the three commands read back as workflow briefs (named one by one
+      # rather than taking ./commands wholesale, so adding a slash command
+      # does not rebuild anything downstream of this), plus the
+      # `prompts/upstream` graft so `promptFile` splices resolve at build
+      # time. Defined ONCE here so `packages.agent-functor`'s runner,
+      # `packages.haddock`, and `checks.unit-test` build on the same source
+      # instead of each hand-writing the same 8-entry union — the runner and
+      # `haddock` need nothing beyond this and use it directly; `unit-test`
+      # extends it below with `./test` and `./docs/workflows.md`.
+      librarySrc = pkgs.runCommand "incite-library-src" { } ''
+        cp -r --no-preserve=mode,ownership ${
+          pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./incite-workflows.cabal
+              ./workflows
+              ./prompts
+              ./agents
+              ./skills
+              ./commands/fess.md
+              ./commands/post-commit-audit.md
+              ./commands/wiggum.md
+            ];
+          }
+        } $out
+        cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
+      '';
+
       prompts = [
 
         # ── Instructions (rendered to ~/.claude/CLAUDE.md) ──────────────────
@@ -693,28 +723,10 @@
         agent-functor =
           let
             runner = agent-functor.lib.${system}.mkWorkflowRunner {
-              src = pkgs.runCommand "incite-workflows-src" { } ''
-                cp -r --no-preserve=mode,ownership ${
-                  pkgs.lib.fileset.toSource {
-                    root = ./.;
-                    fileset = pkgs.lib.fileset.unions [
-                      ./incite-workflows.cabal
-                      ./workflows
-                      ./prompts
-                      ./agents
-                      ./skills
-                      # Commands read back as workflow briefs; each is a
-                      # promptFile splice checked at build time. Named one by
-                      # one rather than taking ./commands wholesale, so adding
-                      # a slash command does not rebuild the runner.
-                      ./commands/fess.md
-                      ./commands/post-commit-audit.md
-                      ./commands/wiggum.md
-                    ];
-                  }
-                } $out
-                cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
-              '';
+              # `librarySrc` (defined above, near `upstreamPrompts`) IS this
+              # runner's source verbatim — no extras needed beyond the shared
+              # inventory and its upstream graft.
+              src = librarySrc;
               name = "incite-workflows";
             };
           in
@@ -740,34 +752,15 @@
         # Browsable Haddock for the library modules (`Incite.Prompts`,
         # `Incite.Backend`, `Incite.Feature`, `Incite.Review`) — the same
         # `afHpkgs.callCabal2nix` pattern `unit-test` below uses, pointed at
-        # just the library source. No `./test`, so `dontCheck` needs nothing
-        # else to build; no new dependency, since GHC ships haddock. `.doc`
-        # is the output `pkgs.haskell.lib` attaches the generated HTML to, so
-        # `nix build .#haddock` puts it straight under `result/`.
+        # `librarySrc` (defined above) as-is: no `./test`, so `dontCheck`
+        # needs nothing else to build; no new dependency, since GHC ships
+        # haddock. `.doc` is the output `pkgs.haskell.lib` attaches the
+        # generated HTML to, so `nix build .#haddock` puts it straight under
+        # `result/`.
         haddock =
-          let
-            docSrc = pkgs.runCommand "incite-workflows-doc-src" { } ''
-              cp -r --no-preserve=mode,ownership ${
-                pkgs.lib.fileset.toSource {
-                  root = ./.;
-                  fileset = pkgs.lib.fileset.unions [
-                    ./incite-workflows.cabal
-                    ./workflows
-                    ./prompts
-                    ./agents
-                    ./skills
-                    ./commands/fess.md
-                    ./commands/post-commit-audit.md
-                    ./commands/wiggum.md
-                  ];
-                }
-              } $out
-              cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
-            '';
-          in
           (pkgs.haskell.lib.dontCheck (
             pkgs.haskell.lib.doHaddock (
-              agent-functor.lib.${system}.afHpkgs.callCabal2nix "incite-workflows" docSrc { }
+              agent-functor.lib.${system}.afHpkgs.callCabal2nix "incite-workflows" librarySrc { }
             )
           )).doc;
       };
@@ -782,12 +775,20 @@
         # localhost so `nix build .#haddock` is browsable without knowing its
         # store path. Finds `index.html` at run time rather than hardcoding
         # the `share/doc/…` layout, so a nixpkgs haddock-output-path change
-        # does not silently break this.
+        # does not silently break this — and fails loudly if the search comes
+        # up empty rather than falling through: an unchecked `find | head
+        # -n1` on a miss prints nothing, `dirname ""` evaluates to `.`, and
+        # the script would silently serve the current directory instead.
         haddock-serve = {
           type = "app";
           program = "${pkgs.writeShellScript "haddock-serve" ''
             set -euo pipefail
-            dir=$(dirname "$(find ${self.packages.${system}.haddock} -name index.html | head -n1)")
+            indexHtml=$(find ${self.packages.${system}.haddock} -name index.html | head -n1)
+            if [ -z "$indexHtml" ]; then
+              echo "haddock-serve: no index.html found under ${self.packages.${system}.haddock}" >&2
+              exit 1
+            fi
+            dir=$(dirname "$indexHtml")
             echo "Serving Haddock at http://localhost:8000/ (Ctrl-C to stop)" >&2
             exec ${pkgs.python3}/bin/python3 -m http.server 8000 --directory "$dir"
           ''}";
@@ -847,25 +848,20 @@
         # `doCheck = true`, which runs the test-suite's `cabal test` phase.
         unit-test =
           let
+            # `librarySrc` (defined above) plus the two extras this suite
+            # alone needs: `./test` itself, and `./docs/workflows.md`, which
+            # `test/golden/` is fenced against.
             testSrc = pkgs.runCommand "incite-test-src" { } ''
+              cp -r --no-preserve=mode,ownership ${librarySrc} $out
               cp -r --no-preserve=mode,ownership ${
                 pkgs.lib.fileset.toSource {
                   root = ./.;
                   fileset = pkgs.lib.fileset.unions [
-                    ./incite-workflows.cabal
-                    ./workflows
                     ./test
-                    ./prompts
-                    ./agents
-                    ./skills
-                    ./commands/fess.md
-                    ./commands/post-commit-audit.md
-                    ./commands/wiggum.md
                     ./docs/workflows.md
                   ];
                 }
-              } $out
-              cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
+              }/. $out/
             '';
           in
           agent-functor.lib.${system}.afHpkgs.callCabal2nix "incite-workflows-test" testSrc { };
