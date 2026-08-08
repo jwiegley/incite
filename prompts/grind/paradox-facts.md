@@ -30,12 +30,20 @@ relative to the working directory you just probed.
   and `PARADOX_VER`. The dev shell sets those two, and nothing else does, so a
   bare `./test.sh` fails on a tree that is in perfect health. A failure that
   names an empty version in a path is this and not a defect in the code.
-- Build: `cabal build`. Tests: `./test.sh lib-tests -p '<pattern>'`. Always
-  filter with `-p` while you work. Run the full suite only at the final gate.
+- Build: `cabal build`.
+- Tests: `./test.sh <suite> -p '<pattern>'`. The script takes ONE suite name,
+  and the suites are `parse-tests`, `codegen-tests`, `eval-tests`,
+  `strap-tests`, `lsp-tests`, `atlas-tests`, `repl-tests`,
+  `json-roundtrip-tests` and `state-tests`. Read `paradox.cabal` if you want
+  that list from the source. There is no suite named `lib-tests`, whatever
+  another document tells you: `cabal build test:lib-tests` fails to match a
+  target, and that failure is the stale name and not a defect in the code.
+  Always filter with `-p` while you work. The whole set runs once, at the final
+  gate, as `cabal test`.
 - Golden tests: `lib/test/golden/` (`CodeGen/`, `Command/`, `Strap/`,
   `Evaluate/`, `LSP/`, `State/`, `DocTest/`). The order to regenerate one is
   fixed: fix the emitter, confirm the fix compiles, run
-  `./test.sh lib-tests -p '<pattern>' --golden-reset`, then read the golden
+  `./test.sh <suite> -p '<pattern>' --golden-reset`, then read the golden
   diff. Never hand-edit a golden output file, and never run `--golden-reset`
   before the emitter fix compiles.
 - Codegen backends: `lib/src/Paradox/CodeGen/*.hs` (TypeScript, Haskell, Go,
@@ -58,9 +66,8 @@ relative to the working directory you just probed.
   TypeScript, Haskell, Rust, Elixir, Python, Cpp, Scala, Csharp, Ocaml, Nix,
   BashLang, Java, Fstar, Golang, Json, Yaml, Html, Css, Sqlite, Postgresql.
   Every codegen target belongs in every test suite that runs per language. The
-  suites are codegen-tests, eval-tests, strap-tests, parse-tests, state-tests,
-  repl-tests, json-roundtrip-tests, atlas-tests, command-equiv (inside
-  codegen-tests), and lsp-tests.
+  suites are the ones named in the tests bullet above, plus command-equiv,
+  which runs inside `codegen-tests` rather than as a suite of its own.
 - Style: pure functional Haskell. Avoid a new module where an existing one
   fits. Orphan instances are fine here; silence the warning with
   `{-# OPTIONS_GHC -Wno-orphans #-}` rather than restructuring the code.

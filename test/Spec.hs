@@ -2137,12 +2137,18 @@ factsFileTests =
       -- the test-filtering rule, all of which the facts above it already said —
       -- so a discipline could be revised in one section and left stale in the
       -- other, inside one file that a fixer reads whole.
+      -- Whitespace-normalised on both sides, for 'saysLoosely'\'s reason: this
+      -- file is hard-wrapped markdown, so a needle is a phrase in the prose and
+      -- not necessarily a substring of the bytes. Rewrapping a paragraph moved
+      -- "final gate" across a line break and this went red for it — which is a
+      -- fence crying wolf, and a fence that cries wolf gets regenerated.
       testCase "no discipline is stated in two sections" $
-        let secs = sections (promptText paradoxFacts)
+        let norm = T.unwords . T.words
+            secs = sections (promptText paradoxFacts)
          in report
               [ "the facts file states " <> tshow needle <> " in " <> tshow (map fst hits)
               | needle <- factDisciplines
-              , let hits = [s | s@(_, body) <- secs, T.isInfixOf needle body]
+              , let hits = [s | s@(_, body) <- secs, T.isInfixOf (norm needle) (norm body)]
               , length hits /= 1
               ]
     ]

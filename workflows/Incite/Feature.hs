@@ -434,7 +434,7 @@ workerFuel = 8
 grindChecks :: [(LeafName, NonEmpty Text)]
 grindChecks =
   [ ("build", devShell "cabal build")
-  , ("tests", devShell "./test.sh lib-tests")
+  , ("tests", devShell "export paradox_datadir=$PWD/lib; cabal test")
   ]
 
 -- | A check, run inside the __target project's own dev shell__.
@@ -455,6 +455,15 @@ grindChecks =
 -- @nix@ as every check's head also lines the derived 'grindGrant' up with
 -- 'actingGrant'\'s @nix*@, which is the same bargain the other acting workflows
 -- already make: we run nothing ourselves that the project cannot reproduce.
+--
+-- __And @cabal test@ rather than the project's @test.sh@.__ That script takes
+-- ONE suite name, and the name every document about this project reaches for —
+-- @lib-tests@ — is not a suite it has. The real ones are @parse-tests@,
+-- @codegen-tests@, @eval-tests@, @strap-tests@, @lsp-tests@, @atlas-tests@,
+-- @repl-tests@, @json-roundtrip-tests@ and @state-tests@; asking cabal for the
+-- package's tests gets all nine without this file keeping a tenth copy of that
+-- list. @paradox_datadir@ is the one thing @test.sh@ exports that the suites
+-- genuinely need, so it is exported here too.
 devShell :: Text -> NonEmpty Text
 devShell cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
 
