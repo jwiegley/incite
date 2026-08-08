@@ -518,172 +518,50 @@ const synth = await agent(SYNTHESIZE, { label: 'synthesize', phase: 'Synthesize'
 const REPORT = synth && synth.report_path ? synth.report_path : `${ROOT}/docs/audits/`
 const TODO_PATH = REPORT.replace(/\.md$/, '-todo.md')
 
-// ============ PLAN ============
+// ============ PLAN / FIX / VERIFY ============
+// This is the same Plan/Fix/Verify engine as commands/grind-tests.md: same
+// TODO item shape (id/title/category/files/fix/verify), same 3-round
+// completeness-check loop, same FIX_RESULT shape, same file-disjoint wave
+// dispatch (its `runWaves` helper), same 3-round adversarial verify-and-
+// rework loop. Run that engine exactly as grind-tests.md describes it — see
+// its "// ============ PLAN ============" through
+// "// ============ VERIFY ============" sections — against REPORT/TODO_PATH
+// above, producing the same `items`, `fixResults`, and `itemById` bindings
+// grind-tests.md produces, for the gate below. If the scheduler itself needs
+// a fix (the wave dispatch, the completeness loop, the rework logic), fix it
+// in grind-tests.md, not here — a copy here would just drift again.
+//
+// Layer these Paradox-specific rules on top of that generic engine (real
+// differences from grind-tests.md's Elixir/TS rules, not drift):
+// - PLANNER: merge all findings against the same CodeGen/<X>.hs into ONE
+//   work item whose files list includes every golden directory its
+//   regeneration touches; at most one item may claim
+//   lib/test/Paradox/CodeGenSpec.hs or nix/checks.nix. A codegen item's
+//   "fix" always reads: fix the emitter, regenerate scoped goldens with
+//   ./test.sh lib-tests -p '<case-pattern>' --golden-reset, then review the
+//   diff. "verify" is always filtered (./test.sh lib-tests -p '<pattern>' or
+//   cabal build) — never the bare unfiltered suite.
+// - fixerPrompt: codegen hierarchy is fix the EMITTER, then
+//   --golden-reset, then read the golden diff — NEVER hand-edit a golden
+//   output file, NEVER --golden-reset before the emitter fix compiles;
+//   NEVER add special Expression ADT constructors for interfaces (they
+//   resolve via the instance map); a fix without a pinning test is half a
+//   fix; on a dist-newstyle build lock, wait briefly and retry up to 3
+//   times; orphan-instance warnings get
+//   {-# OPTIONS_GHC -Wno-orphans #-}, not restructuring.
+// - Verifier: additionally confirm the golden diff is semantically correct
+//   (not a hand-edited golden hiding an emitter bug) and that a pinning
+//   test exists where the item called for one.
+
 phase('Plan')
 log('Building remediation TODO from every finding...')
-
-const TODO_SCHEMA = {
-  type: 'object',
-  required: ['items'],
-  properties: {
-    items: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['id', 'title', 'category', 'files', 'fix', 'verify'],
-        properties: {
-          id: { type: 'string' },
-          title: { type: 'string' },
-          category: { type: 'string' },
-          files: { type: 'array', items: { type: 'string' } },
-          fix: { type: 'string' },
-          verify: { type: 'string' },
-        },
-      },
-    },
-  },
-}
-
-const PLANNER = `
-You are the remediation planner for a Paradox compiler quality audit of ${ROOT}.
-
-Read the FULL audit report at ${REPORT} — every priority queue item AND every entry under "Full Findings by Category", not just the top 25.
-
-Convert EVERY finding into a work item. No exceptions:
-- Findings judged intentional still get an item (fix = "document the intent with a comment at the site").
-- Medium-value findings are NOT skippable. Performance findings are NOT skippable.
-- Merge findings that touch the same file into ONE work item so no file appears in two items (fixers run concurrently and must not collide). In this repo that especially means: all findings against the same CodeGen/<X>.hs become one item, and that item's files list includes EVERY golden directory its regeneration will touch (lib/test/golden/CodeGen/<case>/...). Treat lib/test/Paradox/CodeGenSpec.hs and nix/checks.nix as shared hot files — at most ONE item may list each.
-- "files": EVERY existing file the fix will touch — emitters, pipeline modules, spec files, golden files/dirs, nix files. Be exhaustive; fixers may only touch listed files plus brand-new files they create.
-- "fix": concrete instructions, embedding the report's code snippets verbatim where they exist. For codegen fixes always include: fix the emitter, then regenerate scoped goldens with ./test.sh lib-tests -p '<case-pattern>' --golden-reset, then REVIEW the golden diff for correctness.
-- "verify": exact command(s), e.g. "./test.sh lib-tests -p 'CodeGen.go'" or "cabal build 2>&1 | tail -5". Always filtered — never the bare full suite.
-- "id": short kebab slug, "category": the audit category.
-
-Also Write the TODO as a human-readable checklist to ${TODO_PATH} (one "- [ ] id — title (files)" line per item).
-
-Return JSON matching the schema.
-`
-
-const planned = await agent(PLANNER, { label: 'plan-todo', phase: 'Plan', schema: TODO_SCHEMA })
-let items = (planned && planned.items) || []
-log(`Planner produced ${items.length} work items — double-checking completeness...`)
-
-for (let round = 1; round <= 3; round++) {
-  const check = await agent(`
-You are the completeness checker for a remediation plan. Read the audit report at ${REPORT} in full.
-
-Here is the current TODO (id, title, category, files only):
-${JSON.stringify(items.map(i => ({ id: i.id, title: i.title, category: i.category, files: i.files })))}
-
-Go finding-by-finding through the ENTIRE report (priority queue AND full findings sections). For every finding NOT covered by any TODO item, produce a new work item in the same schema (id, title, category, files, fix with the report's code verbatim, verify command). If a finding shares files with an existing item but isn't plausibly covered by its title/fix, emit a new item with the same files — the orchestrator serializes overlapping items into later waves.
-
-Return {"items": []} ONLY if literally every finding is covered.
-`, { label: `check-todo-${round}`, phase: 'Plan', schema: TODO_SCHEMA })
-  const missing = (check && check.items) || []
-  if (missing.length === 0) { log(`Completeness check round ${round}: TODO is complete (${items.length} items)`); break }
-  log(`Completeness check round ${round}: ${missing.length} uncovered findings — adding`)
-  items = items.concat(missing)
-}
-
-// ============ FIX ============
+// ... engine runs here (see above) ...
 phase('Fix')
-log(`Dispatching fixers for ${items.length} work items in file-disjoint waves...`)
-
-const FIX_RESULT = {
-  type: 'object',
-  required: ['id', 'status', 'notes'],
-  properties: {
-    id: { type: 'string' },
-    status: { type: 'string', enum: ['fixed', 'blocked'] },
-    notes: { type: 'string' },
-    files_changed: { type: 'array', items: { type: 'string' } },
-  },
-}
-
-const fixerPrompt = (item) => `
-You are a fix agent for a Paradox compiler quality remediation at ${ROOT}. The full audit report is at ${REPORT}.
-${FACTS}
-WORK ITEM ${item.id}: ${item.title}
-Category: ${item.category}
-Files in scope: ${(item.files || []).join(', ')}
-Fix instructions:
-${item.fix}
-
-Verification: ${item.verify}
-
-Non-negotiable rules:
-- Address the finding COMPLETELY. No skipping, no deferring, no watering down. "Pre-existing problem" and "out of scope" are not acceptable outcomes. Add tests where appropriate — a fix without a pinning test is half a fix.
-- Codegen hierarchy: fix the EMITTER in lib/src/Paradox/CodeGen/, then regenerate affected goldens with ./test.sh lib-tests -p '<pattern>' --golden-reset, then READ the golden diff (git diff) and confirm every changed line is intended. NEVER hand-edit golden output files. NEVER --golden-reset before the emitter fix compiles.
-- Never weaken a test assertion to make it pass. Never simplify a test to dodge a bug — fix the bug (this is house law).
-- NEVER add special Expression ADT constructors for interfaces. Interfaces resolve via the instance map.
-- Style: pure functional Haskell; avoid new modules when an existing one fits; orphan-instance warnings get OPTIONS_GHC -Wno-orphans, not restructuring.
-- Touch ONLY the files listed above, plus brand-new files you create. Other fixers run concurrently on other files.
-- Git is READ-ONLY for you: no commit, no reset, no stash, no checkout/restore of paths. The orchestrator owns the tree.
-- The cabal build dir is shared. If you hit a dist-newstyle lock or "another process" error, wait briefly and retry — up to 3 times.
-- Run the verification command (ALWAYS with -p filtering) and make it pass.
-- "blocked" is permitted ONLY when the fix requires changes outside this repository; exhaust every in-repo option first and include a concrete unblock plan in notes.
-
-Return JSON: {"id": "${item.id}", "status": "fixed|blocked", "notes": "...", "files_changed": ["..."]}
-`
-
-const runWaves = async (work) => {
-  const results = []
-  let queue = work.slice()
-  let wave = 0
-  while (queue.length > 0) {
-    wave += 1
-    const claimed = new Set()
-    const now = []
-    const later = []
-    for (const it of queue) {
-      const fs = it.files || []
-      if (fs.some(f => claimed.has(f))) { later.push(it) } else { fs.forEach(f => claimed.add(f)); now.push(it) }
-    }
-    log(`Fix wave ${wave}: ${now.length} items running, ${later.length} deferred (file overlap)`)
-    const res = await parallel(now.map(it => () => agent(fixerPrompt(it), { label: `fix:${it.id}`, phase: 'Fix', schema: FIX_RESULT })))
-    results.push(...res.filter(Boolean))
-    queue = later
-  }
-  return results
-}
-
-let fixResults = await runWaves(items)
-const itemById = {}
-items.forEach(i => { itemById[i.id] = i })
-
-// ============ VERIFY ============
+log('Dispatching fixers for every work item in file-disjoint waves...')
+// ... engine runs here (see above) ...
 phase('Verify')
 log('Adversarially verifying every fix...')
-
-for (let round = 1; round <= 3; round++) {
-  const verdicts = await parallel(fixResults.filter(r => r.status === 'fixed').map(r => () => agent(`
-You are an adversarial verifier for the Paradox compiler at ${ROOT}. A fix agent claims it completed this work item:
-
-${JSON.stringify(itemById[r.id] || r)}
-
-Its claim: ${JSON.stringify(r)}
-
-Try to REFUTE the claim. Read the actual files, run the verification command (${(itemById[r.id] || {}).verify || 'the item verify command'}), and check:
-- the fix is real and complete (not a weakened assertion, not a deleted check, not a hand-edited golden file hiding an emitter bug — diff the goldens against what the emitter actually produces)
-- a pinning test exists where the item called for one
-- for codegen items: the golden diff is semantically correct, not just "tests pass"
-Default to refuted=true if uncertain.
-
-Return JSON: {"id": "${r.id}", "refuted": true|false, "reason": "..."}
-`, { label: `verify:${r.id}`, phase: 'Verify', schema: {
-    type: 'object', required: ['id', 'refuted', 'reason'],
-    properties: { id: { type: 'string' }, refuted: { type: 'boolean' }, reason: { type: 'string' } },
-  } })))
-  const refuted = verdicts.filter(Boolean).filter(v => v.refuted)
-  if (refuted.length === 0) { log(`Verify round ${round}: all fixes confirmed`); break }
-  log(`Verify round ${round}: ${refuted.length} fixes refuted — re-dispatching with verifier feedback`)
-  const rework = refuted.map(v => {
-    const base = itemById[v.id] || { id: v.id, title: v.id, category: 'rework', files: [], verify: './test.sh lib-tests -p CodeGen' }
-    return { ...base, fix: `${base.fix}\n\nPREVIOUS ATTEMPT WAS REFUTED BY A VERIFIER: ${v.reason}\nAddress the refutation fully.` }
-  })
-  const redone = await runWaves(rework)
-  const redoneIds = new Set(redone.map(r => r.id))
-  fixResults = fixResults.filter(r => !redoneIds.has(r.id)).concat(redone)
-}
+// ... engine runs here (see above) ...
 
 log('Gating on full compile + test suite...')
 const gate = await agent(`

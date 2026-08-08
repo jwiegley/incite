@@ -668,241 +668,56 @@ const ALL_FINDINGS = {
   ts_hooks: tsHooks || [],
 }
 
-const TODO_ITEM = {
-  type: 'object',
-  required: ['id', 'title', 'category', 'files', 'instructions', 'severity'],
-  properties: {
-    id: { type: 'string' },
-    title: { type: 'string' },
-    category: { type: 'string' },
-    files: { type: 'array', items: { type: 'string' } },
-    instructions: { type: 'string' },
-    severity: { type: 'string', enum: ['critical', 'high', 'medium'] },
-  },
-}
-
-const PLAN_SCHEMA = {
-  type: 'object',
-  required: ['todo_path', 'items'],
-  properties: {
-    todo_path: { type: 'string' },
-    items: { type: 'array', items: TODO_ITEM },
-  },
-}
-
-const plan = await agent(`
-You are the remediation planner for a LiveView quality audit of ${ROOT}.
-
-Below are the raw findings from 11 audit agents. Convert them into a detailed remediation TODO.
-
-RULES:
-- EVERY finding becomes at least one TODO item. No exceptions, no "low priority — skip",
-  no deferrals. If a finding is genuinely a false positive, you must still emit an item for
-  it whose instructions say exactly why it is a false positive and what to verify in the code
-  before dropping it — the fix agent makes the final call with the code in front of it.
-- Merge only exact duplicates (same file + line + same underlying issue reported by two
-  agents); list all merged source findings in the instructions.
-- instructions must be self-contained and actionable: file paths, line references, the
-  concrete fix code carried over from the finding, and any cross-cutting context (e.g. if
-  several auth items share a systemic fix like an authorize!/2 helper, name the shared
-  helper in each item's instructions so fix agents converge on one design).
-- files: EVERY file the item will touch, as paths relative to ${ROOT} (e.g.
-  "lib/operation_web/live/foo_live.ex", "assets/ts/hooks/foo.ts"). Be exhaustive — this
-  drives conflict-free parallel dispatch. A new TS hook also touches its ui dox file.
-- id format: "<category>-<n>" (e.g. "auth-3"). severity: critical for auth/security
-  mutations, high for value=high findings, medium otherwise.
-
-Run \`date +%Y-%m-%d\` for today's date, then Write a human-readable checklist (markdown
-checkboxes, grouped by severity then category, each item showing id, title, files,
-instructions) to ${ROOT}/docs/audits/grind-live-view-<YYYY-MM-DD>-todo.md (same date as the
-audit report). Then return the structured items and the todo_path you wrote.
-
-THE FINDINGS:
-${JSON.stringify(ALL_FINDINGS)}
-`, { label: 'plan-todo', phase: 'Plan', schema: PLAN_SCHEMA })
-
-let todo = plan.items
-log(`TODO drafted: ${todo.length} items. Double-checking completeness...`)
-
-const CHECK_SCHEMA = {
-  type: 'object',
-  required: ['missing'],
-  properties: { missing: { type: 'array', items: TODO_ITEM } },
-}
-
-for (let round = 1; round <= 3; round++) {
-  const check = await agent(`
-You are an adversarial completeness checker for a remediation TODO in ${ROOT}.
-
-Cross-check EVERY finding below against the TODO. A finding is covered only if some TODO
-item's instructions concretely address its file, line, and issue — vague thematic overlap
-does not count. For every finding NOT covered, return a new TODO item (same shape, id
-"added-${round}-<n>", files relative to ${ROOT}, self-contained instructions including the
-finding's fix code). Also append any items you add to the checklist file at ${plan.todo_path}.
-Return an empty missing array only if every single finding is covered.
-
-FINDINGS:
-${JSON.stringify(ALL_FINDINGS)}
-
-CURRENT TODO:
-${JSON.stringify(todo)}
-`, { label: `completeness-check-${round}`, phase: 'Plan', schema: CHECK_SCHEMA })
-  if (!check || check.missing.length === 0) {
-    log(`Completeness check round ${round}: full coverage confirmed`)
-    break
-  }
-  todo = todo.concat(check.missing)
-  log(`Completeness check round ${round}: ${check.missing.length} uncovered findings added to TODO (now ${todo.length} items)`)
-}
+// ============ PLAN / FIX / VERIFY ============
+// This is the same Plan/Fix/Verify engine as commands/grind-tests.md: build
+// one TODO item per finding (no exceptions, no "low priority — skip", no
+// deferrals — a genuine false positive still gets an item whose
+// instructions say why, so the fix agent makes the final call with the
+// code in front of it), run it through a 3-round adversarial
+// completeness-check loop, dispatch fixers across file-disjoint buckets so
+// no two concurrent agents touch the same file, run an adversarial
+// verify-and-repair round, then gate on compile + tests. Run that engine
+// exactly as grind-tests.md describes it — see its
+// "// ============ PLAN ============" through
+// "// ============ VERIFY ============" sections — against ALL_FINDINGS
+// above, producing the same `plan` (with `.todo_path` and `.items`),
+// `todo`, `statuses`, `blocked`, and `fixedCount` bindings used below. If
+// the scheduler itself needs a fix (the completeness loop, the
+// file-disjoint dispatch, the rework logic), fix it in grind-tests.md, not
+// here — a copy here would just drift again.
+//
+// Layer these LiveView-specific rules on top of that generic engine (real
+// differences from grind-tests.md, not drift):
+// - TODO items carry a "severity" (critical|high|medium): critical for
+//   auth/security mutations, high for value=high findings, medium
+//   otherwise. Rank and dispatch by severity first — authorization gaps
+//   always outrank perf/UX items, per the report's own priority rule.
+// - Most LiveView findings (CSS hardening, componentization, DOM keying,
+//   auth placement) aren't machine-checkable by a single shell command the
+//   way an ExUnit test or a golden diff is. So items carry a self-contained
+//   "instructions" field instead of separate fix/verify commands, and the
+//   verify step is an adversarial agent reading the actual code (e.g.
+//   confirming an auth guard really gates the mutating path and not just
+//   one clause, or that a :key really landed on the dynamic :for) rather
+//   than running a command.
+// - id format: "<category>-<n>" (e.g. "auth-3").
+// - Every fixer must additionally: run NO git commands of any kind (other
+//   agents are editing sibling files concurrently; git operations race
+//   their work); never edit anything under ${ROOT}/.dox/ — it is
+//   generated, so a fix that genuinely needs a codegen change gets marked
+//   blocked with the upstream paradox change it needs; implement new
+//   TypeScript hooks in ${ROOT}/assets/ts/hooks/ AND register them in the
+//   PhxHook union in the ui dox file (domain/ui/ui.dox or ui.dox — find
+//   it); well-typed pure-functional Elixir/TypeScript matching surrounding
+//   code, no new files or modules when an existing one fits; no TODO/FIXME
+//   comments as a substitute for doing the work; no weakening tests or
+//   assertions to make a fix easier.
 
 phase('Fix')
-
-// Bucket items so no two concurrent agents share a file — disjoint edits need no worktrees.
-const bucketize = (items) => {
-  const out = []
-  for (const item of items) {
-    const overlapping = out.filter(b => item.files.some(f => b.files.has(f)))
-    const merged = { files: new Set(item.files), items: [item] }
-    for (const b of overlapping) {
-      b.files.forEach(f => merged.files.add(f))
-      merged.items.push(...b.items)
-    }
-    const rest = out.filter(b => !overlapping.includes(b))
-    out.length = 0
-    out.push(...rest, merged)
-  }
-  return out
-}
-
-const GUARDRAILS = `
-HARD RULES (violating any of these is failure):
-- Run NO git commands of any kind. No commit, no stash, no checkout, no reset, no clean.
-  Other agents are editing sibling files concurrently; git operations race their work.
-- Never edit anything under ${ROOT}/.dox/ — it is generated. If a fix genuinely requires a
-  codegen change, mark the item blocked with the upstream paradox change it needs.
-- New TypeScript hooks: implement in ${ROOT}/assets/ts/hooks/ AND register them in the
-  PhxHook union in the ui dox file (domain/ui/ui.dox or ui.dox — find it).
-- Style: well-typed, pure-functional Elixir/TypeScript. Match surrounding code. Avoid
-  creating new files or modules when an existing one fits.
-- No TODO/FIXME comments as a substitute for doing the work. No weakening of tests or
-  assertions to make a fix easier.
-`
-
-const FIX_SCHEMA = {
-  type: 'object',
-  required: ['results'],
-  properties: {
-    results: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['id', 'status', 'notes'],
-        properties: {
-          id: { type: 'string' },
-          status: { type: 'string', enum: ['fixed', 'blocked'] },
-          notes: { type: 'string' },
-        },
-      },
-    },
-  },
-}
-
-const VERIFY_SCHEMA = {
-  type: 'object',
-  required: ['results'],
-  properties: {
-    results: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['id', 'verified', 'problem'],
-        properties: {
-          id: { type: 'string' },
-          verified: { type: 'boolean' },
-          problem: { type: 'string' },
-        },
-      },
-    },
-  },
-}
-
-const fixPrompt = (items) => `
-You are a remediation agent working in ${ROOT} (a Phoenix LiveView project, OTP app
-:operation / OperationWeb). You own the files listed in the items below; no other agent
-touches them — but do not edit any file outside your items' file lists.
-
-Implement EVERY item below. No deferrals, no "out of scope", no partial credit. Read the
-actual code first — line numbers may have drifted; locate the issue by content. If an item's
-instructions flag a possible false positive, verify against the code: if it really is a
-false positive, mark it blocked with the evidence; otherwise fix it.
-${GUARDRAILS}
-ITEMS:
-${JSON.stringify(items)}
-
-Return one result per item id: status fixed (with a one-line summary of the change) or
-blocked (only for genuine impossibility — a needed upstream codegen change, or a confirmed
-false positive — with the precise reason).
-`
-
-const verifyPrompt = (items) => `
-You are an adversarial verifier in ${ROOT}. A fix agent claims to have remediated the items
-below. Do NOT trust the claim. For each item, READ the current code at the named files and
-confirm the fix is actually present, complete, and correct (e.g. an auth guard actually
-gates the mutating path, not just one clause; a :key actually landed on the dynamic :for).
-Run no git commands; edit nothing.
-
-ITEMS:
-${JSON.stringify(items)}
-
-Return one result per item id: verified true (problem: "") or verified false with a precise
-problem statement a repair agent can act on.
-`
-
-const buckets = bucketize(todo)
-log(`Dispatching ${todo.length} items across ${buckets.length} disjoint file buckets...`)
-
-const round1 = await pipeline(
-  buckets,
-  (b, _orig, i) => agent(fixPrompt(b.items), { label: `fix:${i + 1}`, phase: 'Fix', schema: FIX_SCHEMA }),
-  (fixRes, b, i) =>
-    agent(verifyPrompt(b.items), { label: `verify:${i + 1}`, phase: 'Verify', schema: VERIFY_SCHEMA })
-      .then(v => ({ items: b.items, fix: fixRes, verify: v }))
-)
-
+// ... engine runs here (see above) ...
 phase('Verify')
+// ... engine runs here (see above) ...
 
-const statuses = {}
-const applyResults = (r) => {
-  if (!r) return
-  for (const f of (r.fix && r.fix.results) || []) statuses[f.id] = { status: f.status, notes: f.notes }
-  for (const v of (r.verify && r.verify.results) || []) {
-    if (v.verified) statuses[v.id] = { status: 'fixed', notes: (statuses[v.id] || {}).notes || 'verified' }
-    else if (!statuses[v.id] || statuses[v.id].status !== 'blocked') statuses[v.id] = { status: 'unverified', notes: v.problem }
-  }
-}
-round1.filter(Boolean).forEach(applyResults)
-
-const needsRepair = todo.filter(t => !statuses[t.id] || statuses[t.id].status === 'unverified')
-if (needsRepair.length > 0) {
-  log(`${needsRepair.length} items unverified after round 1 — dispatching repair round...`)
-  const repairBuckets = bucketize(needsRepair.map(t => ({
-    ...t,
-    instructions: `${t.instructions}\n\nPREVIOUS ATTEMPT FAILED VERIFICATION: ${(statuses[t.id] || {}).notes || 'no fix result reported'}`,
-  })))
-  const round2 = await pipeline(
-    repairBuckets,
-    (b, _orig, i) => agent(fixPrompt(b.items), { label: `repair:${i + 1}`, phase: 'Verify', schema: FIX_SCHEMA }),
-    (fixRes, b, i) =>
-      agent(verifyPrompt(b.items), { label: `reverify:${i + 1}`, phase: 'Verify', schema: VERIFY_SCHEMA })
-        .then(v => ({ items: b.items, fix: fixRes, verify: v }))
-  )
-  round2.filter(Boolean).forEach(applyResults)
-}
-
-const blocked = todo
-  .filter(t => !statuses[t.id] || statuses[t.id].status !== 'fixed')
-  .map(t => ({ id: t.id, title: t.title, reason: (statuses[t.id] || {}).notes || 'no status reported' }))
-const fixedCount = todo.length - blocked.length
 log(`${fixedCount}/${todo.length} items fixed. Running final gate (compile + tests + report)...`)
 
 const gate = await agent(`
