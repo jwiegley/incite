@@ -371,7 +371,7 @@ So take your evidence from the record. Run `git log --oneline`, `git diff` and `
 
 Where a column asks you to quote, quote the record: a commit message, a finding, a line of the summary. Where the evidence for an entry is not in the record, say the record cannot show it and drop the entry — do not reconstruct the dialogue that would have produced it.|]
   AtDocs ->
-    [i|Review the documentation in the current working directory. The documents are the artifact under review and the code is the record they answer to, so read both: `git ls-files '*.md'` for what there is to read, and the modules, workflows and flake each document describes.
+    [i|Review the documentation in the current working directory. The documents are the artifact under review and the code is the record they answer to, so read both: `git ls-files --cached --others --exclude-standard '*.md'` for what there is to read, and the modules, workflows and flake each document describes.
 
 Read the documents themselves before reporting anything. An account of them follows and it is a claim to check, not a substitute for the files — where it and a document disagree, the document is what ships.
 
