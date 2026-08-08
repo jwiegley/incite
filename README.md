@@ -122,9 +122,9 @@ same way — see [Upstream prompts](#upstream-prompts).
 
 ### Prompts read twice
 
-`agents/`, `skills/` and selected `commands/` do double duty: agent-pm renders
-them to `~/.claude`, *and* the workflows read those same files as briefs at run
-time. `agents/code-review.md` is the doctrine reviewer leaf, `skills/fix-all.md`
+`agents/`, `skills/` and selected `commands/` do double duty: flake-prompt
+renders them to `~/.claude`, *and* the workflows read those same files as briefs
+at run time. `agents/code-review.md` is the doctrine reviewer leaf, `skills/fix-all.md`
 is the remediation brief, and `commands/{fess,wiggum}.md` are read back by the
 workflow beats — `commands/post-commit-audit.md` is bound in `Incite.Prompts`
 too, but no workflow leaf splices it; see
@@ -181,7 +181,7 @@ The split is deliberate: the reviewer never writes, the fixer never reviews.
 
 | input | source | note |
 |---|---|---|
-| `agent-pm` | `gitlab:fresheyeball/flake-prompt` | the renderer |
+| `flake-prompt` | `gitlab:fresheyeball/flake-prompt` | the renderer |
 | `macha` | private ssh, `flake = false` | supplies two prompt bodies |
 | `ponytail` | `github:dietrichgebert/ponytail`, `flake = false` | four skills + three workflow briefs |
 | `awesome-prompts` | `github:ai-boost/awesome-prompts`, `flake = false` | exactly three files: `agentic_coder.txt`, `lookahead_planning_specialist.txt`, `code_reviewer_security.txt` |
@@ -221,8 +221,8 @@ nix flake update ponytail     # or awesome-prompts, promptdeploy, simple-english
 
 - **Skills.** `ponytail`, `ponytail-review`, `ponytail-audit` and
   `ponytail-debt` are rendered from `${ponytail}/skills/*/SKILL.md` with their
-  own YAML frontmatter stripped (agent-pm writes frontmatter itself). They are
-  deployed as *skills* rather than as an always-on `instructions` fragment:
+  own YAML frontmatter stripped (flake-prompt writes frontmatter itself). They
+  are deployed as *skills* rather than as an always-on `instructions` fragment:
   ponytail's descriptions are written to trigger the model on coding work,
   which is the right activation surface. `ponytail-gain` (a benchmark
   scoreboard) and `ponytail-help` (a card for `/commands` this repo does not
@@ -307,9 +307,9 @@ submodule fetch cannot succeed from here; `flake = false` over a `github:` URL n
 looks at submodules. It would also drag its whole closure into our lock (nixpkgs,
 home-manager, flake-utils, and a *second* ponytail pin beside ours). And
 promptdeploy's own deployer — a Python CLI with SHA-256 manifests and rsync over
-SSH — is not adopted: `agent-pm` is a pure-Nix renderer producing a package plus the
-`lib.prompts` inventory nixos-dots consumes, and swapping loses that for
-capabilities this repo does not need.
+SSH — is not adopted: `flake-prompt` is a pure-Nix renderer producing a package
+plus the `lib.prompts` inventory nixos-dots consumes, and swapping loses that
+for capabilities this repo does not need.
 
 Never pulled in: host-tagged items (the `-- positron` / `-- personal` filetags are
 his machines), anything depending on Anvil (his Emacs MCP) or PAL, and the
@@ -727,7 +727,7 @@ in the repo overall; `steSkill` (~19.7 KB, the `prompt-lint` brief) and the
 
 Haskell and performance are upstream too, from
 [promptdeploy](#promptdeploy--the-upstream-this-repo-descends-from), read out of
-the same files agent-pm deploys as sub-agents. Adding them is what let
+the same files flake-prompt deploys as sub-agents. Adding them is what let
 `agents/code-review.md` be narrowed: it used to carry a Haskell section and a
 performance section of its own, so the fan-out was paying one generalist to
 restate what a specialist says better. What is left of it — disabled tests,

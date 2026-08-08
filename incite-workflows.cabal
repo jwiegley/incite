@@ -36,10 +36,16 @@ extra-source-files:
     -- drops one builds clean and then fails the test suite with
     -- `openFile: does not exist`. `test/Spec.hs` asserts this cover too.
     test/golden/*.txt
-    -- Read at run time by `test/Spec.hs`'s docs-inventory fence, same reason
-    -- as the goldens above: an sdist that drops it builds clean and then fails
-    -- the suite with `openFile: does not exist`.
-    docs/workflows.md
+    -- Read at run time by `test/Spec.hs`, same reason as the goldens above: an
+    -- sdist that drops one builds clean and then fails the suite with
+    -- `openFile: does not exist`. `docs/workflows.md` is the docs-inventory
+    -- fence's; the rest are the renderer-name fence's, which reads every
+    -- document that names the prompt renderer in prose. The module haddocks it
+    -- also reads need no entry — `hs-source-dirs` carries those at the same
+    -- paths. `test/Spec.hs` asserts this cover too.
+    docs/*.md
+    README.md
+    AGENTS.md
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 library

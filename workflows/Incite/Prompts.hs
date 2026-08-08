@@ -17,7 +17,7 @@
 -- Three provenances, and the difference matters:
 --
 -- * @prompts\/@ — written for these workflows, live-editable.
--- * @agents\/@, @skills\/@, @commands\/@ — the same files agent-pm ships to
+-- * @agents\/@, @skills\/@, @commands\/@ — the same files flake-prompt ships to
 --   @~\/.claude@, read a second time here rather than paraphrased, so there is
 --   exactly one copy of each.
 -- * @prompts\/upstream\/@ — from flake inputs, a @\/nix\/store@ path at both
@@ -334,7 +334,7 @@ qaAgent :: Prompt
 qaAgent = [promptFile|prompts/upstream/awesome-prompts/qa-agent.md|]
 
 -- | Specialists from the @promptdeploy@ input (BSD 3-Clause, © 2025-2026 John
--- Wiegley), read from the same files agent-pm deploys as sub-agents.
+-- Wiegley), read from the same files flake-prompt deploys as sub-agents.
 --
 -- 'haskellReviewer' is the __base__ of the panel's Haskell lens, not the lens:
 -- 'Incite.Review.haskellOfHouse' splices 'haskellHouse' under it, so a review

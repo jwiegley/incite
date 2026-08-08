@@ -109,7 +109,7 @@ does **not** `follows` incite's unstable nixpkgs.
 
 `agents/` and `skills/` are each read by **two** consumers:
 
-1. `agent-pm` renders them to `~/.claude/{agents,skills}/...`
+1. `flake-prompt` renders them to `~/.claude/{agents,skills}/...`
 2. The workflows splice them in verbatim as briefs (`codeReview`, `fixAll`).
 
 The full list of deployed prompts read twice — including the `commands/`

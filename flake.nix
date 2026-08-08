@@ -850,9 +850,20 @@
         # `doCheck = true`, which runs the test-suite's `cabal test` phase.
         unit-test =
           let
-            # `librarySrc` (defined above) plus the two extras this suite
-            # alone needs: `./test` itself, and `./docs/workflows.md`, which
-            # `test/golden/` is fenced against.
+            # `librarySrc` (defined above) plus the extras this suite alone
+            # needs: `./test` itself, and every document it reads at run time
+            # with `TIO.readFile`. `./docs` is the docs-inventory fence's
+            # `workflows.md` plus the manuals the renderer-name fence reads;
+            # `./README.md` and `./AGENTS.md` are that same fence's. These are
+            # the `extra-source-files` entries beside the goldens, and for the
+            # same reason: a file read at run time is checked by nothing at
+            # compile time, so dropping one here builds clean and then fails
+            # the suite with `openFile: does not exist`.
+            #
+            # `./flake.nix` is deliberately absent. It declares the input, so a
+            # stale renderer name in it is an evaluation error rather than
+            # documentation drift, and copying it in would rebuild this suite
+            # on every comment edit to it.
             testSrc = pkgs.runCommand "incite-test-src" { } ''
               cp -r --no-preserve=mode,ownership ${librarySrc} $out
               cp -r --no-preserve=mode,ownership ${
@@ -860,7 +871,9 @@
                   root = ./.;
                   fileset = pkgs.lib.fileset.unions [
                     ./test
-                    ./docs/workflows.md
+                    ./docs
+                    ./README.md
+                    ./AGENTS.md
                   ];
                 }
               }/. $out/

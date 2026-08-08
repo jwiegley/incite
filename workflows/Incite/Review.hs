@@ -52,6 +52,8 @@ module Incite.Review
   , architectureOfChange
   , haskellOfHouse
   , qaOfCommit
+  , qaOfCommitOver
+  , qaSiblings
   , docsAccuracy
   , docsStrategyOfPlan
   , slopOfDocs
@@ -460,7 +462,7 @@ ofTree = reporting . toTree
 -- mentions any of the house rules, and the deployed sub-agent that does carry
 -- them is not something a panel run can reach.
 --
--- __One home for the rules.__ The addendum is spliced from the file agent-pm
+-- __One home for the rules.__ The addendum is spliced from the file flake-prompt
 -- deploys, so the sub-agent and this lens cannot come to say different things.
 -- The addendum is not a lens of its own for the reason it names in its own first
 -- paragraph: it defers whole sections to the rubric it sits under, so alone it
@@ -515,7 +517,43 @@ architectureOfChange =
 -- and a token when clean, and a five-field block per finding would drown the
 -- other four in a fold that ranks nothing.
 qaOfCommit :: Prompt
-qaOfCommit =
+qaOfCommit = qaOfCommitOver qaSiblings
+
+-- | The lenses @review-lite@ runs BESIDE its qa leaf, each with the question it
+-- owns — the roster 'qaOfCommit' fences itself off.
+--
+-- __A table, not a sentence.__ The fence used to be four topics written into a
+-- paragraph, and a paragraph cannot be checked against anything: drop a lens
+-- from 'reviewLite' and qa goes on declining findings to an owner that no
+-- longer exists, silently, because no name, count, plan skeleton or cost
+-- estimate moves when it does. Named here, the roster is a claim about the
+-- tier — the test asserts these names against 'reviewLite'\'s own leaves, read
+-- off its skeleton — and the leaf that has to agree with it splices it.
+--
+-- The names are the tier's LEAF names, so the fence names the block a reader
+-- will actually see beside qa's in the fold, rather than a paraphrase of it.
+qaSiblings :: [(LeafName, Text)]
+qaSiblings =
+  [ ("correctness", "whether the change is correct on the inputs it will see")
+  , ("fess", "whether its claims match the diff")
+  , ("complexity", "what is braided together")
+  , ("ponytail", "what should not exist")
+  ]
+
+-- | An 'Int' as prompt text. Shared by the two briefs that tell a leaf how many
+-- blocks it is one of, so that neither spells a number a list already knows.
+count :: Int -> Text
+count = T.pack . show
+
+-- | 'qaOfCommit' with its roster written out, which is the only form that can
+-- be checked against the tier it belongs to.
+--
+-- The two counts are derived from the roster rather than spelled, for the
+-- reason 'grindSynthesisOver' derives its own: a fifth lens added to
+-- 'reviewLite' would otherwise leave this leaf telling its reader there are
+-- five reviewers and four owners, which is prose that nothing goes red on.
+qaOfCommitOver :: [(LeafName, Text)] -> Prompt
+qaOfCommitOver siblings =
   [__i|
     #{qaAgent}
 
@@ -529,12 +567,15 @@ qaOfCommit =
     code — but the finding has to name a line the commit changed, or it belongs
     to a review nobody asked for.
 
-    **What is yours.** You are one of five independent reviewers and there is no
-    synthesis step behind you, so anything you repeat ships twice. The other four
-    own: whether the change is correct on the inputs it will see, whether its
-    claims match the diff, what is braided together, and what should not exist.
-    Do not report those. Yours is the question none of them asks — **how does
-    this fail?**
+    **What is yours.** You are one of #{count (length siblings + 1)} independent
+    reviewers and there is no synthesis step behind you, so anything you repeat
+    ships twice. The other #{count (length siblings)} own the following, under
+    the name each one's block carries:
+
+    #{T.intercalate "\n" ["- `" <> leafNameText n <> "` — " <> owns | (n, owns) <- siblings]}
+
+    Do not report any of those. Yours is the question none of them asks — **how
+    does this fail?**
 
     - a trust boundary this commit moves or crosses: input that reaches a query,
       a command, a path, a deserialiser; a check that runs after the effect it
@@ -903,7 +944,7 @@ grindSynthesisOver name lensNames =
     is a copy for a person, and the answer is what the next stage acts on.
 
     **Say which reviewers you heard from.** Every block above is headed
-    `lens@backend`. These #{T.pack (show (length lensNames))} lenses were sent,
+    `lens@backend`. These #{count (length lensNames)} lenses were sent,
     one per line:
 
     #{T.intercalate "\n" ["- " <> leafNameText n | n <- lensNames]}

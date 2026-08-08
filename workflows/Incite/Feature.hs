@@ -20,6 +20,7 @@ module Incite.Feature
   ( planFeature
   , shipFeature
   , shipDocs
+  , docsPlanLenses
   , grindParadox
   , continueMarker
   , decideContinue
@@ -245,20 +246,34 @@ shipDocs =
     |]
     actingGrant
     $ explorePlan
-      -- Strategy first, then English: 'docsStrategyOfPlan' splits and cuts
-      -- steps — who each document is for, which content type it is, which
-      -- document owns a fact — and 'simpleEnglishLens' rewrites what survives.
-      -- The other order spends the rewrite on steps the strategy lens deletes.
-      >>> lensEdit
-        [ ("docs-strategy", brief docsStrategyOfPlan)
-        , ("simple-english", brief simpleEnglishLens)
-        ]
+      >>> lensEdit [(name, brief body) | (name, body) <- docsPlanLenses]
       >>> steer "Review the plan — add any guidance before writing begins"
       >>> orchestrate document
       -- The docs lenses read an artifact; what reaches them is the worker's
       -- closing account. 'asDocsSubject' points them at the files instead.
       >>> dimap' asDocsSubject id reviewDocsFlow
       >>> remediate docsRule closeWithChanges
+
+-- | The plan lenses 'shipDocs' edits through, and the whole of what it puts
+-- between the planner and the steer. 'editPlan'\'s six have no purchase on a
+-- prose plan, so this is a different chain rather than a narrowing of that one.
+--
+-- __Strategy first, then English.__ 'Incite.Review.docsStrategyOfPlan' splits
+-- and cuts steps — who each document is for, which content type it is, which
+-- document owns a fact — and 'simpleEnglishLens' rewords what survives. The
+-- other order spends the rewrite on steps the strategy lens then deletes.
+--
+-- A named table rather than a list inlined into the workflow, because
+-- @docs\/workflows.md@ says which lenses a documentation run edits through and
+-- there is nothing else a test could read that against: a lens added to an
+-- inline list changes no other name, count or skeleton the prose is checked on.
+-- That drift is what the sentence \"it uses only the SimpleEnglish plan lens\"
+-- was, after this chain grew its second entry.
+docsPlanLenses :: [(LeafName, Prompt)]
+docsPlanLenses =
+  [ ("docs-strategy", docsStrategyOfPlan)
+  , ("simple-english", simpleEnglishLens)
+  ]
 
 -- | The worker leaf of a documentation run: the one leaf that edits prose.
 --
@@ -805,26 +820,38 @@ greenGate artifactRule checks = keeping accountThenLog gateLoop
 explorePlan :: Flow Text Text
 explorePlan = explore >>> plan
   where
-    -- Analysis-only, enforced at the session level ('withMode Plan'), and
-    -- heterogeneous — one backend per stance, so the perspectives are
-    -- genuinely independent.
+    -- Analysis-only and heterogeneous — one agent spec per stance, so the
+    -- perspectives are genuinely independent. Four stances over three
+    -- backends, so the fourth is a distinct MODEL rather than a distinct
+    -- backend; @claude-agent\/fable@ and @claude-agent@ are two agents to
+    -- everything downstream of 'Agent.Op.AgentSpec'.
+    --
     -- The architect is the fourth stance and reads the tree, not the request:
     -- the other three all argue about the change, and none of them was asked
     -- what shape it has to land in. It is on Fable 5 rather than sharing a
     -- backend with a sibling — a whole-tree structural read is the heaviest
     -- thinking here, and a shared backend would cost the fan-out the
     -- independence it exists for.
+    --
     -- 'reviewer' builds each stance: named once, read-only, under a backend
     -- scope. Same shape the review panels are built from, so a stance cannot
     -- drift from a reviewer in mode or acquire write access.
+    --
+    -- __No 'withMode' 'Plan' around the fan-out.__ Read-only is 'reviewer'\'s
+    -- to say and it says it at every stance, so an outer wrapper adds no
+    -- constraint — and it is not free: 'withMode' is @WithScope . ModeScope@
+    -- and 'Agent.Flow.Skeleton.toSkeleton' reifies every 'Agent.Flow.WithScope'
+    -- as its own @FScope@ node, so it buys a second @scope mode:plan@ line in
+    -- @agent-functor plan@ that constrains nothing under it. The reduction is
+    -- pure ('hierarchical'), so there is no leaf out here for it to reach in
+    -- any case.
     explore =
-      withMode Plan
-        $ exploreFlows
-          [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
-          , reviewer (withBackend codex defaultModel) "skeptic" skeptic
-          , reviewer (withBackend opencode defaultModel) "contemplative" contemplative
-          , reviewer (withBackend codex defaultModel) "architect" architect
-          ]
+      exploreFlows
+        [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
+        , reviewer (withBackend codex defaultModel) "skeptic" skeptic
+        , reviewer (withBackend opencode defaultModel) "contemplative" contemplative
+        , reviewer (withBackend claudeAgent fable5) "architect" architect
+        ]
         -- Narrowing, not ranking by importance: what breaks, then the shape it
         -- lands in, then which design, then the moves. The architect precedes
         -- the design stance because the design stance is told to build on its
@@ -843,8 +870,22 @@ explorePlan = explore >>> plan
 -- lookahead reorders for irreversibility last. No scope or sequencing lens:
 -- ponytail owns the cuts, and dependency order is 'planBrief'\'s own format
 -- contract.
+--
+-- __Unpinned, on purpose.__ Every other backend scope in this module is
+-- argued for at the leaf it wraps — 'plan' on Fable 5 because 'planBrief'
+-- leans on it, each explore stance on its own agent because the fan-out is
+-- bought with independence. A lens chain is neither: it is six sequential
+-- rewrites of one text, so a pin here buys no independence, and there is no
+-- brief among them that only one model can hold. Left alone they run on the
+-- run's own @--backend@, which is what 'shipDocs'\'s 'docsPlanLenses' chain
+-- does as well — and the two chains being scoped the same way is the whole
+-- reason a reader can compare them.
+--
+-- A pin added here without that argument is invisible: it changes no leaf's
+-- text and no leaf's name, so only a scope-reading test can see it. There is
+-- one, in @test\/Spec.hs@.
 editPlan :: Flow Text Text
-editPlan = withBackend codex defaultModel $
+editPlan =
   lensEdit
     [ ("ponytail", brief ponytailLens)
     , ("denotational", brief planDenotational)

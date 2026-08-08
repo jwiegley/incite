@@ -8,7 +8,7 @@ lifecycles and different failure modes.
 
 ```text
 flake.nix prompts list
-  -> agent-pm
+  -> flake-prompt
   -> result/.claude, result/.codex
   -> nixos-dots services.agent-pm on the consuming machine
 
@@ -29,8 +29,8 @@ relative to the working directory at run time. Both must be the repository root.
 There are two inventories and they answer different questions.
 
 `flake.nix`'s `prompts` list answers: what prompt artifacts are deployed by
-`agent-pm`? It declares instructions, agents, slash commands, and skills, plus
-their metadata. Counting files on disk is wrong because several prompts are read
+`flake-prompt`? It declares instructions, agents, slash commands, and skills,
+plus their metadata. Counting files on disk is wrong because several prompts are read
 from flake inputs and some local files are not deployed directly.
 
 `workflows/Main.hs`'s `workflows` list answers: what workflows exist as CLI

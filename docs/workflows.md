@@ -62,9 +62,11 @@ permission flow.
   skeptic (the risks), contemplative (the design options), architect (the shape
   of the tree they all land in) — then the planner;
 - `editPlan`: code-oriented plan lenses: ponytail, denotational, risk,
-  verification, lookahead, SimpleEnglish;
-- `docsStrategyOfPlan` and `simpleEnglishLens`: the plan lenses `ship-docs` uses, because the code
-  lenses have no useful purchase on a prose plan;
+  verification, lookahead, SimpleEnglish. Unpinned, so they run on the run's
+  own `--backend`, as `docsPlanLenses` does;
+- `docsPlanLenses`: the plan lenses `ship-docs` uses — `docs-strategy` then
+  `simple-english` — because the code lenses have no useful purchase on a prose
+  plan;
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`, capped by `workerFuel`;
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
@@ -123,7 +125,8 @@ the loop alive.
 `ship-docs` is not `ship-feature` with different nouns. It has different safety
 properties:
 
-- it uses only the SimpleEnglish plan lens after planning;
+- it edits the plan through `docs-strategy` then `simple-english`, and through
+  none of the six code lenses `editPlan` runs;
 - the writer and fixer both stand under `docsRule`;
 - the docs panel reads documents against code through `asDocsSubject`;
 - it stops after remediation;

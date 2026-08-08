@@ -2,7 +2,7 @@ module Main (main) where
 
 import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (find, nub, sort, (\\))
+import Data.List (find, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -14,10 +14,10 @@ import Test.Tasty.HUnit
 
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (permitExec)
-import Agent.Flow (Flow)
+import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, leafNameOf, leafNameText)
+import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, scopeDeclText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
@@ -37,6 +37,7 @@ import Incite.Feature
   , decideContinue
   , decideRed
   , docsRule
+  , docsPlanLenses
   , isRed
   , document
   , orient
@@ -101,6 +102,8 @@ import Incite.Review
   , promptLintBrief
   , promptLintScope
   , qaOfCommit
+  , qaOfCommitOver
+  , qaSiblings
   , reporting
   , retro
   , reviewAudit
@@ -135,6 +138,10 @@ tests =
     , promptLintTests
     , packagingTests
     , backendTests
+    , scopeTests
+    , qaFenceTests
+    , factsFileTests
+    , rendererNameTests
     , docsInventoryTests
     ]
 
@@ -1123,6 +1130,50 @@ synthesisAdmits =
 leafNames :: Flow Text Text -> [Text]
 leafNames flow = [leafNameOf t | FLeaf t <- toList (skeleton (toSkeleton flow))]
 
+-- | Every leaf a 'Flow' reaches, paired with the __agent it resolves to__:
+-- @backend@, or @backend\/model@ where a model is named.
+--
+-- 'Agent.Flow.foldLeavesScoped' threads the enclosing @withBackend@ and
+-- 'Agent.Flow.withMode' declarations exactly as @Agent.Interpret.interpretWith@
+-- threads them, so this is where a leaf actually runs rather than where a
+-- reader of the source believes it does.
+--
+-- __Nothing else in this repository can see a backend scope.__ It changes no
+-- leaf name, no leaf text, no node count and no cost estimate. So a pin lost in
+-- a refactor, or added with no argument for it, is invisible to every other
+-- check here — and both happened in one commit.
+scopedLeaves :: Flow Text Text -> [(Text, Text)]
+scopedLeaves = foldLeavesScoped (\sc op -> [(leafNameOf (opTag op), agentOf sc)])
+  where
+    agentOf = maybe runDefault agentSpecText . scopeAgent
+
+-- | What 'scopedLeaves' reports for a leaf under no backend scope at all: it
+-- runs on whatever @--backend@ the run was started with.
+runDefault :: Text
+runDefault = "<run default>"
+
+-- | The leaves a 'Flow' runs in the backend's read-only plan mode.
+--
+-- The other half of 'scopedLeaves', and the half that says a reviewer cannot
+-- edit what it is reading. Read off the resolved 'Scope' rather than off the
+-- 'FScope' nodes, so it answers what the runner will do rather than how many
+-- wrappers were written to say it.
+readOnlyLeaves :: Flow Text Text -> [Text]
+readOnlyLeaves =
+  foldLeavesScoped (\sc op -> [leafNameOf (opTag op) | scopeMode sc == Plan])
+
+-- | Every scope declaration a 'Flow' __reifies__, in skeleton order — the
+-- @scope …@ lines @agent-functor plan@ prints.
+--
+-- 'readOnlyLeaves' says what a leaf runs under; this says how many nodes were
+-- spent saying it. 'Agent.Flow.withMode' is @WithScope . ModeScope@ and
+-- 'Agent.Flow.Skeleton.toSkeleton' reifies every @WithScope@ as its own node,
+-- so a wrapper around a fan-out whose leaves are already scoped is not a no-op:
+-- it is a plan line that constrains nothing under it. This is the only view
+-- that can tell the two apart.
+scopeDecls :: Flow Text Text -> [Text]
+scopeDecls flow = [scopeDeclText d | FScope d _ <- toList (skeleton (toSkeleton flow))]
+
 -- | The panel @grind-paradox@ fans out, and the combinator that fans it.
 --
 -- __Nothing else in this repository can see any of this.__ @plan@ renders leaf
@@ -1552,6 +1603,25 @@ packagingTests =
           , let g = goldenDir <> "/" <> f
           , not (any (`covers` T.pack g) entries)
           ]
+    , -- The same rule again, for the documents this suite reads with
+      -- 'TIO.readFile'. It is not theoretical: the renderer-name fence below
+      -- was written reading files that only a git checkout has, went green
+      -- under @cabal test@, and failed the nix build with
+      -- @README.md: openFile: does not exist@ — the exact failure the golden
+      -- cover above exists to prevent, one directory over.
+      -- Quantified over the @.md@ half only: the module haddocks it also reads
+      -- are library sources, which an sdist carries because @hs-source-dirs@
+      -- names them and at the same paths. A markdown file has no such carrier.
+      testCase "extra-source-files carries every document this suite reads" $ do
+        cabalFile <- TIO.readFile "incite-workflows.cabal"
+        paths <- filter (".md" `isSuffixOf`) <$> rendererProseFiles
+        let entries = extraSourceFiles cabalFile
+        assertBool "no documents read" (not (null paths))
+        report
+          [ "read at run time but not packaged: " <> T.pack p
+          | p <- paths
+          , not (any (`covers` T.pack p) entries)
+          ]
     , -- What keeps the case above honest in the other direction. Packaging a
       -- golden nothing reads is a file that drifts from the code it was
       -- recorded off with no test to say so, and packaging is exactly the step
@@ -1705,6 +1775,23 @@ docsInventoryTests =
                       <> " does not parse as an Int"
                   ]
           ]
+    , -- The "Documentation workflow" section is where this file says what
+      -- distinguishes a docs run, and it said "it uses only the SimpleEnglish
+      -- plan lens" for as long as that chain has had two entries — while the
+      -- inventory table and the `editPlan` bullet, in the same file, already
+      -- said otherwise. Nothing could catch it: a lens joining an inline list
+      -- inside a workflow moves no name, count or skeleton that this file is
+      -- checked on. 'docsPlanLenses' is the roster it now reads.
+      testCase "the Documentation workflow section names every plan lens ship-docs runs" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let body = sectionBody "Documentation workflow" doc
+        assertBool "no Documentation workflow section found" (not (T.null (T.strip body)))
+        report
+          [ "docs/workflows.md's Documentation workflow section does not name " <> n
+          | (name, _) <- docsPlanLenses
+          , let n = leafNameText name
+          , not (T.isInfixOf n body)
+          ]
     ]
 
 -- | Every prompt a workflow's leaves actually send, in the order the sequential
@@ -1848,6 +1935,245 @@ promptLintTests =
         let other = "You are reading the reference manuals of a documentation repository."
          in promptText (promptLintBrief other)
               @?= T.replace promptLintScope other (promptText (promptLintBrief promptLintScope))
+    ]
+
+-- | The four stances @explorePlan@ fans out, by the names it gives them.
+stanceNames :: [Text]
+stanceNames = ["intrepid", "skeptic", "contemplative", "architect"]
+
+-- | __Which model reads which leaf__, read off the shipped workflows.
+--
+-- See 'scopedLeaves': a backend scope moves nothing any other check in this
+-- file can see. The two defects below were one commit's, and both were silent.
+-- A mechanical rewrite of the stance list onto "Incite.Backend".@reviewer@
+-- retyped the architect's backend, putting it on the backend @skeptic@ already
+-- had — so a four-way fan-out bought with independence quietly became a
+-- three-way one plus a duplicate, while its own comment went on saying the
+-- opposite. The same rewrite pinned all six plan-editing lenses to codex with
+-- no argument for it anywhere.
+scopeTests :: TestTree
+scopeTests =
+  testGroup
+    "backend scopes"
+    [ -- The whole analysis half in one list, in the order the interpreter
+      -- reaches it. Written out rather than derived, because every derivation
+      -- available here reads the same expression the workflow is built from and
+      -- would move with it.
+      testCase "plan-feature runs each leaf on the agent its module argues for" $
+        scopedLeaves (wfFlow planFeature)
+          @?= [ ("intrepid", "claude-agent")
+              , ("skeptic", "codex")
+              , ("contemplative", "opencode")
+              , ("architect", "claude-agent/fable")
+              , ("plan", "claude-agent/fable")
+              , ("ponytail", runDefault)
+              , ("denotational", runDefault)
+              , ("risk", runDefault)
+              , ("verification", runDefault)
+              , ("lookahead", runDefault)
+              , ("simple-english", runDefault)
+              ]
+    , -- The law the table above is one instance of, and the one that stays
+      -- refutable when a fifth stance arrives. Four stances over three
+      -- backends, so the fourth independence is bought with a MODEL —
+      -- @claude-agent\/fable@ against @claude-agent@ — which is why this reads
+      -- the whole agent spec and not the backend tag.
+      testCase "no two explore stances share an agent" $
+        let stances = [a | (n, a) <- scopedLeaves (wfFlow planFeature), n `elem` stanceNames]
+         in do
+              -- The reader proved before the law is quantified over it: a
+              -- renamed stance would otherwise make distinctness a statement
+              -- about the empty list.
+              length stances @?= length stanceNames
+              nub stances @?= stances
+    , -- Read-only, as a statement about the resolved scope rather than about
+      -- how many wrappers say so. This is what an outer @withMode Plan@ around
+      -- the fan-out was there for, and what @reviewer@ already guarantees at
+      -- each stance — so removing that wrapper has to leave this untouched.
+      testCase "every analysis leaf is read-only, and only they are" $
+        readOnlyLeaves (wfFlow planFeature) @?= stanceNames <> ["plan"]
+    , -- And the wrapper is gone. One @mode:plan@ node per plan-mode leaf: a
+      -- second wrapper around the fan-out reified a sixth, constraining nothing
+      -- under it that @reviewer@ had not already constrained, and no other
+      -- instrument here could see it — the case above stays green either way,
+      -- and so does every leaf name, count and cost.
+      testCase "plan-feature reifies one plan-mode scope per plan-mode leaf" $
+        length (filter (== "mode:plan") (scopeDecls (wfFlow planFeature)))
+          @?= length (stanceNames <> ["plan"])
+    , -- 'editPlan' and 'docsPlanLenses' are two lens chains over one text, and
+      -- the argument for leaving both on the run's own backend is that they are
+      -- comparable. A pin on one of them is the drift this reads.
+      testCase "ship-docs' plan lenses are unpinned, like ship-feature's" $
+        let wanted = map (leafNameText . fst) docsPlanLenses
+            named = [(n, a) | (n, a) <- scopedLeaves (wfFlow shipDocs), n `elem` wanted]
+         in do
+              map fst named @?= wanted
+              report ["ship-docs pins " <> n <> " to " <> a | (n, a) <- named, a /= runDefault]
+    ]
+
+-- | The fence 'qaOfCommit' puts between its own question and its siblings',
+-- against the tier that actually runs beside it.
+--
+-- @review-lite@ reduces by a pure fold with __no synthesis leaf__, so a defect
+-- two lenses both report ships twice, on every commit, forever. That fence is
+-- the only thing preventing it, and it lives as prose inside a prompt: drop a
+-- lens from 'reviewLite' and the qa leaf goes on declining findings to an owner
+-- that no longer exists, with no leaf name, count, plan skeleton or cost
+-- estimate moving. Its roster is now a table, and this is what reads it against
+-- the tier.
+qaFenceTests :: TestTree
+qaFenceTests =
+  testGroup
+    "the qa lens' fence"
+    [ -- The claim in one line: the lenses qa declines to are exactly the ones
+      -- beside it. Sorted, because the fold's order is 'hierarchical'\'s and is
+      -- not this roster's business.
+      testCase "fences against exactly review-lite's other lenses" $
+        sort (map (leafNameText . fst) qaSiblings <> ["qa"])
+          @?= sort (leafNames (wfFlow reviewLite))
+    , -- The roster reaching the SHIPPED leaf, once each. A table spliced and
+      -- then ignored, or spliced twice, satisfies the case above and says
+      -- nothing to the model.
+      testCase "the leaf review-lite sends names every sibling exactly once" $ do
+        sent <- workflowLeafPrompts reviewLite
+        case filter (T.isInfixOf "No failure found.") sent of
+          [qaText] ->
+            report
+              [ "the qa leaf names " <> n <> " " <> tshow (T.count n qaText) <> " times"
+              | (name, _) <- qaSiblings
+              , let n = "`" <> leafNameText name <> "`"
+              , T.count n qaText /= 1
+              ]
+          other ->
+            assertFailure $
+              "review-lite sends " <> show (length other) <> " qa leaves, expected 1"
+    , -- The mutation the fence exists to catch, run for real: a lens leaving
+      -- the tier must leave the fence with it.
+      testCase "a lens dropped from the roster is dropped from the fence" $
+        assertBool "ponytail survives its removal from the roster" $
+          not (says (qaOfCommitOver (filter ((/= "ponytail") . fst) qaSiblings)) "`ponytail`")
+    , -- And the two counts are derived rather than spelled. A fifth lens in the
+      -- tier would otherwise leave this leaf telling its reader there are five
+      -- reviewers and four owners, which is prose nothing goes red on.
+      testCase "the counts move with the roster" $
+        report
+          [ "a roster of " <> tshow (length roster) <> " does not say " <> tshow needle
+          | roster <- [take 2 qaSiblings, take 3 qaSiblings, qaSiblings]
+          , needle <-
+              [ "one of " <> tshow (length roster + 1) <> " independent reviewers"
+              , "The other " <> tshow (length roster) <> " own"
+              ]
+          , not (saysLoosely (qaOfCommitOver roster) needle)
+          ]
+    ]
+
+-- | Every @## Heading@ section of a document, in order: the heading text and
+-- everything under it up to the next @## @ line.
+--
+-- 'sectionBody' answers for one known heading; this enumerates, which is what a
+-- law quantified over sections needs.
+sections :: Text -> [(Text, Text)]
+sections = go . dropWhile (not . T.isPrefixOf "## ") . T.lines
+  where
+    go [] = []
+    go (h : rest) =
+      let (body, more) = break (T.isPrefixOf "## ") rest
+       in (T.drop 3 h, T.unlines body) : go more
+
+-- | One phrase per discipline @prompts\/grind\/paradox-facts.md@ states, chosen
+-- so that only the sentence stating that discipline contains it.
+--
+-- The law they are quantified under is @exactly one section@, which refutes in
+-- both directions: two sections is the duplication, and none is a needle that
+-- has gone stale and stopped fencing anything.
+factDisciplines :: [Text]
+factDisciplines =
+  [ "hand-edit"
+  , "golden-reset"
+  , "`Expression` ADT constructors"
+  , "final gate"
+  ]
+
+-- | The facts file @grind-paradox@ prepends to every lens and splices into its
+-- fixer's rule. Two properties, and no other instrument in this repository
+-- reads either: the file is markdown, and 'promptText' is the only thing that
+-- ever looks inside it.
+factsFileTests :: TestTree
+factsFileTests =
+  testGroup
+    "the grind facts file"
+    [ -- The probe is what tells "the audit read nothing" from "the tree is
+      -- clean", and it can only do that if the model reaches it before any
+      -- path it is meant to check. First section, and nothing before it.
+      testCase "the mandatory probe is the first section, and holds the refusal line" $ do
+        map fst (sections (promptText paradoxFacts))
+          @?= ["Probe first", "Project facts", "Repair disciplines"]
+        assertBool "the refusal line is not inside the probe section" $
+          T.isInfixOf "FACTS PATHS UNRESOLVED:" (sectionBody "Probe first" (promptText paradoxFacts))
+    , -- One home per fact. The repair section restated the golden-reset
+      -- ordering, the never-hand-edit rule, the interface-constructor ban and
+      -- the test-filtering rule, all of which the facts above it already said —
+      -- so a discipline could be revised in one section and left stale in the
+      -- other, inside one file that a fixer reads whole.
+      testCase "no discipline is stated in two sections" $
+        let secs = sections (promptText paradoxFacts)
+         in report
+              [ "the facts file states " <> tshow needle <> " in " <> tshow (map fst hits)
+              | needle <- factDisciplines
+              , let hits = [s | s@(_, body) <- secs, T.isInfixOf needle body]
+              , length hits /= 1
+              ]
+    ]
+
+-- | Every file in this repository whose PROSE names the prompt renderer: the
+-- two root documents, the reference manuals, and the module haddocks.
+--
+-- Enumerated by directory rather than listed, so a document added tomorrow is
+-- covered by existing.
+--
+-- __@flake.nix@ is deliberately not among them.__ It is where the input is
+-- declared, so a stale name there is an evaluation error rather than a
+-- documentation drift — @nix flake check@ is already the check for it, and
+-- reading it here would rebuild this suite on every comment edit to a file
+-- nothing else in the derivation depends on.
+rendererProseFiles :: IO [FilePath]
+rendererProseFiles = do
+  docs <- listDirectory "docs"
+  modules <- listDirectory "workflows/Incite"
+  pure $
+    ["README.md", "AGENTS.md"]
+      <> ["docs/" <> f | f <- docs, ".md" `isSuffixOf` f]
+      <> ["workflows/Incite/" <> f | f <- modules, ".hs" `isSuffixOf` f]
+
+-- | __The renderer is called @flake-prompt@__, and has been since the flake
+-- input was renamed. @agent-pm@ survives in exactly one shape: the NixOS and
+-- home-manager option paths upstream still declares — @services.agent-pm@ and
+-- @programs.agent-pm@ — which are that project's names for its modules and not
+-- ours to rewrite.
+--
+-- Worth a test rather than one grep, because the rename landed in @flake.nix@
+-- and stopped there: four comments in that file moved and nine references in
+-- the documents, the module haddocks and the README did not. Nothing compiles
+-- a comment, so the only thing that can hold the two names apart is this.
+rendererNameTests :: TestTree
+rendererNameTests =
+  testGroup
+    "the renderer's name"
+    [ testCase "nothing calls the renderer by the name the flake input no longer has" $ do
+        paths <- rendererProseFiles
+        texts <- mapM (\p -> (,) p <$> TIO.readFile p) paths
+        -- The reader proved before the report is quantified over it: an option
+        -- path is the one legitimate use, so its absence means this is reading
+        -- something other than this repository's files.
+        assertBool "no `services.agent-pm` found — the reader is reading nothing" $
+          any (T.isInfixOf "services.agent-pm" . snd) texts
+        report
+          [ T.pack path <> " names the renderer `agent-pm`, after \"" <> context <> "\""
+          | (path, txt) <- texts
+          , before <- init (T.splitOn "agent-pm" txt)
+          , not (any (`T.isSuffixOf` before) ["services.", "programs."])
+          , let context = T.takeEnd 56 (T.unwords (T.words before))
+          ]
     ]
 
 backendTests :: TestTree

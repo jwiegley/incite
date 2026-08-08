@@ -2,7 +2,7 @@
 
 Incite has two products in one flake:
 
-- a declarative prompt package rendered by `agent-pm`;
+- a declarative prompt package rendered by `flake-prompt`;
 - a typed `agent-functor` workflow runner exposed as `nix run .#agent-functor`.
 
 The source of truth is split by contract:
