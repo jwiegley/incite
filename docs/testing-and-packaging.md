@@ -109,11 +109,19 @@ Runtime prompt resolution failure:
 Golden failure:
 
 - first decide whether behavior changed or only the recorded bytes changed;
-- if behavior changed, update the test expectation with the code change;
+- if behavior changed, hand re-record the golden file from the function's
+  actual output and diff it before committing — this suite is tasty-hunit,
+  not a snapshot framework, so there is no `--accept`/`--update` flag to
+  regenerate it for you;
 - if only wrapping changed, check whether the exact bytes are the contract.
 
 STE failure:
 
-- remove contractions, Latin abbreviations, or slop words from procedural text;
+- `ste-gate: FAILED` with violations listed: remove contractions, Latin
+  abbreviations, or slop words from procedural text;
+- `ste-gate: no prompt files found under <path>`: `stePromptSrc`'s fileset
+  selected zero files — a listed entry was renamed or deleted without
+  updating `stePromptSrc` in `flake.nix`; fix the allowlist to match what is
+  actually on disk;
 - do not rewrite a precise counterfactual only to satisfy a non-gated counter.
 
