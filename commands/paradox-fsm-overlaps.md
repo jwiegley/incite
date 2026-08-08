@@ -10,7 +10,7 @@ This is a research task. Produce a triaged report at `docs/audits/paradox-fsm-ov
 
 ## Why this matters
 
-The project rule (see CLAUDE.md and project memory):
+The project rule (see `/address-findings`'s "Language / stack hierarchy" section):
 
 > Hierarchy: 1. Paradox `.dox` — default for any shared domain logic. 2. F* with proofs. 3. Elixir / TS / Rust direct — last resort.
 
@@ -226,7 +226,7 @@ Each agent's brief:
    - **Medium**: individual unions/types within a still-needed `.dox` file that are themselves dead.
    - **Low**: lone unused helpers (`derive` calls, partial saturated sets).
 
-## Output: `docs/audits/paradox-overlaps-<YYYY-MM-DD>.md`
+## Output: `docs/audits/paradox-fsm-overlaps-<YYYY-MM-DD>.md`
 
 Sections:
 
@@ -299,7 +299,7 @@ Brief justification each.
 ## Rules
 
 - This is a SURVEY pass. Do not edit SUT files. The deliverable is the markdown + the agent inventories.
-- Commit the markdown to `docs/audits/paradox-overlaps-<YYYY-MM-DD>.md` with `--no-gpg-sign`. Per-language inventories AND consumption indexes go in `docs/audits/paradox-overlaps-<YYYY-MM-DD>/{elixir,haskell,typescript,paradox,elixir-consumes,haskell-consumes,typescript-consumes,paradox-emitted-symbols}.json`.
+- Commit the markdown to `docs/audits/paradox-fsm-overlaps-<YYYY-MM-DD>.md` with `--no-gpg-sign`. Per-language inventories AND consumption indexes go in `docs/audits/paradox-fsm-overlaps-<YYYY-MM-DD>/{elixir,haskell,typescript,paradox,elixir-consumes,haskell-consumes,typescript-consumes,paradox-emitted-symbols}.json`.
 - Cite file:line everywhere. No vague "X module has a state machine" or "TS has a status type."
 - If you find an obvious bug along the way (e.g. Elixir handles event X but TS doesn't — silent state desync, or a hand-written copy is one member short of the `.dox` source, or a `.dox` union has one member nothing anywhere references) surface it explicitly. Don't fix it; surface it.
 - Do not parallelize the SYNTHESIS pass. Inventories run in parallel, synthesis is one agent reading all of them.
