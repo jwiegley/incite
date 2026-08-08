@@ -26,7 +26,8 @@ Every directory that a `promptFile` splice can reach must appear in **both**:
 They are not cross-validated. A directory missing from the cabal list still
 builds under nix and only breaks `cabal sdist` — a **quiet** failure. When you
 add a new prompt directory, update both. Today both lists cover `workflows/`,
-`prompts/`, `agents/`, `skills/`, plus `commands/fess.md` (which a workflow
+`prompts/`, `agents/`, `skills/`, plus `commands/fess.md`,
+`commands/post-commit-audit.md` and `commands/wiggum.md` (which a workflow
 splices in as a brief).
 
 ## Prompts are read at run time, not compiled in
@@ -34,8 +35,9 @@ splices in as a brief).
 A `[promptFile|…|]` quasiquote is a **compile-time existence check + run-time
 read**. Consequences:
 
-- Editing any `prompts/*.md`, `agents/*.md`, `skills/*.md`, or `commands/fess.md`
-  takes effect on the next `run` with **no rebuild**.
+- Editing any `prompts/*.md`, `agents/*.md`, `skills/*.md`, or `commands/fess.md`,
+  `commands/post-commit-audit.md`, or `commands/wiggum.md` takes effect on the
+  next `run` with **no rebuild**.
 - Prompt files are deliberately **not** recompilation dependencies, so
   deleting/renaming one is a *run-time* failure, not a build error.
 - Each prompt body is read once per process; editing mid-run does nothing until
@@ -65,7 +67,7 @@ nix develop -c cabal test                       # run the unit test suite (see "
 ```
 
 `plan` and `cost` never touch an agent — safe to run anytime. `cost` reports
-worst-case leaf executions and node count, **never tokens**; a leaf carrying 18 KB
+worst-case leaf executions and node count, **never tokens**; a leaf carrying 10 KB
 of brief and a leaf carrying one line both count as 1. (See `codeReview` below.)
 
 `run` flags: `--backend NAME` (default `claude-agent`), `-i/--input TEXT`
@@ -97,7 +99,7 @@ does **not** `follows` incite's unstable nixpkgs.
 
 There is exactly one copy of each. Editing `agents/code-review.md` changes both
 the deployed Claude agent **and** the workflow leaf that sends it. The bill is
-real: `agents/code-review.md` is ~18 KB and every leaf using it sends the whole
+real: `agents/code-review.md` is ~10 KB and every leaf using it sends the whole
 thing — a workflow reading it costs materially more per turn than a one-line
 brief. `workflows/Main.hs` calls this out at the binding.
 
@@ -125,19 +127,16 @@ and, to be STE-linted, a line in `flake.nix`'s `stePromptSrc` fileset.
 
 ## Defined workflows
 
-The `workflows` list in `workflows/Main.hs` is the inventory; this table follows
-it.
+The `workflows` list in `workflows/Main.hs` is the inventory. The full table —
+what each of the 10 workflows does — lives in one place:
+[`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-| name | kind | notes |
-|---|---|---|
-| `plan-feature` | prompt-only | explore (3 stances) → plan → 6 lens edits. Touches nothing. |
-| `ship-feature` | world-acting | the above, then implement in place under an orchestrator loop of up to 8 trips, the 21-reviewer panel, remediation, a human gate, and a PR. `execGrant` permits only `nix*`. |
-| `fess-audit` | prompt-only | honesty audit of a worker's captured transcript; read-only on codex. The worker fires it over MCP after each commit. |
-| `retro` | prompt-only | retrospective over a captured session: sentiment / went-well / went-wrong columns, then a `## next time` synthesis. |
-| `review-lite` | prompt-only | a commit through 4 reviewers, one lens per backend, reduced by a pure fold; the per-commit beat. |
-| `review-heavy` | prompt-only | a diff through 7 lenses on all 3 backends plus regroupings, then one synthesis; pre-PR. |
-| `review-audit` | prompt-only | 8 lenses × 3 backends × 3 granularities — 75 leaves. Deliberate, never on a beat. |
-| `prompt-lint` | prompt-only | ASD-STE100 check over this repo's own prompts, procedural passages only. |
+Two safety facts worth keeping here rather than only there: `ship-feature` and
+`ship-docs` are the only **world-acting** workflows, both running under
+`actingGrant` (`execGrant ["nix*"]`) — every other workflow is prompt-only and
+touches nothing. And always run from the repo root: `promptFile` resolves a
+path against the package root at compile time and the working directory at
+run time, so the two must be the same directory.
 
 World-acting runs leave `.agent-functor-worktree-*` / `.agent-functor-worker-*`
 directories behind if killed mid-run; gitignored, safe to delete. The

@@ -16,6 +16,36 @@ Two halves, one flake:
   `>>>`; the CLI (`list`/`plan`/`cost`/`run`) and a live TUI for `run` come for
   free.
 
+This README is the entry point. The maintained reference docs live under
+[`docs/`](docs/README.md):
+
+| Topic | Doc |
+|---|---|
+| repository shape and source-of-truth boundaries | [Architecture](docs/architecture.md) |
+| workflow inventory, modes, and leaf counts | [Workflows](docs/workflows.md) |
+| adding prompts, commands, agents, and skills | [Prompt authoring](docs/prompt-authoring.md) |
+| Nix, cabal, goldens, and regression checks | [Testing and packaging](docs/testing-and-packaging.md) |
+| deployment, input updates, runtime state, and cleanup | [Operations](docs/operations.md) |
+
+`AGENTS.md` is the condensed editing brief for agents. The `workflows/*.hs`
+Haddock is the implementation reference.
+
+## Quickstart
+
+Three commands cover the first five minutes:
+
+```bash
+nix build                                     # render prompts/agents/commands/skills into result/
+nix run .#agent-functor -- list               # the workflows this repo defines
+nix run .#agent-functor -- plan plan-feature  # what one workflow does, offline
+```
+
+- Want the prompts on your machines? [Deploying the prompts](#deploying-the-prompts).
+- Want to run a workflow against a real request?
+  [Running the workflows](#running-the-workflows).
+- Want the workflow engine explained? [Workflow vocabulary](#workflow-vocabulary)
+  and [The review tiers](#the-review-tiers).
+
 ## Structure
 
 ```
@@ -47,17 +77,22 @@ skills/            — skill bodies
   pr-fix.md        — apply one change via a subagent, push to the PR head
 workflows/
   Main.hs          — the typed workflows; `passMain` gives them a CLI
+docs/              — maintained human-facing reference docs
 prompts/           — prompt bodies for the workflows, read at RUN time
   plan.md          — turn exploration findings into a one-step-per-line plan
   plan-step.md     — review one plan step for correctness/completeness/ordering
   explore/*.md     — the three explore stances: intrepid, skeptic, contemplative
   review/*.md      — the LOCAL review lenses fanned out by `review-lite`/
-                     `-heavy`/`-audit`: correctness, complexity, tests,
-                     architecture. Security, performance and Haskell lenses are
-                     upstream — see "Upstream prompts" below. Three files here
-                     are NOT lenses: synthesis.md (the reducer brief) and
-                     units.md / sequence.md, which re-express a change for
-                     `review-audit`'s granularity axis without judging it
+                     `-heavy`/`-audit`/`-docs`: correctness, complexity, tests,
+                     architecture, docs-completeness/structure. Security,
+                     performance and Haskell lenses are upstream — see "Upstream
+                     prompts" below. Docs accuracy is not a file here: it is
+                     `docsAccuracy` in `workflows/Incite/Review.hs`, a
+                     reorientation of `commands/fess.md`'s rubric at prose.
+                     Three files here are NOT lenses: synthesis.md (the reducer
+                     brief) and units.md / sequence.md, which re-express a
+                     change for the granularity axis of `review-heavy` and
+                     `review-audit` without judging it
   retro/*.md       — the `retro` columns, read over a SESSION rather than a
                      diff: sentiment, went-well, went-wrong, and synthesis.md,
                      the meeting brief that turns them into `## next time`
@@ -79,18 +114,20 @@ same way — see [Upstream prompts](#upstream-prompts).
 
 ### Prompts read twice
 
-`agents/` and `skills/` do double duty: agent-pm renders them to `~/.claude`,
-*and* the workflows read those same files as briefs at run time —
-`agents/code-review.md` is the reviewer leaf, `skills/fix-all.md` is the work
-beat of `ship-feature`'s loop. One copy, no paraphrase, so editing either
-file changes both the deployed prompt and the workflow.
+`agents/`, `skills/` and selected `commands/` do double duty: agent-pm renders
+them to `~/.claude`, *and* the workflows read those same files as briefs at run
+time. `agents/code-review.md` is the doctrine reviewer leaf, `skills/fix-all.md`
+is the remediation brief, and `commands/{fess,post-commit-audit,wiggum}.md` are
+read back by the workflow beats. One copy, no paraphrase, so editing any of
+these files changes both the deployed prompt and the workflow.
 
-The bill for that is real: `code-review.md` is ~18 KB and every leaf using it
+The bill for that is real: `code-review.md` is ~10 KB and every leaf using it
 sends the whole thing, so a workflow reading it costs materially more per turn
-than one with a one-line brief. `workflows/Main.hs` says so at the binding.
+than one with a one-line brief. `workflows/Incite/Prompts.hs` says so at the
+binding.
 Note that `cost` will *not* show you this — it reports worst-case leaf
 executions, the dominating bound and the node count, never tokens, so a leaf
-carrying 18 KB and a leaf carrying one line both count as 1.
+carrying 10 KB and a leaf carrying one line both count as 1.
 
 ### Prompt types
 
@@ -195,7 +232,7 @@ three named files, verbatim:
 | upstream | as | drives |
 |---|---|---|
 | `prompts/agentic_coder.txt` | `awesome-prompts/agentic-coder.md` | the `ship-feature` worker brief |
-| `prompts/lookahead_planning_specialist.txt` | `awesome-prompts/lookahead-planning-specialist.md` | the `planner-audit` workflow **and** the `lookahead` lens |
+| `prompts/lookahead_planning_specialist.txt` | `awesome-prompts/lookahead-planning-specialist.md` | the unexposed `plannerAudit` value **and** the `lookahead` lens |
 | `prompts/code_reviewer_security.txt` | `awesome-prompts/code-reviewer-security.md` | the `security` lens of `review-heavy` |
 
 The rest of that 3.5 MB repo is unaudited third-party text and the `upstream`
@@ -420,19 +457,47 @@ inline transcript and those same blocking points drop to plain stdin asks, so
 an unattended `ship-feature` still stops at its gate. `plan` and `cost`
 never touch an agent, so they work anywhere.
 
-The inventory in `workflows/Main.hs` — each workflow is defined in
-`Incite.Feature` or `Incite.Review`, and only what that list names is exposed:
+### Workflow vocabulary
 
-| workflow | what it does |
-|---|---|
-| `plan-feature` | explore (3 stances) → plan → 6 lens edits (`ponytail`, `denotational`, `risk`, `verification`, `lookahead`, `simple-english`). Prompt-only: touches nothing |
-| `ship-feature` | the above, then a steer gate, implementation in place under an orchestrator loop of up to 8 trips (the worker decides when it is done), the full `review-heavy` panel, a remediation leaf, a human gate, and a PR. The implementer is briefed with `agentic-coder` + ponytail's ladder + `commands/wiggum.md`; remediation sends `skills/fix-all.md` + the ladder. World-acting; `execGrant` permits only `nix*` — the agent's own `git` and `gh` run as its own tools, behind its permission modal |
-| `fess-audit` | honesty-audit a worker's in-progress session; read-only, on codex. Fired over MCP by the worker after each commit |
-| `retro` | a human-style retrospective on a worker's session: three columns gathered concurrently on three backends — sentiment, what went well, what did not — then a meeting leaf that emits them plus a `## next time` section of concrete changes. Read-only. Same captured-transcript input as `fess-audit`, but end-of-session rather than per-commit, and its subject is the *process*, not the account |
-| `review-lite` | a commit through 4 concurrent reviewers — correctness, the `fess` claims-versus-diff audit, reshape complexity, ponytail cuts — one lens per backend, reduced by a *pure* fold. No synthesis leaf: cheap enough for the per-commit beat, which is what `wiggum` uses it for |
-| `review-heavy` | a diff through 7 review lenses — correctness, security, tests, performance, Haskell, ponytail complexity, and AI-generated-code failure modes — each answered by all three backends (**21 reviewers**), plus both regroupings answered on claude-agent alone, then an agent synthesises one ranked, de-duplicated list. Pre-PR, not per-commit |
-| `review-audit` | the exhaustive tier: `review-heavy`'s panel **plus architecture** — 8 lenses × 3 backends — run over the change **three times at three granularities** (full diff, logical units, ideal sequential edits), then one synthesis. **75 leaves.** Deliberate, never on a beat |
-| `prompt-lint` | checks the **prompts** against ASD-STE100 — rule, offending text, rewrite — over *procedural* instructions only. On target because the prompts are the product here, and every review tier reads code instead. Read-only |
+The workflows are `Flow Text Text` values — one text artifact transformed into
+another, leaf by leaf. The terms the rest of this section uses:
+
+- **Leaf** — one agent call: a prompt, the artifact so far, and how to use the
+  answer. The cheapest unit you can inspect; `cost` reports worst-case leaf
+  executions, and a one-line brief and an 18 KB brief both count as 1.
+- **Fan-out (`exploreFlows`)** — run several leaves concurrently on the same
+  input, then reduce. The review tiers are a fan-out: independent reviewers,
+  each pinned to its own backend and read-only (`withMode Plan`).
+- **Panel** — one lens × one backend, blocked as `lens@backend`. "The
+  21-reviewer panel" is 7 lenses × 3 backends.
+- **Lens** — one deliberately narrow reviewer: correctness, security, tests,
+  performance, Haskell, ponytail (complexity), AI-generated-code failure modes,
+  architecture, and the docs triplet. A lens that wanders into another's
+  territory costs a turn and returns a duplicate.
+- **Regrouping** — an agent leaf that re-expresses the change (as logical
+  units, or as the commits it should have been) so a panel can review a
+  different shape of it. The granularity axis, not a third lens.
+- **Orchestrator loop (`loopUntil`)** — one worker leaf (the only leaf that
+  edits files) is re-run on its own closing summary until it ends on
+  `WORK COMPLETE` rather than the `continueMarker`; up to 8 trips.
+- **Gate** — where a run blocks on a human: `steer` (before the work starts),
+  `humanGate` (before the PR). An unattended run auto-answers them.
+- **`execGrant`** — the whitelist of commands a world-acting workflow may run
+  (`nix*` here); everything else is denied. The agent's own `git` and `gh` run
+  as its own tools, behind its permission modal.
+
+The inventory in `workflows/Main.hs` — each workflow is defined in
+`Incite.Feature` or `Incite.Review`, and only what that list names is exposed.
+The full table of all 10 workflows and what each does lives in one place:
+[`docs/workflows.md`](docs/workflows.md#exposed-inventory).
+
+Two safety facts worth repeating here: `ship-feature` and `ship-docs` are the
+only **world-acting** workflows, both running under `actingGrant`
+(`execGrant ["nix*"]`) — the agent's own `git` and `gh` run as its own tools,
+behind its permission modal, not this grant. Every other workflow is
+prompt-only. Always run from the repository root, since `promptFile` resolves
+a path against the package root at compile time and the working directory at
+run time, and those must be the same directory.
 
 Where the [upstream briefs](#upstream-prompts) land:
 
@@ -528,24 +593,28 @@ Every reviewer is read-only (`withMode Plan`) and pinned to its own backend, so
 the independence is real rather than one model answering the same question under
 several headings.
 
-| tier | lenses | × backends | × granularities | leaves | reduce |
-|---|--:|--:|--:|--:|---|
-| `review-lite` | 4 | 1 (spread) | 1 | 4 | pure `hierarchical`, correctness first |
-| `review-heavy` | 7 | 3 (all) | 1 | 22 | agent `synthesis` leaf |
-| `review-audit` | 8 | 3 (all) | 3 | 75 | agent `synthesis` leaf |
+Leaf counts per tier — lenses × backends × granularities, and how each is
+reduced — live in one place:
+[`docs/workflows.md`](docs/workflows.md#review-tiers-and-leaf-counts). All
+four review tiers are prompt-only and read-only; none holds `actingGrant`.
 
 The tiers escalate along three independent axes, and each buys something different.
 **Lenses** buy coverage — `review-lite` spreads four across backends for cheap
 independence; `review-heavy` adds security, tests, performance and Haskell;
 `review-audit` adds architecture. **Backends** buy confidence: from `review-heavy`
 up, every lens is answered by all three models, so agreement is confirmation and
-disagreement is signal rather than one model's opinion. **Granularity**, only in
-`review-audit`, buys a kind of finding the others structurally cannot reach.
+disagreement is signal rather than one model's opinion. **Granularity** re-expresses
+the change so a shape of finding the flat diff cannot show becomes visible — and
+`review-heavy` already does it, cheaply (below); `review-audit` is the same axis
+with the full three-backend panel and an architecture lens behind every view.
 
 #### The granularity axis
 
-`review-audit` runs its whole 24-reviewer panel three times, over three
-re-expressions of the same change:
+`review-heavy` and `review-audit` both re-express the change and re-review the
+views; the tier is a price escalation, not a presence. `review-heavy` runs its
+7-lens panel over the diff as it landed, then regroups the change and runs the
+same lenses over each regrouped view on claude-agent alone; `review-audit` runs
+the whole 24-reviewer panel three times, over the same three views:
 
 | view | what the panel reads | what only this view finds |
 |---|---|---|
@@ -557,7 +626,8 @@ Both regroupings are agent leaves, not pure splits — "logical unit" and "ideal
 sequence" are semantic judgements, so nothing `T.lines`-shaped can produce them
 (unlike `reviewScales` over a plan, where a line really is a step). Both are told
 to reproduce every hunk exactly once, verbatim, because the panel reads their
-output *as* the change: anything elided is invisible to 24 reviewers.
+output *as* the change: anything elided is invisible to the reviewers of that
+view.
 
 **Architecture is reframed for the change.** `prompts/review/architecture.md` is
 written whole-tree and says so. Inside `review-audit` it is composed with a
@@ -639,8 +709,12 @@ Commit, then rebuild. Done.
 
 ## Adding a workflow
 
-Write another `Workflow` in `workflows/Main.hs` and list it in `workflows`. The
-CLI picks it up automatically.
+Write a `Workflow` in `Incite.Feature` (request → plan → PR) or `Incite.Review`
+(the review and audit tiers), import it, and add it to the `workflows` list in
+`workflows/Main.hs` — the one place that decides what exists; a workflow not in
+that list is exposed as nothing, no matter how well defined. The CLI picks it
+up automatically. Keep the two hand-kept mirrors of that list accurate too:
+the inventory table above and the one in `AGENTS.md`.
 
 ```bash
 nix develop   # GHC with agent-functor in scope, plus cabal and HLS

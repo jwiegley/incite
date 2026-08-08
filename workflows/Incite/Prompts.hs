@@ -124,7 +124,7 @@ wiggum = [promptFile|commands/wiggum.md|]
 
 -- | The repo's @code-review@ agent, narrowed to AI-generated-code failure
 -- modes: disabled tests, hallucinated APIs, assertions that cannot fail, mock
--- code on a production path. ~9.7 KB — paid in full by every leaf that uses it.
+-- code on a production path. ~10 KB — paid in full by every leaf that uses it.
 codeReview :: Prompt
 codeReview = [promptFile|agents/code-review.md|]
 
