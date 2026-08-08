@@ -1,20 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
--- | Turning a request into a plan, and a plan into a pull request.
+-- | Turning a request into a plan, and a plan into the work it asks for: a pull
+-- request for code, edited prose for documentation.
 --
--- Two workflows over one shared prefix. @explorePlanEdit@ is the analysis
--- half — explore, plan, edit through lenses — and it is a plain 'Flow' value,
--- so 'planFeature' stops there while 'shipFeature' continues into the acting
--- half: the orchestrator loop (@keepGoing@), the findings-fixer (@remediate@),
--- the retrospective and the gate-then-PR tail. The shared pieces are bindings
--- rather than copies for one reason: the two cannot drift in how they analyse.
+-- 'planFeature', 'shipFeature' and 'shipDocs' over one shared prefix.
+-- @explorePlanEdit@ is the analysis half — explore, plan, edit through lenses —
+-- and it is a plain 'Flow' value, so 'planFeature' stops there while the two
+-- acting workflows continue into the acting half.
 --
--- The acting half was written to take a second consumer — @remediate@,
--- @keepGoing@ and 'continueMarker' are all top-level and none of them mentions
--- code — and 'shipDocs' is it. The two acting workflows differ in exactly three
--- places: which worker the loop runs, which panel reviews the result, and where
--- each one stops.
+-- __The acting half is shared by name, not by count.__ 'actingGrant' is the
+-- exec policy, 'orchestrate' is the fuelled worker loop over 'continueMarker'
+-- and @keepGoing@, and 'remediate' is the one leaf that fixes what a panel
+-- found. What an acting workflow supplies for itself is its steer label, its
+-- worker, its panel, the artifact rule its fixer stands under ('docsRule' or
+-- 'codeRule'), and where it stops. Bindings rather than copies for one reason:
+-- the workflows cannot drift in anything they share.
 module Incite.Feature
   ( planFeature
   , shipFeature
@@ -25,6 +26,12 @@ module Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , document
+  , remediate
+  , docsRule
+  , codeRule
+  , actingGrant
+  , orchestrate
+  , workerFuel
   , Orientation (..)
   , orient
   , preambleOf
@@ -47,8 +54,8 @@ import Agent.Flow.Combinators
   , submitPR
   )
 import Agent.Flow.Extent (loopUntil)
-import Agent.Grant (execGrant)
-import Agent.Prompt (brief, i, iii, __i)
+import Agent.Grant (Grant, execGrant)
+import Agent.Prompt (Prompt, brief, i, iii, __i)
 import Agent.Run (Workflow, workflowGReq, workflowReq)
 
 import Incite.Backend (fable5)
@@ -83,19 +90,6 @@ planFeature =
 -- 'reviewHeavyFlow' panel → remediation → human gate → PR. Runs in an isolated
 -- git worktree.
 --
--- __The orchestrator is 'loopUntil', not a fixed unroll.__ Trip count is
--- runtime and the worker decides it: each trip is one @implement@ turn taking
--- the previous trip's own summary as its input, and the loop ends the moment
--- that summary does not ask to continue. Fuel is the ceiling, not the plan — a
--- feature finished on trip two costs two turns, where @workLoop n@ always cost
--- @n@ and could not stop.
---
--- The default direction is deliberate. 'loopUntil' __aborts on exhaustion__ by
--- upstream design (there is no yield-what-you-have policy), so @keepGoing@
--- continues only on an explicit marker and treats everything else as finished:
--- a confused worker ends the loop and gets reviewed, rather than burning the
--- fuel and halting the run with the work stranded.
---
 -- Review is the same panel "Incite.Review".reviewHeavy exposes as a tool — 21
 -- reviewers, then one synthesis — and @remediate@ is the only leaf that acts on
 -- it. Reviewers are read-only by construction, so nothing can fix its own
@@ -109,20 +103,16 @@ shipFeature =
       worker until it reports the plan finished; review the result with the
       full 21-reviewer panel, remediate the findings, human gate, then a PR
     |]
-    -- Gates OUR 'Exec' leaves only. The agent's own git and gh are 'Prompt'
-    -- leaves it runs with its own tools, gated by its permission modal.
-    (execGrant ["nix*"])
+    actingGrant
     $ explorePlanEdit
       >>> steer "Review the plan — add any guidance before implementation begins"
-      >>> loopUntil 8 (implement >>> keepGoing)
+      >>> orchestrate implement
       >>> reviewChange
-      >>> remediate
+      >>> remediate codeRule
       >>> retrospective
       >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
-    -- Fuel, not a schedule: the ceiling on how many times the worker may hand
-    -- itself back its own summary before the run is called a runaway.
     -- One worker implements the plan for real, editing this repository in
     -- place. Its standing brief composes 'agenticCoder' (HOW), 'ponytailLadder'
     -- (HOW MUCH) and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that
@@ -175,10 +165,11 @@ shipFeature =
       where
         merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
--- | 'shipFeature' for prose: the same analysis prefix and the same orchestrator
--- loop, with @document@ as the worker and "Incite.Review".'reviewDocsFlow' as
--- the panel. Every stage is a binding the code path already uses, so the two
--- cannot drift in how they explore, plan, loop or fix.
+-- | 'shipFeature' for prose. It shares 'explorePlanEdit', 'actingGrant',
+-- 'orchestrate' and 'remediate' with the code path — so the two cannot drift in
+-- anything they share — and supplies its own steer label, 'document' as the
+-- worker, "Incite.Review".'reviewDocsFlow' as the panel, and 'docsRule' as the
+-- rule its fixer stands under.
 --
 -- __It stops at @remediate@.__ No 'humanGate' and no 'submitPR', and that is a
 -- safety property rather than an omission. An unattended run auto-answers the
@@ -187,14 +178,9 @@ shipFeature =
 -- action with nothing in the run able to stop it. The change lands in the tree;
 -- opening the pull request stays a human's push.
 --
--- __And no retrospective.__ 'shipFeature' holds one because it has a gate for
--- the retro to sit in front of, and a declined change is the run worth
--- reflecting on. With no gate there is nothing to sit in front of, and
--- 'retroFlow' is three more leaves per run.
---
--- @document@ receives a __plan__, not findings — it sits where @implement@ sits,
--- after @steer@ — and @remediate@ is where findings are fixed, in both
--- workflows.
+-- __And no retrospective.__ 'shipFeature' holds one in front of its gate,
+-- because a change you declined is the run worth reflecting on. With no gate
+-- there is nothing to sit in front of, and 'retroFlow' is three more leaves.
 shipDocs :: Workflow
 shipDocs =
   workflowGReq
@@ -204,30 +190,33 @@ shipDocs =
       that re-runs the worker until it reports the plan finished; review the
       result with the four-lens documentation panel and remediate the findings
     |]
-    (execGrant ["nix*"])
+    actingGrant
     $ explorePlanEdit
       >>> steer "Review the plan — add any guidance before writing begins"
-      >>> loopUntil 8 (document >>> keepGoing)
-      >>> reviewDocuments
-      >>> remediate
-  where
-    -- The docs lenses read an artifact; what reaches them is the worker's
-    -- closing account. 'asDocsSubject' points them at the files instead.
-    reviewDocuments = dimap' asDocsSubject id reviewDocsFlow
+      >>> orchestrate document
+      -- The docs lenses read an artifact; what reaches them is the worker's
+      -- closing account. 'asDocsSubject' points them at the files instead.
+      >>> dimap' asDocsSubject id reviewDocsFlow
+      >>> remediate docsRule
 
 -- | The worker leaf of a documentation run: the one leaf that edits prose.
 --
 -- 'shipFeature'\'s @implement@ with the subject changed, and the differences
 -- are the whole point of having two. It gets 'ponytailLadder' and 'wiggum' —
 -- how much, how long — but __not__ 'agenticCoder', which is a brief about
--- writing code. In its place it gets the rule a documentation worker breaks:
--- the fix for a false sentence is the sentence, and changing the code so that a
--- document becomes true is the one move that is never in scope here.
+-- writing code. In its place it stands under 'docsRule', the rule a
+-- documentation worker breaks.
 --
 -- Top-level rather than bound inside its workflow, so that the test can see
 -- that it splices 'continueMarker' rather than spelling it. A worker brief that
 -- names a marker its orchestrator does not match strands the loop until the
 -- fuel runs out, and that is not visible from any output.
+--
+-- Being top-level, it names __no stage that follows it__ — @implement@ can say
+-- \"review comes next\" because it is private to the one @where@ block that
+-- puts a review after it, and this is not. A leaf that spells its position is a
+-- leaf whose text has to be edited to reuse it, and the edit is prose nothing
+-- would flag.
 document :: Flow Text Text
 document =
   refineWith
@@ -241,10 +230,10 @@ document =
           Write this documentation plan fully in the current repository — edit
           the documents directly.
 
-          The document is the artifact and the code is the record. Where the two
-          disagree, correct the DOCUMENT — never edit code to make a sentence
-          true. Where the plan asks for something the code does not support, say
-          so and why rather than skipping it in silence.
+          #{docsRule}
+
+          Where the plan asks for something the code does not support, say so
+          and why rather than skipping it in silence.
 
           Prefer deleting a false sentence to rewriting it, and prefer pointing
           the reader at the code to restating what the code says: a fact kept in
@@ -260,7 +249,7 @@ document =
           - `#{continueMarker}` — the plan is not finished. You will be called
             again.
           - `WORK COMPLETE` — every part of the plan is written or answered.
-            Review comes next.
+            Say which documents you wrote.
         |]
     )
     id
@@ -275,7 +264,7 @@ continueMarker = "WORK REMAINS"
 
 -- | 'Right' ends an orchestrator loop, 'Left' feeds the worker's summary back
 -- as the next trip's input. Continue only on the explicit marker: see the note
--- on exhaustion in 'shipFeature'.
+-- on exhaustion in 'orchestrate'.
 --
 -- The match is the briefs' own contract — the marker alone on the last line —
 -- not an infix scan of the whole summary: prose like "no work remains"
@@ -299,6 +288,40 @@ lastOrDefault _ xs = last xs
 
 keepGoing :: Flow Text (Either Text Text)
 keepGoing = dimap' id decideContinue Id
+
+-- | The exec policy every acting workflow runs under.
+--
+-- One value rather than one spelling per workflow: a grant is the blast radius
+-- of a run, and two copies of it drift silently — nothing in a plan skeleton,
+-- a cost estimate or a leaf's text moves when one of them widens.
+--
+-- Gates OUR 'Agent.Op.Exec' leaves only. The agent's own git and gh are
+-- 'Agent.Op.Prompt' leaves it runs with its own tools, gated by its permission
+-- modal.
+actingGrant :: Grant
+actingGrant = execGrant ["nix*"]
+
+-- | The ceiling on how many times a worker may hand itself back its own summary
+-- before the run is called a runaway. Fuel, not a schedule.
+workerFuel :: Int
+workerFuel = 8
+
+-- | Run @worker@ under the orchestrator every acting workflow uses: each trip
+-- is one worker turn taking the previous trip's own summary as its input, and
+-- the loop ends the moment that summary does not ask to continue.
+--
+-- __'loopUntil', not a fixed unroll.__ Trip count is runtime and the worker
+-- decides it. 'workerFuel' is the ceiling, not the plan — a job finished on
+-- trip two costs two turns, where @workLoop n@ always cost @n@ and could not
+-- stop.
+--
+-- The default direction is deliberate. 'loopUntil' __aborts on exhaustion__ by
+-- upstream design (there is no yield-what-you-have policy), so @keepGoing@
+-- continues only on an explicit marker and treats everything else as finished:
+-- a confused worker ends the loop and gets reviewed, rather than burning the
+-- fuel and halting the run with the work stranded.
+orchestrate :: Flow Text Text -> Flow Text Text
+orchestrate worker = loopUntil workerFuel (worker >>> keepGoing)
 
 -- | __What a stage is pointed at__ when the artifact reaching it is a worker's
 -- closing summary rather than the thing under review.
@@ -403,12 +426,47 @@ asRetroSubject = orient AtRecord
 asDocsSubject :: Text -> Text
 asDocsSubject = orient AtDocs
 
--- | The one leaf that acts on a panel's findings — shared by both acting
--- workflows, because fixing a doc finding and fixing a code finding is the
--- same contract. Read-only reviewers cannot fix what they find, which is why
--- this exists separately.
-remediate :: Flow Text Text
-remediate =
+-- | What the artifact is, and which side gives when the artifact and the record
+-- it answers to disagree. One clause per acting workflow, and the argument
+-- 'remediate' takes.
+--
+-- __'docsRule' is spliced into 'document' as well__, so a documentation run's
+-- two writing leaves stand under one rule rather than two copies of it: the
+-- worker writes under it and the fixer repairs under it. Two copies drift, and
+-- the drift here has a name — a fixer that closes a \"this sentence is false\"
+-- finding by editing the code the sentence describes. That move satisfies the
+-- finding, passes every check downstream of it (there is none), and is the one
+-- move both 'document' and 'AtDocs' forbid.
+--
+-- The pair is written out rather than one rule being the default, because
+-- \"which one gives\" genuinely __inverts__ between the two: a code run's
+-- findings are about the code, and refusing to touch it would leave every one
+-- of them unfixed.
+docsRule, codeRule :: Prompt
+docsRule =
+  [__i|
+    The document is the artifact and the code is the record. Where the two
+    disagree, correct the DOCUMENT — never edit code to make a sentence true.
+  |]
+codeRule =
+  [__i|
+    The change in this repository is the artifact and the tests are the record.
+    Where a comment or a document has drifted from the code it describes, either
+    side may be the wrong one — fix the one that is wrong and say which.
+  |]
+
+-- | The one leaf that acts on a panel's findings, standing under the rule for
+-- the artifact it is repairing. Read-only reviewers cannot fix what they find,
+-- which is why this exists separately.
+--
+-- __Parameterised, not shared bare.__ Both acting workflows reach it and the
+-- ranked-findings half of the brief is identical for either, but the contract
+-- is not: see 'docsRule' and 'codeRule'. The panels are already told which
+-- artifact they read ('Orientation'); until this took an argument, the one leaf
+-- that ACTS on what they said was the only stage of a documentation run that
+-- was never told.
+remediate :: Prompt -> Flow Text Text
+remediate artifactRule =
   refineWith
     "remediate"
     ( brief
@@ -416,6 +474,8 @@ remediate =
           #{ponytailLadder}
 
           #{fixAll}
+
+          #{artifactRule}
 
           The ranked review findings follow. Fix every one of them in this
           repository, in the shortest change that fixes it. Where you judge

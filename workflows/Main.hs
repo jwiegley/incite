@@ -7,7 +7,8 @@
 --
 -- * "Incite.Prompts" — every prompt body, and nothing else. Data, not logic.
 -- * "Incite.Backend" — which model runs a leaf, and how a leaf is scoped to one.
--- * "Incite.Feature" — request → plan → pull request.
+-- * "Incite.Feature" — request → plan → the work it asks for: a pull request
+--   for code, edited prose for documentation.
 -- * "Incite.Review"  — the review and audit tiers.
 --
 -- Two conventions that hold across all of them. __Prompt bodies live on disk__:
