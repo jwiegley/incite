@@ -99,6 +99,19 @@ change, and at another checkout instead of this one. Four things distinguish it.
   run, the gate never reads a real exit code, and the artifact still carries a
   gate section. The `date` and `mkdir` entries are the synthesis leaf's, for the
   report write.
+- **Each check carries its own toolchain.** `execStep` runs argv directly — no
+  shell, no profile, no dev shell — so every entry in `grindChecks` opens with
+  `nix develop --command`. A rehearsal is what settled this: run bare, Paradox's
+  `test.sh` dies on `cabal: command not found`, and past that it builds a binary
+  path out of `$GHC_VER` and `$PARADOX_VER`, which only its dev shell sets. The
+  gate would have been red on every run for a reason no repair leaf could
+  diagnose, and a gate that cannot go green is worse than none.
+- **And the checks name targets the project actually has.** With the toolchain
+  fixed, cabal rejected the next thing: `lib-tests` is not a suite in Paradox.
+  The name was in the retired prompt, in that prompt's own facts block, and in
+  the project's `CLAUDE.md` — wrong in all three, and copied forward faithfully
+  each time. `cabal test` asks the package for its nine real suites instead, so
+  the list has no tenth copy here to go stale.
 - **The gate runs the checks itself.** `greenGate` is `verify` under `loopUntil`
   with a repair leaf on the failing branch, and `isRed` reads the `✗` lines
   `execStep` emits — real exit codes, not an agent's claim that it ran the suite.
@@ -113,7 +126,15 @@ multiplies through both loops rather than flattening them, so that ceiling is
 the real one.
 
 Nothing is committed. The product of a run is a dirty tree and a dated report,
-for a person to read.
+for a person to read. That is why the command drives it with `sandbox=false`:
+the dirty tree *is* the deliverable.
+
+`sandbox=true` still works and is the right choice for a rehearsal, but know
+what it costs on a compiler. The sandbox is a fresh `git worktree`, and
+`dist-newstyle/` is not tracked, so the gate's build check starts cold — a full
+compiler build inside an `Exec` leaf, and again for the test binaries, on every
+run. In place, those checks reuse the checkout's existing artifacts and finish
+in the time an incremental build takes.
 
 The continuation contract is intentionally narrow. `decideContinue` looks only
 at the last non-empty line, after stripping the small decoration alphabet tested

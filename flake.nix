@@ -233,6 +233,7 @@
           ./prompts/retro
           ./prompts/grind
           ./commands/fess.md
+          ./commands/grind-paradox.md
           ./commands/post-commit-audit.md
           ./commands/wiggum.md
           ./skills/fix-all.md
@@ -518,7 +519,7 @@
         {
           type = "command";
           name = "grind-paradox";
-          description = "Paradox compiler quality grinder — fans out 13 parallel audit agents, remediates every finding";
+          description = "Paradox compiler quality grinder — launches the grind-paradox workflow: fourteen lenses over the whole tree, ranked report, remediation, and a real build/test gate";
           body = builtins.readFile ./commands/grind-paradox.md;
         }
 
