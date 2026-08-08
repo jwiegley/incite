@@ -736,11 +736,62 @@
                 --set-default AGENT_FUNCTOR_PROMPTS ${upstreamPrompts}
             '';
           };
+
+        # Browsable Haddock for the library modules (`Incite.Prompts`,
+        # `Incite.Backend`, `Incite.Feature`, `Incite.Review`) — the same
+        # `afHpkgs.callCabal2nix` pattern `unit-test` below uses, pointed at
+        # just the library source. No `./test`, so `dontCheck` needs nothing
+        # else to build; no new dependency, since GHC ships haddock. `.doc`
+        # is the output `pkgs.haskell.lib` attaches the generated HTML to, so
+        # `nix build .#haddock` puts it straight under `result/`.
+        haddock =
+          let
+            docSrc = pkgs.runCommand "incite-workflows-doc-src" { } ''
+              cp -r --no-preserve=mode,ownership ${
+                pkgs.lib.fileset.toSource {
+                  root = ./.;
+                  fileset = pkgs.lib.fileset.unions [
+                    ./incite-workflows.cabal
+                    ./workflows
+                    ./prompts
+                    ./agents
+                    ./skills
+                    ./commands/fess.md
+                    ./commands/post-commit-audit.md
+                    ./commands/wiggum.md
+                  ];
+                }
+              } $out
+              cp -r --no-preserve=mode,ownership ${upstreamPrompts}/prompts/upstream $out/prompts/upstream
+            '';
+          in
+          (pkgs.haskell.lib.dontCheck (
+            pkgs.haskell.lib.doHaddock (
+              agent-functor.lib.${system}.afHpkgs.callCabal2nix "incite-workflows" docSrc { }
+            )
+          )).doc;
       };
 
-      apps.${system}.agent-functor = {
-        type = "app";
-        program = "${self.packages.${system}.agent-functor}/bin/agent-functor";
+      apps.${system} = {
+        agent-functor = {
+          type = "app";
+          program = "${self.packages.${system}.agent-functor}/bin/agent-functor";
+        };
+
+        # `nix run .#haddock-serve` — serve `packages.haddock`'s HTML on
+        # localhost so `nix build .#haddock` is browsable without knowing its
+        # store path. Finds `index.html` at run time rather than hardcoding
+        # the `share/doc/…` layout, so a nixpkgs haddock-output-path change
+        # does not silently break this.
+        haddock-serve = {
+          type = "app";
+          program = "${pkgs.writeShellScript "haddock-serve" ''
+            set -euo pipefail
+            dir=$(dirname "$(find ${self.packages.${system}.haddock} -name index.html | head -n1)")
+            echo "Serving Haddock at http://localhost:8000/ (Ctrl-C to stop)" >&2
+            exec ${pkgs.python3}/bin/python3 -m http.server 8000 --directory "$dir"
+          ''}";
+        };
       };
 
       # The regression gate for the prompts, using __upstream's own__ linter

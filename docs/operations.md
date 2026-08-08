@@ -22,6 +22,15 @@ nix run .#agent-functor -- list
 
 Run from the repository root unless you set `AGENT_FUNCTOR_PROMPTS` yourself.
 
+Build the browsable Haddock for the library modules (`Incite.Prompts`,
+`Incite.Backend`, `Incite.Feature`, `Incite.Review`) — this is what "the
+`workflows/*.hs` Haddock is the implementation reference" points at:
+
+```bash
+nix build .#haddock
+nix run .#haddock-serve   # serves it on http://localhost:8000/
+```
+
 ## Deploy prompts
 
 Standalone:
