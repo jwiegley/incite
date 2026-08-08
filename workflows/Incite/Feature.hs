@@ -5,9 +5,9 @@
 -- request for code, edited prose for documentation.
 --
 -- 'planFeature', 'shipFeature' and 'shipDocs' over one shared prefix.
--- @explorePlanEdit@ is the analysis half — explore, plan, edit through lenses —
--- and it is a plain 'Flow' value, so 'planFeature' stops there while the two
--- acting workflows continue into the acting half.
+-- @explorePlan@ is the analysis half — explore, plan — and @editPlan@ is the
+-- six-lens plan-editing chain; both are plain 'Flow' values, so 'planFeature'
+-- stops there while the two acting workflows continue into the acting half.
 --
 -- __The acting half is shared by name, not by count.__ 'actingGrant' is the
 -- exec policy, 'orchestrate' is the fuelled worker loop over 'continueMarker'
@@ -84,7 +84,7 @@ planFeature =
     [iii|
       Explore a feature request, plan it, edit through lenses, review at scale
     |]
-    explorePlanEdit
+    (explorePlan >>> editPlan)
 
 -- | 'planFeature' plus the acting half: orchestrated implementation → the
 -- 'reviewHeavyFlow' panel → remediation → human gate → PR. Runs in an isolated
@@ -104,7 +104,8 @@ shipFeature =
       full 21-reviewer panel, remediate the findings, human gate, then a PR
     |]
     actingGrant
-    $ explorePlanEdit
+    $ explorePlan
+      >>> editPlan
       >>> steer "Review the plan — add any guidance before implementation begins"
       >>> orchestrate implement
       >>> reviewChange
@@ -165,7 +166,7 @@ shipFeature =
       where
         merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
--- | 'shipFeature' for prose. It shares 'explorePlanEdit', 'actingGrant',
+-- | 'shipFeature' for prose. It shares 'explorePlan', 'actingGrant',
 -- 'orchestrate' and 'remediate' with the code path — so the two cannot drift in
 -- anything they share — and supplies its own steer label, 'document' as the
 -- worker, "Incite.Review".'reviewDocsFlow' as the panel, and 'docsRule' as the
@@ -191,7 +192,8 @@ shipDocs =
       result with the four-lens documentation panel and remediate the findings
     |]
     actingGrant
-    $ explorePlanEdit
+    $ explorePlan
+      >>> lensEdit [("simple-english", brief simpleEnglishLens)]
       >>> steer "Review the plan — add any guidance before writing begins"
       >>> orchestrate document
       -- The docs lenses read an artifact; what reaches them is the worker's
@@ -484,9 +486,9 @@ remediate artifactRule =
     )
     id
 
--- | The shared analysis prefix of both feature workflows.
-explorePlanEdit :: Flow Text Text
-explorePlanEdit = explore >>> plan >>> edit
+-- | The shared analysis prefix: explore (three stances) then plan.
+explorePlan :: Flow Text Text
+explorePlan = explore >>> plan
   where
     -- Analysis-only, enforced at the session level ('withMode Plan'), and
     -- heterogeneous — one backend per stance, so the perspectives are
@@ -504,29 +506,34 @@ explorePlanEdit = explore >>> plan >>> edit
       withMode Plan
         $ withBackend claudeAgent fable5
         $ refineWith "plan" (brief planBrief) id
-    -- Order is the argument: ponytail deletes first so the rest only work on
-    -- surviving steps; denotational redesigns (it rewrites what steps ARE, so
-    -- before annotation or ordering); risk annotates; verification turns the
-    -- annotations into checks; lookahead reorders for irreversibility last.
-    -- No scope or sequencing lens: ponytail owns the cuts, and dependency
-    -- order is 'planBrief'\'s own format contract.
-    edit =
-      lensEdit
-        [ ("ponytail", brief ponytailLens)
-        , ("denotational", brief planDenotational)
-        , ("risk", brief planRisk)
-        , ("verification", brief planVerification)
-        , ("lookahead", brief lookaheadLens)
-        , ("simple-english", brief simpleEnglishLens)
-        ]
 
+-- | The six-lens plan-editing chain for code implementation plans. Order is the
+-- argument: ponytail deletes first so the rest only work on surviving steps;
+-- denotational redesigns (it rewrites what steps ARE, so before annotation or
+-- ordering); risk annotates; verification turns the annotations into checks;
+-- lookahead reorders for irreversibility last. No scope or sequencing lens:
+-- ponytail owns the cuts, and dependency order is 'planBrief'\'s own format
+-- contract.
+editPlan :: Flow Text Text
+editPlan =
+  lensEdit
+    [ ("ponytail", brief ponytailLens)
+    , ("denotational", brief planDenotational)
+    , ("risk", brief planRisk)
+    , ("verification", brief planVerification)
+    , ("lookahead", brief lookaheadLens)
+    , ("simple-english", brief simpleEnglishLens)
+    ]
+  where
     ponytailLens =
       [__i|
         #{ponytailLadder}
 
         Apply the ladder above to this plan: drop steps that need not exist,
         collapse steps that a stdlib or native feature already covers, and merge
-        steps that are one change. Keep one step per line:
+        steps that are one change. Emit the revised plan and nothing else: an
+        ordered list, no headings, no preamble, no summary. Keep one step per
+        line:
       |]
     -- The format override is load-bearing: the rubric ships a ten-section
     -- OUTPUT FORMAT, and every downstream stage is line-oriented.
@@ -555,36 +562,36 @@ explorePlanEdit = explore >>> plan >>> edit
 
         Do not add steps that only measure or report. Keep one step per line:
       |]
-    -- Last, and last on purpose: this is a WORDING pass, and every lens before
-    -- it still changes which steps exist. Rewriting prose that ponytail is
-    -- about to delete is wasted.
-    --
-    -- A plan step is procedural text in STE's exact sense — an instruction one
-    -- agent picks up and executes without the surrounding context. That is the
-    -- register STE was built for, so this lens is a fit rather than a stretch:
-    -- imperative, one instruction per sentence, condition before command, and
-    -- one word per meaning for the whole plan.
-    simpleEnglishLens =
-      [__i|
-        #{steRules}
 
-        ---
+-- | The STE procedural rewording pass. A plan step is procedural text in STE's
+-- exact sense — an instruction one agent picks up and executes without the
+-- surrounding context. That is the register STE was built for: imperative, one
+-- instruction per sentence, condition before command, and one word per meaning
+-- for the whole plan. The only plan-editing lens relevant to documentation,
+-- which IS prose; the code-focused lenses (denotational, risk, verification,
+-- lookahead) have no purchase on a docs plan.
+simpleEnglishLens :: Prompt
+simpleEnglishLens =
+  [__i|
+    #{steRules}
 
-        Apply the PROCEDURAL rules above to this plan. Every step is procedural
-        text: imperative, one instruction, maximum 20 words, condition before
-        command. The descriptive limits do not apply here — there is no
-        descriptive text in a plan.
+    ---
 
-        This is a rewording pass ONLY. Do not add a step, remove a step, merge
-        two steps, reorder anything, or change what any step does. Earlier lenses
-        settled all of that. If a step is wrong, leave it wrong and reword it.
+    Apply the PROCEDURAL rules above to this plan. Every step is procedural
+    text: imperative, one instruction, maximum 20 words, condition before
+    command. The descriptive limits do not apply here — there is no
+    descriptive text in a plan.
 
-        Hold the vocabulary steady across the WHOLE plan, not per step: pick one
-        of check/verify/confirm and use only that one, and the same for any other
-        set of synonyms the plan rotates through.
+    This is a rewording pass ONLY. Do not add a step, remove a step, merge
+    two steps, reorder anything, or change what any step does. Earlier lenses
+    settled all of that. If a step is wrong, leave it wrong and reword it.
 
-        Never touch code identifiers, file paths, module names, command names, or
-        quoted output formats. They are exact and each counts as one word.
+    Hold the vocabulary steady across the WHOLE plan, not per step: pick one
+    of check/verify/confirm and use only that one, and the same for any other
+    set of synonyms the plan rotates through.
 
-        Emit the revised plan and nothing else. Keep one step per line:
-      |]
+    Never touch code identifiers, file paths, module names, command names, or
+    quoted output formats. They are exact and each counts as one word.
+
+    Emit the revised plan and nothing else. Keep one step per line:
+  |]
