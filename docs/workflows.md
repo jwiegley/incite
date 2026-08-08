@@ -9,9 +9,10 @@ nix run .#agent-functor -- cost <name>
 nix run .#agent-functor -- run <name> -i "request text"
 ```
 
-`plan` and `cost` are offline. `run` drives the configured ACP backend. On a tty
-it uses the live TUI; when piped it prints an inline transcript and asks through
-stdin at blocking points.
+`plan` and `cost` are offline. `run` drives the configured ACP (Agent Client
+Protocol — the interface a backend's own CLI speaks to accept prompts and
+stream results) backend. On a tty it uses the live TUI; when piped it prints
+an inline transcript and asks through stdin at blocking points.
 
 ## Exposed inventory
 
