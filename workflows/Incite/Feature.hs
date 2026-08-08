@@ -225,8 +225,6 @@ document =
     "document"
     ( brief
         [__i|
-          #{ponytailLadder}
-
           #{wiggum}
 
           Write this documentation plan fully in the current repository — edit
