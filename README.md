@@ -608,8 +608,8 @@ name rather than restating it — but no workflow leaf splices
 alongside `fess` and `wiggum`: `postCommitAudit` is bound in `Incite.Prompts`
 and exported, but nothing in `Incite.Feature` or `Incite.Review` reads it. The
 enforcement is `wiggum`'s own text, spliced into the `ship-feature`/`ship-docs`
-implementer and fixer briefs, telling the worker to follow the procedure
-`post-commit-audit.md` describes.
+worker briefs (`implement`, `document`) — not `remediate`, the fixer — telling
+the worker to follow the procedure `post-commit-audit.md` describes.
 
 The duplication that arrangement replaced had already drifted: `wiggum` had come
 to say one call while the beat said two. What each caller still owns is what the
