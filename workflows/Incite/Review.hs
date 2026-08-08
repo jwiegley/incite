@@ -27,10 +27,13 @@ module Incite.Review
   , Subject (..)
   , lensesOf
   , lensSetViolations
+  , admits
+  , forbiddenPairings
   , emissionLenses
   , spread
   , grindName
   , grindSynthesis
+  , grindSynthesisOver
     -- * Rescopings
     --
     -- | The two independent adjustments a grind lens stands under, and their
@@ -56,16 +59,17 @@ module Incite.Review
   , ponytailOfTree
   ) where
 
-import Data.List (nub, (\\))
+import Data.List (find, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
 import Agent.Op (LeafName, leafNameText)
-import Agent.Prompt (Prompt, brief, iii, __i)
+import Agent.Prompt (Prompt, brief, iii, promptText, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
 import Incite.Backend (backends, claudeAgentBackend, fable5, reviewer)
@@ -84,6 +88,11 @@ import Incite.Prompts
 -- how it fails, and none of them looks at a trust boundary — security lives in
 -- 'reviewHeavy' behind an 8.5 KB rubric this tier cannot afford. 'qaOfCommit'
 -- is 2.6 KB and buys the failure question on every commit.
+--
+-- The backend spread here is written out per leaf rather than fanned, so the
+-- @fess@ leaf's is a choice made in this list — and it is claude-agent because
+-- codex cannot hold that rubric. 'admits' is the same rule where a panel builds
+-- its pairings itself.
 reviewLite :: Workflow
 reviewLite =
   workflowReq
@@ -95,7 +104,7 @@ reviewLite =
     |]
     $ exploreFlows
       [ reviewer (withBackend claudeAgent fable5) "correctness" reviewCorrectness
-      , reviewer (withBackend codex defaultModel) "fess" fess
+      , reviewer (withBackend claudeAgent defaultModel) "fess" fess
       , reviewer (withBackend codex defaultModel) "complexity" reviewComplexity
       , reviewer (withBackend codex defaultModel) "ponytail" ponytailReviewRubric
       , reviewer (withBackend opencode defaultModel) "qa" qaOfCommit
@@ -366,9 +375,13 @@ emissionLenses =
 -- this; applying the tree clause to them as well would tell a reader it is not
 -- reading a change, which it never thought it was.
 --
--- The three fields are 'reviewSynthesis'\'s own admission test — it drops a
--- finding with no location, no reachable path or no stated consequence — so
--- what this asks for is exactly what survives the reduction downstream.
+-- __What it asks for is the union of two different lists in
+-- 'reviewSynthesis', and conflating them loses findings.__ That reducer ADMITS
+-- on location, a reachable path, and a stated consequence — anything missing
+-- one of the three is removed before it is read — and it FORMATS what survives
+-- as location, what is wrong, what fixes it. Ask for the format alone and a
+-- lens writes findings with no consequence, which are complete by this contract
+-- and dropped by the next stage. So this asks for all four fields.
 reporting :: Prompt -> Prompt
 reporting rubric =
   [__i|
@@ -380,10 +393,18 @@ reporting rubric =
     format, schema or return shape the text above names is VOID; this replaces
     it.
 
-    One line per finding, and every line carries three things: the location as
-    file:line, what is wrong there, and the concrete fix. A finding missing any
-    of the three is dropped by the reduction behind you without being read, so
-    a line you cannot complete is a line not to write.
+    One line per finding, and every line carries four things:
+
+    - the location, as file:line;
+    - what is wrong there;
+    - the consequence — what goes wrong if nobody acts. A reader has to be able
+      to reach it: name the caller, the input, or the run that gets there;
+    - the concrete fix.
+
+    A finding missing the location, the reachable path, or the consequence is
+    removed by the reduction behind you before anybody reads it, and one missing
+    the fix arrives at a fixer with nothing to do. A line you cannot complete is
+    a line not to write.
 
     Every claim must be reproduced by something the next reader can run: a
     filtered test, a grep, a command and its output, or a probe file you wrote
@@ -749,7 +770,8 @@ panel = panelAcross (NE.toList backends)
 -- or reduction. The @\@backend@ suffix stays even for a singleton, because
 -- these blocks are read alongside a full panel's.
 panelAcross :: [(LeafName, Flow Text Text -> Flow Text Text)] -> [(LeafName, Prompt)] -> Flow Text Text
-panelAcross bs lenses = exploreFlows [paired l b | l <- lenses, b <- bs] unionFindings
+panelAcross bs lenses =
+  exploreFlows [paired l b | l <- lenses, b <- bs, admits (fst b) (snd l)] unionFindings
 
 -- | __One backend per lens__, cycling: the leaf set IS the lens set. Where
 -- 'panelAcross' buys confidence by asking every lens of every model, this buys
@@ -771,7 +793,52 @@ panelAcross bs lenses = exploreFlows [paired l b | l <- lenses, b <- bs] unionFi
 -- 'unionFindings' and by 'reviewSynthesis'.
 spread :: NonEmpty (LeafName, Flow Text Text -> Flow Text Text) -> [(LeafName, Prompt)] -> Flow Text Text
 spread bs lenses =
-  exploreFlows (zipWith paired lenses (NE.toList (NE.cycle bs))) unionFindings
+  exploreFlows (zipWith assign lenses (NE.toList (NE.cycle bs))) unionFindings
+  where
+    -- A backend that must not answer this lens ('admits') is rotated past
+    -- rather than dropped: every lens still gets a leaf, which is the whole
+    -- property of a spread, and only the model changes. Positional order is
+    -- preserved for every other lens.
+    assign l b
+      | admits (fst b) (snd l) = paired l b
+      | otherwise = paired l (fromMaybe b (find (\b' -> admits (fst b') (snd l)) (NE.toList bs)))
+
+-- | May this backend be handed this lens? Total, and 'False' in exactly one
+-- case: __the fess rubric never runs on codex__.
+--
+-- codex cannot hold that rubric — it is a self-audit turned on an account, and
+-- what comes back is not an audit — so a @fess\@codex@ block is not a cheaper
+-- reviewer, it is a block of text the synthesis leaf will rank as though it
+-- were one. A tier must therefore be unable to BUILD the pairing, rather than
+-- everyone remembering not to write it.
+--
+-- __Keyed on the lens body, not on its name.__ 'docsAccuracy' is 'fess' pointed
+-- at prose and splices it verbatim, and it is called @accuracy@; a name list
+-- would have missed it, and would have to be extended by hand for every
+-- reorientation written after this. The body test covers the ones that exist
+-- and the ones that do not yet.
+admits :: LeafName -> Prompt -> Bool
+admits backendTag lens = not (leafNameText backendTag == "codex" && carriesFess lens)
+
+-- | Does this lens carry the fess rubric — as itself, or spliced into a
+-- reorientation of it?
+carriesFess :: Prompt -> Bool
+carriesFess lens = promptText fess `T.isInfixOf` promptText lens
+
+-- | The pairings a fan-out over these backends and lenses is forbidden to build,
+-- as @lens\@backend@ names: the refutable form of 'admits', and @[]@ for a set
+-- that a panel can build whole.
+--
+-- Exported for the test, which asserts both directions — that this names the
+-- docs panel's @accuracy\@codex@, so the fence is known to be wired to a real
+-- pairing, and that no such leaf survives into a built flow.
+forbiddenPairings :: [LeafName] -> [(LeafName, Prompt)] -> [Text]
+forbiddenPairings bs lenses =
+  [ leafNameText name <> "@" <> leafNameText b
+  | (name, lens) <- lenses
+  , b <- bs
+  , not (admits b lens)
+  ]
 
 -- | One reviewer of a fan-out: the lens, under a backend, named @lens\@backend@.
 -- Shared by 'panelAcross' and 'spread' so the two cannot drift in leaf naming —
@@ -808,7 +875,20 @@ grindName = "grind-paradox"
 -- phase and needed a hand-off; here the fixer is the next stage of the same
 -- run, so a TODO would have no reader.
 grindSynthesis :: Text -> Prompt
-grindSynthesis name =
+grindSynthesis name = grindSynthesisOver name (map fst (lensesOf OfTree <> emissionLenses))
+
+-- | 'grindSynthesis' with the roster written out, which is the only form that
+-- can actually refuse.
+--
+-- __Told the names, not just to check.__ @unionFindings@ heads a block for every
+-- leaf that ran, so a leaf which never started leaves no block at all — and a
+-- reader with no roster cannot tell fourteen blocks from ten. \"Stop if a block
+-- is missing\" without the list is an instruction nobody can follow.
+--
+-- Derived from the lens tables rather than typed out, so a lens added to either
+-- half arrives in the roster by being added.
+grindSynthesisOver :: Text -> [LeafName] -> Prompt
+grindSynthesisOver name lensNames =
   [__i|
     #{reviewSynthesis}
 
@@ -823,16 +903,27 @@ grindSynthesis name =
     is a copy for a person, and the answer is what the next stage acts on.
 
     **Say which reviewers you heard from.** Every block above is headed
-    `lens@backend`. List those names in the report, under a heading of their
-    own, before the findings. If a block is missing, or arrived empty, STOP:
-    name the missing block, say the panel was short, and do not rank anything.
-    A backend that is unavailable returns nothing, and nothing folded into a
-    ranked list reads exactly like a tree with no debt in it. Refusing is the
-    only way a reader can tell those apart.
+    `lens@backend`. These #{T.pack (show (length lensNames))} lenses were sent,
+    one per line:
+
+    #{T.intercalate "\n" ["- " <> leafNameText n | n <- lensNames]}
+
+    List every one in the report under a heading of its own, before the
+    findings, with the backend that answered it and whether it returned
+    anything. If a lens above has no block, or its block arrived empty, STOP:
+    name it, say the panel was short, and do not rank anything. A backend that
+    is unavailable returns nothing, and nothing folded into a ranked list reads
+    exactly like a tree with no debt in it. Refusing is the only way a reader
+    can tell those apart.
   |]
 
--- | The mid-run honesty auditor: read-only on codex, independent of the
--- claude-agent worker.
+-- | The mid-run honesty auditor: one read-only leaf over a worker's session.
+--
+-- __Pinned to claude-agent, and the pin is the point.__ This is the whole
+-- workflow rather than a lens in a panel, so nothing else decides its backend —
+-- left unpinned it runs on whatever agent the run was started with, and that is
+-- a codex run away from being the pairing 'admits' forbids. A backend a fan-out
+-- can no longer be given must not be reachable by inheritance either.
 --
 -- Marked 'withCapturedTranscript', so called from a run's trigger endpoint its
 -- input is the worker's conversation rather than whatever was passed.
@@ -847,7 +938,7 @@ fessAudit =
         Honesty-audit a worker's in-progress session
         (input is its captured transcript)
       |]
-    $ withBackend codex defaultModel (withMode Plan (refineWith "fess" (brief fess) id))
+    $ withBackend claudeAgent defaultModel (withMode Plan (refineWith "fess" (brief fess) id))
 
 -- | The human retrospective, over a session instead of an artifact: sentiment,
 -- what went well and what it cost, then the meeting leaf that turns them into a
@@ -889,7 +980,7 @@ retroFlow =
   exploreFlows
     [ reviewer (withBackend claudeAgent fable5) "sentiment" retroSentiment
     , reviewer (withBackend codex defaultModel) "went-well" retroWentWell
-    , reviewer (withBackend opencode defaultModel) "went-wrong" retroWentWrong
+    , reviewer (withBackend codex defaultModel) "went-wrong" retroWentWrong
     ]
     unionFindings
     >>> withMode Plan (refineWith "retro" (brief retroSynthesis) id)

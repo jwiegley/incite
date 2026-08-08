@@ -13,6 +13,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
+import Agent.Grant (permitExec)
 import Agent.Flow (Flow)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
@@ -22,13 +23,21 @@ import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
 import Incite.Feature
   ( Orientation (..)
+  , fixerContinuation
+  , closeWithChanges
+  , paradoxRule
+  , grindChecks
+  , grindGrant
+  , grindParadox
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
   , codeRule
   , continueMarker
   , decideContinue
+  , decideRed
   , docsRule
+  , isRed
   , document
   , orient
   , planFeature
@@ -46,6 +55,7 @@ import Incite.Prompts
   , docsStructure
   , fess
   , fixAll
+  , paradoxFacts
   , grindCodegenGaps
   , grindDry
   , grindEmittedCode
@@ -60,6 +70,7 @@ import Incite.Prompts
   , ponytailLadder
   , ponytailReviewRubric
   , qaAgent
+  , reviewSynthesis
   , reviewArchitecture
   , reviewComplexity
   , reviewCorrectness
@@ -70,6 +81,11 @@ import Incite.Prompts
   )
 import Incite.Review
   ( Subject (..)
+  , admits
+  , forbiddenPairings
+  , grindName
+  , grindSynthesis
+  , toTree
   , architectureOfChange
   , docsAccuracy
   , docsStrategyOfPlan
@@ -103,6 +119,7 @@ tests =
   testGroup
     "incite-workflows"
     [ decideContinueTests
+    , isRedTests
     , continueMarkerTests
     , reframingTests
     , preambleViolationsTests
@@ -112,6 +129,7 @@ tests =
     , retrospectiveTests
     , lensSetViolationsTests
     , lensesOfTests
+    , codexFessTests
     , grindPanelTests
     , reorientationTests
     , promptLintTests
@@ -200,6 +218,95 @@ decideContinueTests =
             | c <- "?!:;,)]}>\"'#~-+="
             ]
         ]
+    ]
+
+-- | The failure marker @Agent.Flow.Combinators.execStep@ emits, recorded from
+-- __its source__ rather than from a rendered log.
+--
+-- @decodeOutcome@ is @(if exit == 0 then \"✓ \" else \"✗ \") <> name <> \" (exit
+-- N)\"@, and @execStep@ prepends @\"\\n\"@ — so the marker opens a line, the
+-- glyph is U+2717 and the space after it is part of the marker. There is no
+-- ANSI anywhere on that path: the value threaded through the flow is
+-- @decodeOutcome@\'s plain 'Text', and colour is a renderer's business.
+--
+-- Getting this wrong is the one failure nothing downstream can catch. A
+-- predicate written from a guess certifies a red tree as green, the gate passes,
+-- and the run reports a build it never proved.
+execFailureLog :: Text
+execFailureLog =
+  "the remediation account\n✓ build (exit 0)\n✗ tests (exit 1)\n    3 examples, 1 failure"
+
+-- | Fragments the homomorphism table below is built from, __each a whole
+-- line__.
+--
+-- Line-terminated on purpose, and the case beside the table says why: 'isRed'
+-- is a homomorphism over concatenation at line boundaries, which is how
+-- @execStep@ builds a log (it appends @\"\\n\" <> status@), and it is NOT one
+-- over an arbitrary split. Cutting @\"✗ build\"@ into @\"✗\"@ and @\" build\"@
+-- gives two fragments that are green apart and red joined.
+logFragments :: [Text]
+logFragments =
+  [ ""
+  , "the worker's account\n"
+  , "✓ build (exit 0)\n"
+  , "✗ tests (exit 1)\n"
+  , "    3 examples, 1 failure\n"
+  , -- The marker mid-line in prose. A predicate scanning the whole text with
+    -- `isInfixOf` reads this as a failing build; one reading line starts does
+    -- not, and this is the row that tells them apart.
+    "the report explains what a ✗ line means\n"
+  , -- And indented, which is where an excerpt's continuation lands.
+    "  ✗ tests (exit 1)\n"
+  ]
+
+-- | 'isRed' and 'decideRed': the only real judgement in the green gate.
+--
+-- __A monoid homomorphism from log concatenation into @Any@__, and the law is
+-- not decoration. @execStep@ APPENDS its status line to the log it receives, so
+-- a trip that fails leaves its @✗@ in the text the next trip starts from —
+-- under the law, that stale marker makes every later verdict red and the loop
+-- burns its fuel on a tree that is already green. That is what forces the
+-- @const mempty@ feed in 'Incite.Feature.greenGate', and it is why the law is
+-- tested rather than assumed.
+isRedTests :: TestTree
+isRedTests =
+  testGroup
+    "isRed"
+    [ testCase "the recorded failure log is red" $
+        isRed execFailureLog @?= True
+    , testCase "the same log with every check passing is not" $
+        isRed (T.replace "✗" "✓" execFailureLog) @?= False
+    , -- The unit of the homomorphism. An empty log is not a failing log, which
+      -- is the whole reason the gate can feed the loop `mempty`.
+      testCase "isRed mempty is False" $
+        isRed mempty @?= False
+    , -- Hand-enumerated over all pairs, not generated: this suite depends on
+      -- tasty and tasty-hunit only, and a QuickCheck dependency is not worth
+      -- one law over seven fragments.
+      testCase "isRed (a <> b) = isRed a || isRed b, over every pair of fragments" $
+        report
+          [ "pair " <> tshow (a, b) <> ": joined " <> tshow (isRed (a <> b))
+              <> ", separately " <> tshow (isRed a || isRed b)
+          | a <- logFragments
+          , b <- logFragments
+          , isRed (a <> b) /= (isRed a || isRed b)
+          ]
+    , -- The known ceiling, written down rather than left for somebody to
+      -- discover. The law above holds because every fragment ends a line;
+      -- concatenation that splits a marker creates a match at the seam, and no
+      -- line-oriented predicate can avoid it. It costs nothing here because
+      -- `execStep` never splits one.
+      testCase "the law does not extend to a split that cuts the marker" $ do
+        isRed "✗" @?= False
+        isRed " build (exit 1)" @?= False
+        isRed ("✗" <> " build (exit 1)") @?= True
+    , -- Round trip through the decider. Red continues the loop (Left feeds the
+      -- repair leaf), green ends it (Right). Getting this backwards repairs a
+      -- green tree and ships a red one.
+      testCase "red continues the loop and green ends it" $ do
+        decideRed execFailureLog @?= Left execFailureLog
+        decideRed "✓ build (exit 0)\n✓ tests (exit 0)"
+          @?= Right "✓ build (exit 0)\n✓ tests (exit 0)"
     ]
 
 continueMarkerTests :: TestTree
@@ -356,6 +463,30 @@ documentTests =
       testCase "hands the plan to the worker" $ do
         [leafText] <- flowLeafPrompts "document" document "THE PLAN"
         assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
+    , -- The same contract on the fixer that runs under an orchestrator, and the
+      -- same failure if it drifts. 'grindParadox' wraps @remediate@ in
+      -- 'Incite.Feature.orchestrate', so this clause is what asks for another
+      -- trip; a marker the decider does not read strands that loop for its whole
+      -- fuel with nothing in any output naming the cause.
+      --
+      -- Round trip through 'decideContinue' rather than a substring check, for
+      -- 'documentTests'\'s reason: what has to hold is that the DECORATED form
+      -- the brief shows is one the decider accepts.
+      testCase "fixerContinuation shows a marker decideContinue accepts" $ do
+        let decorated = "`" <> continueMarker <> "`"
+        assertBool
+          "the fixer clause does not show the marker in the decoration this asserts"
+          (says fixerContinuation decorated)
+        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+    , -- The other half of the contract: the terminal line, and what it must
+      -- claim. A fixer that says WORK COMPLETE without saying what it closed
+      -- leaves the gate as the only evidence anything happened.
+      testCase "fixerContinuation names the terminal line and what it must carry" $
+        report
+          [ "fixerContinuation does not say " <> tshow needle
+          | needle <- ["WORK COMPLETE", "every finding is fixed or answered"]
+          , not (says fixerContinuation needle)
+          ]
     , -- The one rule this brief exists to carry that @implement@ must not.
       -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
       -- the sentence being gone is.
@@ -392,13 +523,19 @@ remediateTests =
   testGroup
     "remediate"
     [ testCase "is one leaf" $ do
-        sent <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
+        sent <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
         length sent @?= 1
-    , -- Total equality on everything this repo owns, so a reordering, a
+    , -- __The conservativity law.__ The closing clause was added as a second
+      -- argument after these bytes were recorded, and this is the case that
+      -- says the addition changed nothing when the clause is absent. It is only
+      -- worth anything because the golden predates the argument — recorded
+      -- afterwards it would say the refactor was conservative by construction.
+      --
+      -- Total equality on everything this repo owns, so a reordering, a
       -- separator change or one reworded sentence all fail it.
-      testCase "under codeRule it sends the ladder, fix-all, and exactly the recorded local text" $ do
+      testCase "with no closing clause it is byte-for-byte what it was before the clause existed" $ do
         recorded <- TIO.readFile remediateGolden
-        [leafText] <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
+        [leafText] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
         leafText
           @?= promptText ponytailLadder
             <> "\n\n"
@@ -406,15 +543,44 @@ remediateTests =
             <> recorded
             <> "\n\n"
             <> "THE FINDINGS"
+    , -- And the clause is APPENDED, under one blank line, rather than woven in.
+      -- The findings block ends in a colon, so an unconditional splice would
+      -- leave that colon pointing at a blank line whenever the clause is empty
+      -- — which is why the empty case has its own branch, and why the law above
+      -- is stated separately from this one.
+      testCase "a closing clause is appended below the findings paragraph" $ do
+        [bare] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
+        [closed] <- flowLeafPrompts "remediate" (remediate codeRule closeWithChanges) "THE FINDINGS"
+        closed
+          @?= T.replace
+            "\n\nTHE FINDINGS"
+            ("\n\n" <> promptText closeWithChanges <> "\n\nTHE FINDINGS")
+            bare
     , -- The parameterisation, which nothing else checks: splicing the rule and
-      -- then ignoring it, or splicing it twice, leaves the assertion above
-      -- looking right. And the rule is the ONLY thing the argument moves —
-      -- which is what lets both acting workflows share this leaf.
-      testCase "the artifact rule is the only thing the argument changes" $ do
-        [underCode] <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
-        [underDocs] <- flowLeafPrompts "remediate" (remediate docsRule) "THE FINDINGS"
+      -- then ignoring it, or splicing it twice, leaves the assertions above
+      -- looking right. And the rule is the ONLY thing that argument moves —
+      -- which is what lets both acting workflows and the grind fixer share this
+      -- leaf.
+      testCase "the artifact rule is the only thing its argument changes" $ do
+        [underCode] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
+        [underDocs] <- flowLeafPrompts "remediate" (remediate docsRule mempty) "THE FINDINGS"
         T.count (promptText codeRule) underCode @?= 1
         underDocs @?= T.replace (promptText codeRule) (promptText docsRule) underCode
+    , -- The grind fixer's rule carries the tree's facts as well, and that is
+      -- the only route by which they reach it: the audit half gets them from
+      -- the workflow input, which is long out of scope by the time a fixer runs
+      -- on a ranked list of findings.
+      testCase "the grind fixer stands under the code rule and the tree's facts" $ do
+        [leafText] <- flowLeafPrompts "remediate" (remediate paradoxRule fixerContinuation) "THE FINDINGS"
+        report
+          [ "the grind fixer does not carry " <> label
+          | (label, needle) <-
+              [ ("codeRule", promptText codeRule)
+              , ("the facts file", promptText paradoxFacts)
+              , ("the continuation clause", promptText fixerContinuation)
+              ]
+          , not (T.isInfixOf needle leafText)
+          ]
     ]
 
 -- | The merge between the work and the retrospective, read off the flow's
@@ -683,6 +849,18 @@ tshow = T.pack . show
 says :: Prompt -> Text -> Bool
 says p needle = T.isInfixOf needle (promptText p)
 
+-- | 'says', with whitespace collapsed on both sides.
+--
+-- For a needle that is a SENTENCE rather than a token. Both these files are
+-- hard-wrapped markdown, so \"no reachable path\" is a phrase that exists in the
+-- prose and does not exist in the bytes — it straddles a line break. Rewrapping
+-- a paragraph is not a change to what a prompt says, and a fence that goes red
+-- on rewrapping is one somebody regenerates.
+saysLoosely :: Prompt -> Text -> Bool
+saysLoosely p needle = T.isInfixOf (norm needle) (norm (promptText p))
+  where
+    norm = T.unwords . T.words
+
 -- | Run an assertion at every 'Subject', naming the one that failed. A new
 -- constructor is covered on arrival rather than when someone remembers.
 atEverySubject :: (Subject -> [Text]) -> Assertion
@@ -827,6 +1005,57 @@ lensesOfTests =
            in map (("repeated lens body: " <>) . bodyTag) (nub repeats)
     ]
 
+-- | __The fess rubric never runs on codex.__ "Incite.Review".'admits' is the
+-- rule; these are its two halves, and neither is worth much alone.
+--
+-- The rule is stated over lens BODIES, so it is only as good as its reach: a
+-- rule that matched nothing would pass every panel forever. So the first case
+-- asserts what it catches — the docs panel's @accuracy@ lens, which is 'fess'
+-- pointed at prose under a name no list of \"the fess lenses\" would have had —
+-- and the second asserts that what it catches never reaches a built flow.
+--
+-- The second is the one that binds. 'admits' is a predicate somebody has to
+-- CALL, and the tiers that build a cross-product are where the call lives; a
+-- future tier that fans lenses across backends its own way would satisfy the
+-- predicate's own tests and still build the leaf. Reading the leaf names out of
+-- the flows themselves is the check that does not care how they were built.
+codexFessTests :: TestTree
+codexFessTests =
+  testGroup
+    "the fess rubric never runs on codex"
+    [ testCase "the rule catches the docs panel's accuracy lens, which is fess renamed" $
+        forbiddenPairings backendNames (lensesOf OfDocs) @?= ["accuracy@codex"]
+    , testCase "and catches fess itself, under any name a tier gives it" $
+        forbiddenPairings backendNames [("honesty", fess)] @?= ["honesty@codex"]
+    , testCase "a lens that does not carry the rubric is admitted by every backend" $
+        forbiddenPairings backendNames [("tests", reviewTests)] @?= []
+    , -- Every workflow, not only the ones known to hold a fess lens: the point
+      -- is that no tier can build the pairing, including one written later.
+      testCase "no workflow builds a leaf that pairs the rubric with codex" $
+        report
+          [ wfName wf <> " builds " <> n
+          | wf <- mirrorWorkflows
+          , n <- leafNames (wfFlow wf)
+          , fessNamed n
+          , "@codex" `T.isSuffixOf` n
+          ]
+    , -- The guard on the case above: it reads leaf NAMES, so it only refutes
+      -- while the fess-carrying lenses are still named what this expects. A
+      -- panel that renamed them would leave it passing over nothing.
+      testCase "the leaf-name reader finds the fess leaves it is quantified over" $
+        report
+          [ "no fess-named leaf in " <> wfName wf
+          | wf <- [reviewLite, fessAudit, reviewDocs]
+          , not (any fessNamed (leafNames (wfFlow wf)))
+          ]
+    ]
+  where
+    backendNames = map fst (NE.toList backends)
+    -- The leaves whose body is the rubric or a reorientation of it, by the
+    -- names the tiers give them: @fess@ in the two code tiers, @accuracy@ in the
+    -- docs panel. Panels suffix @\@backend@, so this matches a prefix.
+    fessNamed n = any (`T.isPrefixOf` n) ["fess", "accuracy"]
+
 -- | The whole grind panel: the tree subject's lenses and the emission lenses
 -- that are appended to them, in the order @grind-paradox@ hands them to
 -- @spread@.
@@ -862,7 +1091,29 @@ expectedEmissionLenses =
 -- location, what is wrong, what fixes it — because a finding missing any of
 -- them is one the reduction behind these lenses drops unread.
 grindContract :: [Text]
-grindContract = ["file:line", "the concrete fix"]
+grindContract = ["file:line", "the consequence", "the concrete fix"]
+
+-- | The sentences 'Incite.Prompts.reviewSynthesis' uses to say what it DROPS,
+-- paired with what 'reporting' must therefore ask a lens to supply.
+--
+-- __Both sides asserted, like 'voidedSentences'.__ 'reporting' is a producer
+-- written against one consumer, and its correctness is a statement about text it
+-- does not contain: reword the reducer's drop rule and the contract silently
+-- stops matching it, with no error anywhere. Asserting the reducer's own words
+-- as well is what makes this go red on the upstream edit rather than staying
+-- green while lenses write findings the next stage discards.
+--
+-- This pair is where a real defect lived: the contract asked for location, what
+-- is wrong, and the fix — the reducer's OUTPUT format — while the reducer ADMITS
+-- on location, a reachable path, and a consequence. A lens obeying the contract
+-- could produce a finding that was complete by it and dropped by the stage after
+-- it.
+synthesisAdmits :: [(Text, Text)]
+synthesisAdmits =
+  [ ("no location", "file:line")
+  , ("no reachable path", "reader has to be able to reach it")
+  , ("no stated consequence", "the consequence")
+  ]
 
 -- | Every leaf name a 'Flow' reaches, read off its skeleton.
 --
@@ -904,6 +1155,23 @@ grindPanelTests =
           , needle <- grindContract
           , not (says body needle)
           ]
+    , -- The contract against the reducer it is written for. See
+      -- 'synthesisAdmits': the producer and the consumer are two files, and
+      -- nothing but this reads them together.
+      testCase "the contract supplies every field the synthesis admits on" $
+        report
+          [ complaint
+          | (dropsOn, asksFor) <- synthesisAdmits
+          , complaint <-
+              concat
+                [ [ "reviewSynthesis no longer drops on " <> tshow dropsOn
+                  | not (saysLoosely reviewSynthesis dropsOn)
+                  ]
+                , [ "reporting does not ask for " <> tshow asksFor
+                  | not (saysLoosely (reporting anyPrompt) asksFor)
+                  ]
+                ]
+          ]
     , testCase "emission lenses carry the bodies they name" $
         report (lensBodyMismatches expectedEmissionLenses emissionLenses)
     , -- 'spread' is a zip against a cycled backend list, so the leaf count is
@@ -923,6 +1191,41 @@ grindPanelTests =
       -- for the part it never read.
       testCase "the grind panel is 14 lenses wide" $
         length grindLenses @?= 14
+    , -- __The shipped workflow, not a union assembled here.__ Every case above
+      -- reads 'grindLenses', which this file composes; nothing forced
+      -- @grindParadox@ to compose the same thing in the same order. Union the
+      -- two halves the other way round in production and every law above stays
+      -- green while a different model audits each lens — which is exactly the
+      -- reassignment the ordered name list is supposed to catch.
+      --
+      -- So this reads the WORKFLOW's own skeleton, and it pins the pairing
+      -- rather than the order: a reader can see here that @stubs@ runs on
+      -- opencode without executing the zip in their head.
+      testCase "grind-paradox fans out exactly these lens@backend leaves" $
+        let panelLeaves = takeWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
+         in panelLeaves
+              @?= [ "correctness@claude-agent"
+                  , "tests@codex"
+                  , "stubs@opencode"
+                  , "vacuous@claude-agent"
+                  , "dry@codex"
+                  , "hardcodings@opencode"
+                  , "refactor@claude-agent"
+                  , "architecture@codex"
+                  , "performance@opencode"
+                  , "ponytail@claude-agent"
+                  , "target-consistency@codex"
+                  , "validator-calls@opencode"
+                  , "codegen-gaps@claude-agent"
+                  , "emitted-code@codex"
+                  ]
+    , -- The acting half's leaves, in order, after the panel. A stage dropped
+      -- from the chain — the fixer, the repair leaf, either check — leaves a
+      -- workflow that still plans and still costs, and reports a green gate it
+      -- never ran.
+      testCase "grind-paradox then synthesises, fixes, and gates on real checks" $
+        dropWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
+          @?= ["synthesis", "remediate", "build", "tests", "repair"]
     , -- And the pairing preserves distinctness: 'unionFindings' heads each
       -- block by leaf name, so two leaves sharing one would make two reviewers
       -- indistinguishable in the reduction. Distinct LENS names do not imply
@@ -932,6 +1235,42 @@ grindPanelTests =
         let ns = leafNames (spread backends grindLenses)
          in report
               [ "repeated leaf name: " <> n | n <- nub (ns \\ nub ns) ]
+    , -- __The grant against the checks it is derived from, through the
+      -- runtime's own matcher.__ A grant and a check list are two statements of
+      -- one fact, and the drift is silent in the direction that matters: an
+      -- ungranted check is DENIED inside the run (exit 126, "denied by grant"),
+      -- the gate never reads a real exit code, and the artifact still carries a
+      -- gate section.
+      --
+      -- 'permitExec' over @T.unwords@ is exactly what @Agent.Run@ applies to an
+      -- 'Agent.Op.Exec' leaf, so this fails on a broken argv rather than
+      -- restating the derivation. A membership check on the glob set would pass
+      -- on globs that match nothing.
+      testCase "grindGrant permits every check as the runtime spells it" $
+        report
+          [ "denied by grindGrant: " <> tshow line
+          | (_, cmd) <- grindChecks
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec grindGrant line)
+          ]
+    , -- The synthesis leaf's two, which are nobody's check. Without them its
+      -- write fails inside the agent while it still returns the whole ranked
+      -- report — so the run reports success with no file on disk, and only the
+      -- filesystem can tell.
+      testCase "grindGrant permits the report write" $
+        report
+          [ "denied by grindGrant: " <> tshow line
+          | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
+          , not (permitExec grindGrant line)
+          ]
+    , -- And it is not a blanket grant. Deriving from a list is only worth
+      -- anything if the derivation still denies what is not on it.
+      testCase "grindGrant denies what no check asked for" $
+        report
+          [ "grindGrant permits " <> tshow line
+          | line <- ["rm -rf /", "git push origin master", "curl example.com"]
+          , permitExec grindGrant line
+          ]
     ]
 
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
@@ -952,6 +1291,18 @@ reorientations =
   , ("qaOfCommit", qaAgent, qaOfCommit)
   , ("docsStrategyOfPlan", technicalDocsStrategist, docsStrategyOfPlan)
   , ("slopOfDocs", stopSlop, slopOfDocs)
+  , -- The grind rescopings. Each is an upstream or local rubric plus an
+    -- adjustment, so each owes the same prefix property: splice the base
+    -- verbatim, then adjust. A rescoping that PARAPHRASED its base would look
+    -- fine everywhere else in this suite.
+    ("ponytailOfTree", ponytailAuditRubric, ponytailOfTree)
+  , ("grindSynthesis", reviewSynthesis, grindSynthesis grindName)
+  , -- One row per rescoping combinator, over a base each is actually applied to
+    -- in `lensesOf OfTree`. 'ofTree' is 'reporting' after 'toTree', so its base
+    -- must survive two adjustments rather than one.
+    ("ofTree", reviewCorrectness, ofTree reviewCorrectness)
+  , ("reporting", reviewArchitecture, reporting reviewArchitecture)
+  , ("toTree", perfReviewer, toTree perfReviewer)
   ]
 
 -- | The text a reorientation adds __below__ the rubric it splices. Meaningful
@@ -1238,6 +1589,7 @@ mirrorWorkflows =
   [ planFeature
   , shipFeature
   , shipDocs
+  , grindParadox
   , fessAudit
   , retro
   , reviewLite

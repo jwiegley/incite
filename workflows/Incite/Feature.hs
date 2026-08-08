@@ -20,19 +20,30 @@ module Incite.Feature
   ( planFeature
   , shipFeature
   , shipDocs
+  , grindParadox
   , continueMarker
   , decideContinue
+  , isRed
+  , decideRed
   , asReviewSubject
   , asRetroSubject
   , asDocsSubject
   , document
   , retrospective
+  , keeping
   , remediate
   , docsRule
   , codeRule
   , actingGrant
+  , closeWithChanges
+  , fixerContinuation
   , orchestrate
   , workerFuel
+  , repairFuel
+  , greenGate
+  , grindChecks
+  , grindGrant
+  , paradoxRule
   , Orientation (..)
   , orient
   , preambleOf
@@ -41,10 +52,12 @@ module Incite.Feature
 
 import Data.Char (isSpace)
 import Data.List (nub)
+import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
-import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', withMode, (>>>))
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
   , hierarchical
@@ -53,14 +66,27 @@ import Agent.Flow.Combinators
   , refineWith
   , steer
   , submitPR
+  , verify
   )
 import Agent.Flow.Extent (loopUntil)
 import Agent.Grant (Grant, execGrant)
-import Agent.Prompt (Prompt, brief, i, iii, __i)
-import Agent.Run (Workflow, workflowGReq, workflowReq)
+import Agent.Op (LeafName)
+import Agent.Prompt (Prompt, brief, i, iii, promptText, __i)
+import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 
-import Incite.Backend (fable5, reviewer)
-import Incite.Review (docsStrategyOfPlan, retroFlow, reviewDocsFlow, reviewHeavyFlow)
+import Incite.Backend (backends, fable5, reviewer)
+import Incite.Review
+  ( Subject (OfTree)
+  , docsStrategyOfPlan
+  , emissionLenses
+  , grindName
+  , grindSynthesis
+  , lensesOf
+  , retroFlow
+  , reviewDocsFlow
+  , reviewHeavyFlow
+  , spread
+  )
 import Incite.Prompts
     ( intrepid,
       skeptic,
@@ -75,6 +101,7 @@ import Incite.Prompts
       ponytailLadder,
       agenticCoder,
       lookaheadPlanningSpecialist,
+      paradoxFacts,
       steRules )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
@@ -111,10 +138,9 @@ shipFeature =
       >>> steer "Review the plan — add any guidance before implementation begins"
       >>> orchestrate implement
       >>> reviewChange
-      >>> remediate codeRule
+      >>> remediate codeRule closeWithChanges
       >>> retrospective
       >>> humanGate "Open a pull request for these changes?"
-
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- One worker implements the plan for real, editing this repository in
@@ -172,10 +198,24 @@ shipFeature =
 -- flipped argument order here — the heading wrapped around the work instead of
 -- around the retro — is invisible to every other instrument in this repository.
 retrospective :: Flow Text Text
-retrospective =
-  dimap' id merge (fanout' Id (dimap' asRetroSubject id retroFlow))
+retrospective = keeping merge (dimap' asRetroSubject id retroFlow)
   where
-    merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
+    merge work r = work <> "\n\n## retrospective\n\n" <> r
+
+-- | Run @f@, then combine the text that came IN with the text it produced.
+--
+-- @'dimap'' id merge ('fanout'' 'Id' f)@, named once because two stages want the
+-- shape and want different joins: the retrospective appends under a heading, and
+-- 'greenGate' keeps the remediation account above the check lines it adds. A
+-- separator is a parameter rather than a second copy of the combinator.
+--
+-- The argument order is 'fanout'' 'Id' f\'s own — @merge incoming produced@.
+-- Both are 'Text', so flipping them is not a type error and nothing in a plan
+-- skeleton or a cost estimate moves; it would wrap the retrospective heading
+-- around the work instead of around the retro. 'retrospective'\'s own test is
+-- what reads the result and says which is which.
+keeping :: (Text -> Text -> Text) -> Flow Text Text -> Flow Text Text
+keeping merge f = dimap' id (uncurry merge) (fanout' Id f)
 
 -- | 'shipFeature' for prose. It shares 'explorePlan', 'actingGrant',
 -- 'orchestrate' and 'remediate' with the code path — so the two cannot drift in
@@ -218,7 +258,7 @@ shipDocs =
       -- The docs lenses read an artifact; what reaches them is the worker's
       -- closing account. 'asDocsSubject' points them at the files instead.
       >>> dimap' asDocsSubject id reviewDocsFlow
-      >>> remediate docsRule
+      >>> remediate docsRule closeWithChanges
 
 -- | The worker leaf of a documentation run: the one leaf that edits prose.
 --
@@ -250,6 +290,7 @@ document =
           the documents directly.
 
           #{docsRule}
+          #{steRules}
 
           Where the plan asks for something the code does not support, say so
           and why rather than skipping it in silence.
@@ -308,6 +349,45 @@ lastOrDefault _ xs = last xs
 keepGoing :: Flow Text (Either Text Text)
 keepGoing = dimap' id decideContinue Id
 
+-- | Is this check log a __failing__ one? True exactly when some line, ANSI
+-- stripped and whitespace stripped, opens with the marker
+-- @Agent.Flow.Combinators.execStep@ writes for a non-zero exit.
+--
+-- __The marker is read off that emitter, not guessed.__ @decodeOutcome@ emits
+-- @\"✗ \" <> name <> \" (exit N)\"@ and @execStep@ prepends a newline, so the
+-- marker opens a line. The ANSI strip is defensive rather than necessary — the
+-- value threaded through a 'Flow' is that plain 'Text' and colour belongs to a
+-- renderer — and it costs one pass over a log nobody else reads.
+--
+-- __Line starts, not an infix scan.__ The gate's own report says what a @✗@
+-- line means, and a synthesis leaf quotes check output; an @isInfixOf@ here
+-- would read prose about a failure as a failure and spin the loop until the
+-- fuel aborts the run. Same reasoning as 'decideContinue', same failure.
+--
+-- It is a monoid homomorphism from log concatenation into @Any@ —
+-- @isRed mempty = False@ and @isRed (a <> b) = isRed a || isRed b@ at a line
+-- boundary — which is exactly why 'greenGate' feeds its loop @mempty@: 'verify'
+-- APPENDS to the log it receives, so a stale marker from an earlier trip would
+-- otherwise poison every verdict after it.
+isRed :: Text -> Bool
+isRed = any (T.isPrefixOf failureMarker . T.strip . stripAnsi) . T.lines
+  where
+    failureMarker = "✗ "
+
+-- | Drop ANSI SGR sequences. @\\ESC[…m@ and nothing else, because nothing else
+-- appears on this path and a general terminal-escape parser here would be a
+-- parser nobody needs.
+stripAnsi :: Text -> Text
+stripAnsi t = case T.breakOn "\ESC[" t of
+  (before, "") -> before
+  (before, rest) -> before <> stripAnsi (T.drop 1 (T.dropWhile (/= 'm') rest))
+
+-- | 'Left' keeps the repair loop going, 'Right' ends it — the mirror of
+-- 'decideContinue', and the opposite polarity for the opposite reason. A worker
+-- asks to continue; a tree is asked whether it still fails.
+decideRed :: Text -> Either Text Text
+decideRed t = if isRed t then Left t else Right t
+
 -- | The exec policy every acting workflow runs under.
 --
 -- One value rather than one spelling per workflow: a grant is the blast radius
@@ -324,6 +404,57 @@ actingGrant = execGrant ["nix*"]
 -- before the run is called a runaway. Fuel, not a schedule.
 workerFuel :: Int
 workerFuel = 8
+
+-- | The checks the grind gate runs __itself__, as argv rather than as a shell
+-- string: the target tree's own build and its own test harness.
+--
+-- These are the Paradox project's commands, not this repository's. That is the
+-- whole point of the gate — @grind-paradox@ is pointed at another checkout, and
+-- what makes its verdict worth anything is that agent-functor runs these and
+-- reads the exit code, rather than an agent reporting that it did.
+--
+-- 'NonEmpty' because a check with no command is not a check, and because
+-- 'grindGrant' takes each one's head. A total head is the difference between a
+-- grant derived from this list and a grant that agrees with it today.
+grindChecks :: [(LeafName, NonEmpty Text)]
+grindChecks =
+  [ ("build", "cabal" :| ["build"])
+  , ("tests", "./test.sh" :| ["lib-tests"])
+  ]
+
+-- | The exec policy 'grindParadox' runs under, __derived from 'grindChecks'__
+-- rather than written beside it.
+--
+-- A grant and a check list are two statements of one fact, and the failure when
+-- they drift is silent in the direction that matters: an ungranted check is
+-- denied inside the run, the gate never sees a real exit code, and the artifact
+-- still reads like a gate ran. Deriving it means the check list is the only
+-- place either can change.
+--
+-- @date@ and @mkdir@ are the synthesis leaf's, not a check's — it reads the day
+-- and creates @docs\/audits\/@ before writing the report. They are named here
+-- because this is the workflow's whole exec policy, and a leaf whose write
+-- fails still returns the full ranked report, so the run would report success
+-- with no file on disk.
+grindGrant :: Grant
+grindGrant = execGrant ([NE.head cmd <> "*" | (_, cmd) <- grindChecks] <> ["date*", "mkdir*"])
+
+-- | What a grind fixer stands under: the code rule, plus the tree's own facts
+-- and repair disciplines.
+--
+-- The facts reach the audit half through the workflow's input reframing, which
+-- is out of scope by the time the fixer runs — a stage in a chain sees the
+-- previous leaf's output, and that is a ranked list of findings. Splicing them
+-- into the rule is how the fixer learns that a golden is regenerated and never
+-- hand-edited, which is the discipline a red gate is cheapest to defeat by
+-- breaking.
+paradoxRule :: Prompt
+paradoxRule =
+  [__i|
+    #{codeRule}
+
+    #{paradoxFacts}
+  |]
 
 -- | Run @worker@ under the orchestrator every acting workflow uses: each trip
 -- is one worker turn taking the previous trip's own summary as its input, and
@@ -484,24 +615,191 @@ codeRule =
 -- artifact they read ('Orientation'); until this took an argument, the one leaf
 -- that ACTS on what they said was the only stage of a documentation run that
 -- was never told.
-remediate :: Prompt -> Flow Text Text
-remediate artifactRule =
-  refineWith
-    "remediate"
-    ( brief
-        [__i|
-          #{ponytailLadder}
+remediate :: Prompt -> Prompt -> Flow Text Text
+remediate artifactRule closing = refineWith "remediate" (brief body) id
+  where
+    findings =
+      [__i|
+        #{ponytailLadder}
 
-          #{fixAll}
+        #{fixAll}
 
-          #{artifactRule}
+        #{artifactRule}
 
-          The ranked review findings follow. Fix every one of them in this
-          repository, in the shortest change that fixes it. Where you judge
-          a finding wrong, say so and why rather than silently skipping it:
-        |]
-    )
-    id
+        The ranked review findings follow. Fix every one of them in this
+        repository, in the shortest change that fixes it. Where you judge
+        a finding wrong, say so and why rather than silently skipping it:
+      |]
+    -- An own branch for the empty clause, rather than splicing @mempty@ into a
+    -- template. The findings block ends in a colon, and 'brief' adds the blank
+    -- line before the artifact, so an unconditional @"\\n\\n" <> closing@ would
+    -- leave two blank lines and a colon pointing at nothing whenever the clause
+    -- is absent. That is byte drift in a prompt, which no check outside this
+    -- module's own pin can see — and \"conservative\" would then be true only
+    -- because the pin had been re-recorded.
+    body
+      | T.null (T.strip (promptText closing)) = findings
+      | otherwise =
+          [__i|
+            #{findings}
+
+            #{closing}
+          |]
+
+-- | The closing clause a fixer running __once__ stands under: 'shipFeature'\'s
+-- and 'shipDocs'\'s. There is no next trip, so there is no marker to emit and
+-- nothing to hand a successor — only the account.
+closeWithChanges :: Prompt
+closeWithChanges =
+  [__i|
+    Close with what you changed and what you rejected, in one paragraph. This
+    leaf runs once and nothing calls it again, so a finding you leave open
+    leaves the run with it open.
+  |]
+
+-- | The closing clause a fixer running under 'orchestrate' stands under: the
+-- same continuation contract the worker briefs carry, pointed at findings
+-- instead of at a plan.
+--
+-- __Splices 'continueMarker' rather than spelling it__, for the reason
+-- 'document' does: the brief tells the fixer how to ask for another trip and
+-- 'decideContinue' decides whether it asked, and the two agree only because
+-- both go through that binding. Spelled out here, a rename would strand the
+-- loop for its whole fuel with nothing in any output naming the cause.
+fixerContinuation :: Prompt
+fixerContinuation =
+  [__i|
+    You are running under an orchestrator that will call you again with your own
+    summary as its input, so write the summary for your successor: which
+    findings you closed, which you rejected and why, and which are left.
+
+    End with a status line, alone on the last line:
+
+    - `#{continueMarker}` — findings are still open. You will be called again.
+    - `WORK COMPLETE` — every finding is fixed or answered; say what changed.
+  |]
+
+-- | Audit a whole source tree with fourteen lenses, rank what they found, fix
+-- every finding, and then prove the tree still builds and its tests still pass
+-- — with our own exec, reading real exit codes.
+--
+-- __The subject is another checkout.__ Every path, build command and repair
+-- discipline lives in 'Incite.Prompts.paradoxFacts', prepended to whatever the
+-- caller passes. A pure prepend rather than @workflowG@\'s default input,
+-- because a caller's @input@ REPLACES that default — which would drop the facts
+-- the moment somebody steered the run — and rather than a wrap per lens,
+-- because one 'dimap'' covers all fourteen leaves and leaves the caller's text
+-- as a genuine focus steer.
+--
+-- __One backend per lens, not every backend on every lens.__ 'Incite.Review.spread'
+-- buys coverage where 'Incite.Review.panel' buys confidence: 14 leaves against
+-- 42. A tier that reads a whole tree cannot afford the second, and three models
+-- agreeing about a tree nobody changed is worth less than three more questions
+-- asked of it.
+--
+-- __Sequential orchestrated remediation, deliberately__, and it replaces a
+-- file-disjoint parallel wave scheduler with per-fix adversarial verifiers.
+-- Parallel agents editing one checkout is the conflict that scheduler existed
+-- to dodge, worker-worktree leaves can report fixes that never merge, and
+-- dynamic fan-out over a runtime finding count needs a static bound — which
+-- either drops findings or stops the run after the audit spend. The fuelled
+-- loop is slower on a large finding set, and honest about what it closed.
+--
+-- The gate's 'Agent.Op.Exec' leaves make @hasWorldActing@ true, so @--sandbox@
+-- engages when asked for. The product of a real run is a dirty tree, so the
+-- command that drives it passes @sandbox=false@ on purpose.
+grindParadox :: Workflow
+grindParadox =
+  workflowG
+    grindName
+    [iii|
+      Audit a whole source tree with fourteen lenses spread one per backend
+      (correctness, tests, stubs, vacuous tests, repetition, hardcodings,
+      refactors, architecture, performance, ponytail cuts, and four that only a
+      code generator admits), write a dated ranked report, fix every finding
+      under an orchestrated fixer, then gate on a real build and test suite
+    |]
+    [iii|
+      Audit the whole source tree in the current working directory. No focus:
+      read what the lenses point you at.
+    |]
+    grindGrant
+    $ dimap' withFacts id (spread backends (lensesOf OfTree <> emissionLenses))
+      >>> refineWith "synthesis" (brief (grindSynthesis grindName)) id
+      >>> orchestrate (remediate paradoxRule fixerContinuation)
+      >>> greenGate paradoxRule grindChecks
+  where
+    withFacts steerText = promptText paradoxFacts <> "\n\n" <> steerText
+
+-- | The ceiling on how many times the gate may hand a still-red tree to a
+-- repair leaf. Fuel, not a schedule — same reading as 'workerFuel', and much
+-- smaller: a failing check after three repairs is an integration problem a
+-- person should look at, not one more turn.
+repairFuel :: Int
+repairFuel = 3
+
+-- | Run @checks@ __ourselves__ until they pass, repairing between trips, and
+-- keep the account that came in.
+--
+-- __The account survives the gate.__ What reaches this stage is the fixer's own
+-- summary of what it closed and rejected, and it is the most useful thing in the
+-- run's final artifact. 'keeping' puts it above the check lines rather than
+-- letting 'verify' overwrite it with a log.
+--
+-- __The @const mempty@ is the unit the homomorphism demands, not a scrubber
+-- bolted on.__ @Agent.Flow.Combinators.execStep@ APPENDS its status line to the
+-- log it receives, and 'isRed' is a monoid homomorphism into @Any@ — so a @✗@
+-- from trip one is still in the text trip two produces, every later verdict is
+-- red, and the loop burns its fuel and aborts a run whose tree went green on
+-- trip two. Feeding each trip the empty log is what makes the verdict a
+-- statement about THIS trip.
+--
+-- __Exhaustion aborts, by upstream design.__ 'loopUntil' offers no
+-- yield-what-you-have policy (at its type the loop holds only an @a@ and must
+-- produce a @b@), so a tree still red after 'repairFuel' trips fails the run
+-- rather than falling through into 'keeping' and reporting success over a
+-- failing build. That is the behaviour this gate wants, and it is upstream's
+-- rather than ours — see 'orchestrate', which points the same default the other
+-- way on purpose.
+greenGate :: Prompt -> [(LeafName, NonEmpty Text)] -> Flow Text Text
+greenGate artifactRule checks = keeping accountThenLog gateLoop
+  where
+    accountThenLog account gateLog = account <> "\n\n## gate\n" <> gateLog
+    gateLoop =
+      loopUntil
+        repairFuel
+        ( dimap' (const mempty) id (verify [(n, NE.toList cmd) | (n, cmd) <- checks])
+            >>> dimap' id decideRed Id
+            >>> left'' repairLeaf
+        )
+    -- The one leaf that acts on a red gate. Under the artifact rule, because
+    -- the cheapest way to turn a failing check green is to weaken the assertion
+    -- that fails — and that move satisfies the gate, passes everything
+    -- downstream of it (there is nothing), and is exactly what the disciplines
+    -- spliced into the rule forbid.
+    repairLeaf =
+      refineWith
+        "repair"
+        ( brief
+            [__i|
+              #{artifactRule}
+
+              The checks below were run by the harness, not by an agent, and the
+              exit codes are real. Fix every failing one.
+
+              Three rules, and they are the whole point of a gate:
+
+              - Never weaken an assertion, delete a test, or narrow a filter to
+                make a check pass. A check that fails is telling you something.
+              - Never hand-edit recorded output. Fix what generates it, then
+                regenerate, then read the diff.
+              - Where two individually-correct fixes conflict, repair the
+                conflict rather than reverting either one, and say which two.
+
+              The check log follows:
+            |]
+        )
+        id
 
 -- | The shared analysis prefix: explore (three stances) then plan.
 explorePlan :: Flow Text Text
