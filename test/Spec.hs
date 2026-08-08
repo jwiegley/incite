@@ -966,14 +966,17 @@ mirrorWorkflows =
   , promptLint
   ]
 
--- | The backticked name in a markdown table row's __first__ cell, for every row
--- that has one. Later cells (a lens name, a bound flow value) are deliberately
--- not read: the first cell is what a table like "Exposed inventory" or "Review
--- tiers and leaf counts" enumerates, and a prose cell may cite other backticked
--- names in passing.
-tableFirstColumn :: Text -> [Text]
-tableFirstColumn body =
-  [ name
+-- | The row-level primitive 'tableFirstColumn' and 'tableFirstTwoColumns' both
+-- build on: every markdown table row whose first cell opens with a backticked
+-- name, paired with that row's remaining cells (unparsed, unfiltered). Written
+-- once so the convention for what counts as a row — split on @|@, strip, check
+-- the backtick prefix, take the name up to the closing backtick — moves both
+-- readers together. Before this was two independent copies, and reformatting
+-- the doc convention meant finding and editing both in lockstep or watching
+-- them drift.
+tableRows :: Text -> [(Text, [Text])]
+tableRows body =
+  [ (name, drop 2 cells)
   | l <- T.lines body
   , let cells = T.splitOn "|" l
   , length cells > 1
@@ -982,19 +985,26 @@ tableFirstColumn body =
   , let name = T.takeWhile (/= '`') (T.drop 1 c1)
   ]
 
--- | 'tableFirstColumn', plus the integer in the row's second cell — the shape
--- of "Review tiers and leaf counts"' @| Tier | Leaves | … |@ table.
-tableFirstTwoColumns :: Text -> [(Text, Int)]
+-- | The backticked name in a markdown table row's __first__ cell, for every row
+-- that has one. Later cells (a lens name, a bound flow value) are deliberately
+-- not read: the first cell is what a table like "Exposed inventory" or "Review
+-- tiers and leaf counts" enumerates, and a prose cell may cite other backticked
+-- names in passing.
+tableFirstColumn :: Text -> [Text]
+tableFirstColumn = map fst . tableRows
+
+-- | 'tableRows', plus the __raw text__ of the row's second cell — the shape of
+-- "Review tiers and leaf counts"' @| Tier | Leaves | … |@ table.
+--
+-- Left as 'Text' rather than parsed to 'Int' here, on purpose: a cell that
+-- fails to parse used to be silently filtered out by this reader before
+-- @docsInventoryTests@ ever saw it (via a failed @reads@ pattern match), which
+-- is exactly the defect that check exists to catch. Parsing — and reporting a
+-- parse failure — is now the test's job, not this reader's.
+tableFirstTwoColumns :: Text -> [(Text, Text)]
 tableFirstTwoColumns body =
-  [ (name, n)
-  | l <- T.lines body
-  , let cells = T.splitOn "|" l
-  , length cells > 2
-  , let c1 = T.strip (cells !! 1)
-  , T.isPrefixOf "`" c1
-  , let name = T.takeWhile (/= '`') (T.drop 1 c1)
-  , let c2 = T.strip (cells !! 2)
-  , [(n, "")] <- [reads (T.unpack c2)]
+  [ (name, T.strip c2)
+  | (name, c2 : _) <- tableRows body
   ]
 
 -- | The body of one @## Heading@ section: everything between it and the next
@@ -1011,30 +1021,56 @@ sectionBody heading doc =
     $ T.lines doc
 
 -- | Fences 'docs/workflows.md' against the two things in it that only code can
--- prove: which workflows exist, and how many leaves a review tier costs.
--- Neither is otherwise cross-validated — "Main".workflows and this file are
--- two hand-kept lists, and a leaf count is arithmetic over a 'Flow' value that
--- nothing forces back into the prose that quotes it.
+-- prove: which workflows exist (in order), and how many leaves a review tier
+-- costs. Neither is otherwise cross-validated — "Main".workflows and this file
+-- are two hand-kept lists, and a leaf count is arithmetic over a 'Flow' value
+-- that nothing forces back into the prose that quotes it.
 docsInventoryTests :: TestTree
 docsInventoryTests =
   testGroup
     "docs inventory"
-    [ testCase "Exposed inventory names exactly the workflows this binary exposes" $ do
+    [ -- Direct list equality, not sorted-set equality. The table is meant to
+      -- mirror 'mirrorWorkflows'\'s order (it is 'workflows/Main.hs'\'s order),
+      -- and a bare set comparison cannot see a reorder: two tables naming the
+      -- same ten workflows in different sequences would both read as the same
+      -- set and this would stay green. Order is exactly what makes the claim on
+      -- 'mirrorWorkflows' — "a rename or reorder on either side is exactly what
+      -- this test exists to catch" — true.
+      testCase "Exposed inventory names exactly the workflows this binary exposes, in order" $ do
         doc <- TIO.readFile "docs/workflows.md"
         let named = tableFirstColumn (sectionBody "Exposed inventory" doc)
         assertBool "no workflow names read from the table" (not (null named))
-        sort named @?= sort (map wfName mirrorWorkflows)
-    , testCase "Review tiers and leaf counts matches worstCaseCost . toSkeleton . wfFlow" $ do
+        named @?= map wfName mirrorWorkflows
+    , -- Every row this reads is either checked or turned into a named failure —
+      -- never silently skipped. Two rows used to vanish before 'report' ever
+      -- saw them: a row naming a workflow absent from 'mirrorWorkflows' (the old
+      -- @Just wf <- [find …]@ pattern match failing inside the list
+      -- comprehension, which drops that iteration rather than failing it), and a
+      -- row whose count cell is not a bare 'Int' (dropped by
+      -- 'tableFirstTwoColumns' itself, back when it parsed eagerly). Both are
+      -- text at this point — 'tableFirstTwoColumns' no longer parses — so both
+      -- get their own complaint below instead of disappearing.
+      testCase "Review tiers and leaf counts matches worstCaseCost . toSkeleton . wfFlow" $ do
         doc <- TIO.readFile "docs/workflows.md"
         let counts = tableFirstTwoColumns (sectionBody "Review tiers and leaf counts" doc)
         assertBool "no leaf-count rows read from the table" (not (null counts))
         report
-          [ name <> ": docs/workflows.md says " <> T.pack (show n)
-              <> ", the flow's worst-case leaf count is " <> renderCost actual
-          | (name, n) <- counts
-          , Just wf <- [find ((== name) . wfName) mirrorWorkflows]
-          , let actual = worstCaseCost (toSkeleton (wfFlow wf))
-          , actual /= Finite n
+          [ complaint
+          | (name, raw) <- counts
+          , complaint <- case find ((== name) . wfName) mirrorWorkflows of
+              Nothing ->
+                [name <> ": docs/workflows.md names a workflow mirrorWorkflows does not have"]
+              Just wf -> case reads (T.unpack raw) of
+                [(n, "")] ->
+                  let actual = worstCaseCost (toSkeleton (wfFlow wf))
+                   in [ name <> ": docs/workflows.md says " <> tshow n
+                          <> ", the flow's worst-case leaf count is " <> renderCost actual
+                      | actual /= Finite n
+                      ]
+                _ ->
+                  [ name <> ": docs/workflows.md's leaf count " <> tshow raw
+                      <> " does not parse as an Int"
+                  ]
           ]
     ]
 
