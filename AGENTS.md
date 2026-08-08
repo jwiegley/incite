@@ -16,20 +16,28 @@ package root and resolves it at run time against the working directory, so those
 two must be the same directory — the one you stand in when you run the binary.
 **Always `nix run` / `cabal run` from the repo root.**
 
-## Two lists that must stay in sync
+## Two lists, and only one of them usually needs an edit
 
-Every directory that a `promptFile` splice can reach must appear in **both**:
+Every directory that a `promptFile` splice can reach must appear in
+`extra-source-files` in `incite-workflows.cabal` (cabal globs do not recurse,
+so a new subdirectory needs its own one-level glob). The Nix side is a
+`fileset` union in `flake.nix` (under `mkWorkflowRunner`, shared as
+`librarySrc`) — but it takes `./prompts`, `./agents` and `./skills` **wholesale**,
+so a new subdirectory under any of those needs **no** Nix-side edit; only new
+`commands/*.md` files that must become a workflow brief do, since `commands/`
+is not taken wholesale (see
+[Prompt authoring](docs/prompt-authoring.md#local-workflow-prompts)).
 
-1. `extra-source-files` in `incite-workflows.cabal`
-2. The `fileset` union in `flake.nix` (under `mkWorkflowRunner`)
-
-They are not cross-validated. A directory missing from the cabal list still
-builds under nix and only breaks `cabal sdist` — a **quiet** failure. When you
-add a new prompt directory, update both. Today both lists cover `prompts/`,
+The two lists are not cross-validated regardless. A directory missing from the
+cabal list still builds under nix and only breaks `cabal sdist` — a **quiet**
+failure. Today both lists cover `prompts/`,
 `agents/`, `skills/`, plus `commands/fess.md`, `commands/post-commit-audit.md`
-and `commands/wiggum.md` (which a workflow splices in as a brief). `workflows/`
-needs no `extra-source-files` entry — `hs-source-dirs: workflows` already
-covers the `.hs` sources there — but the Nix fileset union still lists
+and `commands/wiggum.md` — each is `[promptFile|…|]`-bound in `Incite.Prompts`,
+which is what forces the compile-time check; `fess.md` and `wiggum.md` are
+also spliced into workflow leaves, `post-commit-audit.md` is bound but not
+(see [Prompt authoring](docs/prompt-authoring.md#deployed-prompts-reused-by-workflows)).
+`workflows/` needs no `extra-source-files` entry — `hs-source-dirs: workflows`
+already covers the `.hs` sources there — but the Nix fileset union still lists
 `./workflows` explicitly, since it selects plain source paths and knows
 nothing about `hs-source-dirs`.
 
@@ -102,8 +110,12 @@ does **not** `follows` incite's unstable nixpkgs.
 `agents/` and `skills/` are each read by **two** consumers:
 
 1. `agent-pm` renders them to `~/.claude/{agents,skills}/...`
-2. The workflows splice them in verbatim as briefs (`codeReview`, `fixAll`,
-   `fess`).
+2. The workflows splice them in verbatim as briefs (`codeReview`, `fixAll`).
+
+The full list of deployed prompts read twice — including the `commands/`
+entries `fess` and `wiggum` — lives in
+[Prompt authoring](docs/prompt-authoring.md#deployed-prompts-reused-by-workflows),
+not here.
 
 There is exactly one copy of each. Editing `agents/code-review.md` changes both
 the deployed Claude agent **and** the workflow leaf that sends it. The bill is

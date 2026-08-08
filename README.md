@@ -459,12 +459,17 @@ nix run .#agent-functor -- cost plan-feature # worst-case leaf executions, offli
 nix run .#agent-functor -- run  plan-feature -i "add a --json flag"
 ```
 
-`run` flags: `--backend NAME` (default `claude-agent`), `-i/--input TEXT`
-(prompts on a tty if omitted), `--sandbox` (isolate a world-acting run in a
-throwaway worktree instead of editing in place — the result is committed to an
+`run` flags: `--backend NAME` (default `claude-agent`), `--model KEY`,
+`-i/--input TEXT` (prompts on a tty if omitted — and on a workflow with a
+baked-in default input, an explicit `-i` replaces that default rather than
+steering it), `--sandbox` (isolate a world-acting run in a throwaway worktree
+instead of editing in place — the result is committed to an
 `agent-functor/run-…` branch; prompt-only flows have nothing to isolate and
 always run in place), `--concurrency N` (caps concurrent fan-out sessions;
-defaults to 6, or the workflow's own `withConcurrency`; `0` = unbounded).
+defaults to 6, or the workflow's own `withConcurrency`; `0` = unbounded, which
+can burst a rate-limited backend into an aborting 429). Full detail on every
+flag, the known-backend list, and the `claude-agent` model pin lives in
+[Operations](docs/operations.md#run-workflows).
 
 `run` picks its front-end off the terminal. On a tty it drives the **live
 TUI**: a context header, a stage list that fills in as leaves complete, a
@@ -778,13 +783,17 @@ A bad path is a **compile** error. `[promptFile|…|]` and `[i|…|]` both come 
 extra dependency); the module needs `{-# LANGUAGE QuasiQuotes #-}`, already on in
 `incite-workflows.cabal`.
 
-A new prompt directory must be added to the `fileset` in `flake.nix`, or the nix
-build sandbox will not see it and the compile-time check will fail. It currently
-unions the cabal file plus `workflows/`, `prompts/`, `agents/`, `skills/` and
-the three commands read back as briefs (`commands/fess.md`,
-`commands/post-commit-audit.md`, `commands/wiggum.md`) — named individually
-rather than the whole `commands/` directory, so adding an ordinary slash
-command does not rebuild the runner. This union is shared by name: `librarySrc`
+A new subdirectory under `prompts/`, `agents/` or `skills/` needs **no** edit to
+the `fileset` in `flake.nix` — it unions the cabal file plus `workflows/`,
+`prompts/`, `agents/`, `skills/` wholesale, so any new subdirectory under one of
+those is already covered. What it does **not** take wholesale is `commands/`: it
+lists the three commands read back as briefs individually
+(`commands/fess.md`, `commands/post-commit-audit.md`, `commands/wiggum.md`)
+rather than the whole directory, so adding an ordinary slash command does not
+rebuild the runner — but a new `commands/*.md` file that a workflow needs to
+splice as a brief must be added to this `fileset` explicitly, or the nix build
+sandbox will not see it and the compile-time check will fail. This union is
+shared by name: `librarySrc`
 in `flake.nix` is what the runner, `packages.haddock`, and the `unit-test`
 check's `testSrc` all build on, so it is defined once rather than three times.
 Keeping it a `fileset` rather than `./.` means editing this README or a `flake.nix`
