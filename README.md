@@ -88,7 +88,8 @@ prompts/           — prompt bodies for the workflows, read at RUN time
                      `editPlan`'s six code-oriented plan-edit lenses (the other
                      three are `ponytailLadder`, the `lookahead` rubric, and
                      the local `simple-english` lens, all upstream or inline)
-  explore/*.md     — the three explore stances: intrepid, skeptic, contemplative
+  explore/*.md     — the four explore stances: intrepid, skeptic, contemplative,
+                     architect
   review/*.md      — the LOCAL review lenses fanned out by `review-lite`/
                      `-heavy`/`-audit`/`-docs`: correctness, complexity, tests,
                      architecture, docs-completeness/structure. Security,

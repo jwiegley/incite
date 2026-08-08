@@ -28,6 +28,7 @@ module Incite.Prompts
     intrepid
   , skeptic
   , contemplative
+  , architect
     -- * Planning
   , planBrief
   , planStep
@@ -76,10 +77,11 @@ import Agent.Prompt (Prompt, promptFile)
 
 -- Explore -----------------------------------------------------------------------
 
-intrepid, skeptic, contemplative :: Prompt
+intrepid, skeptic, contemplative, architect :: Prompt
 intrepid = [promptFile|prompts/explore/intrepid.md|]
 skeptic = [promptFile|prompts/explore/skeptic.md|]
 contemplative = [promptFile|prompts/explore/contemplative.md|]
+architect = [promptFile|prompts/explore/architect.md|]
 
 -- Planning ----------------------------------------------------------------------
 

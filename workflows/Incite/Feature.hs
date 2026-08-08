@@ -64,6 +64,7 @@ import Incite.Prompts
     ( intrepid,
       skeptic,
       contemplative,
+      architect,
       planBrief,
       planDenotational,
       planRisk,
@@ -491,14 +492,25 @@ explorePlan = explore >>> plan
     -- Analysis-only, enforced at the session level ('withMode Plan'), and
     -- heterogeneous — one backend per stance, so the perspectives are
     -- genuinely independent.
+    -- The architect is the fourth stance and reads the tree, not the request:
+    -- the other three all argue about the change, and none of them was asked
+    -- what shape it has to land in. It is on Fable 5 rather than sharing a
+    -- backend with a sibling — a whole-tree structural read is the heaviest
+    -- thinking here, and a shared backend would cost the fan-out the
+    -- independence it exists for.
     explore =
       withMode Plan $
         exploreFlows
           [ ("intrepid", withBackend claudeAgent defaultModel (refineWith "intrepid" (brief intrepid) id))
           , ("skeptic", withBackend codex defaultModel (refineWith "skeptic" (brief skeptic) id))
           , ("contemplative", withBackend opencode defaultModel (refineWith "contemplative" (brief contemplative) id))
+          , ("architect", withBackend claudeAgent fable5 (refineWith "architect" (brief architect) id))
           ]
-          (hierarchical ["skeptic", "contemplative", "intrepid"])
+          -- Narrowing, not ranking by importance: what breaks, then the shape it
+          -- lands in, then which design, then the moves. The architect precedes
+          -- the design stance because the design stance is told to build on its
+          -- map.
+          (hierarchical ["skeptic", "architect", "contemplative", "intrepid"])
     -- Read-only, pinned to Fable 5: 'planBrief' leans on both.
     plan =
       withMode Plan

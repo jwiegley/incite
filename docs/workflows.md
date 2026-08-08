@@ -24,7 +24,7 @@ text.
 
 | Workflow | Kind | Shape |
 |---|---|---|
-| `plan-feature` | prompt-only | explore with three stances, plan, then edit the plan through six code-oriented lenses |
+| `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
 | `ship-docs` | world-acting | explore, plan, SimpleEnglish plan wording, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on codex |
@@ -57,7 +57,9 @@ permission flow.
 
 `Incite.Feature` splits the feature path into shared pieces:
 
-- `explorePlan`: three read-only exploration stances, then the planner;
+- `explorePlan`: four read-only exploration stances — intrepid (the path),
+  skeptic (the risks), contemplative (the design options), architect (the shape
+  of the tree they all land in) — then the planner;
 - `editPlan`: code-oriented plan lenses: ponytail, denotational, risk,
   verification, lookahead, SimpleEnglish;
 - `simpleEnglishLens`: the only plan lens used by `ship-docs`, because the code
