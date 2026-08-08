@@ -14,14 +14,27 @@ extra-source-files:
     prompts/review/*.md
     prompts/retro/*.md
     -- Grafted in from the `flake = false` inputs; never in git (flake.nix).
+    -- Every directory `Incite.Prompts` splices a `promptFile` from must be
+    -- here: `extra-source-files` is what an sdist carries, and a `promptFile`
+    -- path is checked when the module COMPILES, so a missing glob is a package
+    -- that does not build outside a git checkout. `test/Spec.hs` asserts the
+    -- cover, because nothing else in this repo can see the gap.
     prompts/upstream/ponytail/*.md
     prompts/upstream/awesome-prompts/*.md
+    prompts/upstream/promptdeploy/*.md
+    prompts/upstream/simple-english/*.md
     agents/*.md
     skills/*.md
     -- Slash commands read back as workflow briefs (fess-audit, implement).
     commands/fess.md
     commands/post-commit-audit.md
     commands/wiggum.md
+    -- The recorded prompt bytes `test/Spec.hs` fences with `TIO.readFile`. Same
+    -- rule as the prompt globs above and a worse failure without it: a golden
+    -- read at run time is not checked when anything compiles, so an sdist that
+    -- drops one builds clean and then fails the test suite with
+    -- `openFile: does not exist`. `test/Spec.hs` asserts this cover too.
+    test/golden/*.txt
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 library
@@ -62,6 +75,10 @@ test-suite incite-test
     build-depends:
         base
       , text
+      -- For the packaging cover: it quantifies over what is ON DISK under
+      -- test/golden, not over a list in the test file, so the golden that goes
+      -- missing from an sdist cannot be the one nobody wrote down twice.
+      , directory
       , agent-functor
       , incite-workflows
       , tasty

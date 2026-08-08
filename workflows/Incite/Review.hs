@@ -15,20 +15,36 @@ module Incite.Review
   , reviewHeavy
   , reviewHeavyFlow
   , reviewAudit
+  , reviewDocs
+  , reviewDocsFlow
   , fessAudit
   , retro
   , retroFlow
   , plannerAudit
   , promptLint
+  , promptLintBrief
+  , promptLintScope
   , Subject (..)
   , lensesOf
+  , lensSetViolations
+    -- * Reorientations
+    --
+    -- | The lens bodies this module writes itself, rather than reading from a
+    -- file: an upstream rubric plus one adjustment. Exported so a test can
+    -- name the body each lens is supposed to carry — see @lensesOf@\'s
+    -- expected table in @test\/Spec.hs@.
+  , architectureOfChange
+  , docsAccuracy
+  , ponytailOfDocs
   ) where
 
+import Data.List (nub, (\\))
 import Data.Text (Text)
+import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
-import Agent.Op (LeafName)
+import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
@@ -128,33 +144,130 @@ reviewAudit =
     auditLenses = lensesOf OfChange
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
--- | What a panel is pointed at — the only axis on which the lens set varies.
--- Two lenses are subject-dependent: ponytail ships one rubric for a diff and
--- another for a whole tree, and architecture is a question only a change can
--- answer.
+-- | The same shape pointed at prose: three lenses that only a document admits,
+-- plus the ponytail question every artifact admits, each answered by all three
+-- backends, then the same synthesis leaf.
+--
+-- __No regroupings.__ 'reviewAudit' buys its third tier by re-expressing a
+-- change as logical units and as the commits it should have been. Neither view
+-- exists for a document — a README has no commit sequence it should have been —
+-- so this tier is the panel and the reduction, and nothing else.
+reviewDocs :: Workflow
+reviewDocs =
+  workflowReq
+    "review-docs"
+    [iii|
+      Review documentation with three lenses only prose admits (accuracy against
+      the code, completeness for a reader who follows it, structure) plus the
+      ponytail cuts every artifact admits, each run on all three backends, then
+      synthesise one ranked list
+    |]
+    reviewDocsFlow
+
+-- | 'reviewDocs' as a plain 'Flow', so the acting workflow of "Incite.Feature"
+-- can run the same panel inline rather than copying it.
+--
+-- __Two consumers__, like 'reviewHeavyFlow': the 'reviewDocs' workflow and
+-- "Incite.Feature".@shipDocs@, which runs the same panel inline as a stage. The
+-- binding landed ahead of the second consumer, and that is the whole reason it
+-- is separate from the workflow.
+--
+-- 'reviewSynthesis' is reused rather than copied for prose: it says
+-- \"reviewers\", \"finding\" and \"location\" and never \"code\", so what it
+-- de-duplicates and ranks is already artifact-agnostic.
+--
+-- __Do not union this panel with a code panel.__ Every subject carries a lens
+-- named @ponytail@ — the third law of 'lensesOf' — and @panelAcross@ keys its
+-- blocks @lens\@backend@, so one 'unionFindings' over both would head two
+-- different rubrics with the same @ponytail\@codex@, which is the collision the
+-- pairwise-distinct law exists to prevent. Reduce each panel separately.
+reviewDocsFlow :: Flow Text Text
+reviewDocsFlow =
+  panel (lensesOf OfDocs) >>> refineWith "synthesis" (brief reviewSynthesis) id
+
+-- | The __kind of artifact__ a panel is pointed at. Not a switch over which
+-- lenses differ — a name for what is under review, from which the lens set
+-- follows. The type says what is being read, and 'lensesOf' says what reading
+-- it admits.
+--
+-- A subject that shares no __rubric__ with the others is still a 'Subject':
+-- 'OfDocs' is one, and not one body in its panel is a body a code panel sends.
+-- It is not free of the others in its __names__, and cannot be — 'lensesOf'\'s
+-- third law puts @\"ponytail\"@ in every subject's set, so that one name is
+-- shared by construction and is the only one 'OfDocs' has in common with
+-- 'OfDiff'.
 data Subject
   = -- | 'reviewHeavy': the diff, and nothing wider.
     OfDiff
   | -- | 'reviewAudit': the change, and the shape it moves the code toward.
     OfChange
+  | -- | 'reviewDocs': prose, and the code it makes claims about.
+    OfDocs
+  deriving (Eq, Show, Bounded, Enum)
 
--- | The lenses for a subject. Total in 'Subject', so a third one cannot be
--- added without answering both questions it raises.
+-- | The lenses that artifact admits, in the order their blocks are read.
+--
+-- Three laws hold at every constructor, and 'lensSetViolations' is where they
+-- are written down as code:
+--
+-- * the list is __non-empty__ — a subject with no lens is a panel with nothing
+--   to fan out;
+-- * the leaf names are __pairwise distinct__ — @panelAcross@ keys blocks by
+--   @lens\@backend@, so a repeat makes two reviewers indistinguishable in the
+--   reduction;
+-- * @\"ponytail\"@ is __present__ — every artifact admits the question of what
+--   should not exist, and each subject picks the rubric pointed at it.
+--
+-- Total in 'Subject', so a new constructor cannot be added without answering
+-- what its artifact admits.
 lensesOf :: Subject -> [(LeafName, Prompt)]
-lensesOf subject =
-  [ ("correctness", reviewCorrectness)
-  , ("security", codeReviewerSecurity)
-  , ("tests", reviewTests)
-  , ("performance", perfReviewer)
-  , ("haskell", haskellReviewer)
-  , ("ponytail", ponytailRubric)
-  , ("doctrine", codeReview)
-  ]
-    <> extra
+lensesOf subject = case subject of
+  OfDiff -> codeLenses ponytailReviewRubric
+  OfChange -> codeLenses ponytailAuditRubric <> [("architecture", architectureOfChange)]
+  OfDocs ->
+    [ ("accuracy", docsAccuracy)
+    , ("completeness", docsCompleteness)
+    , ("structure", docsStructure)
+    , ("ponytail", ponytailOfDocs)
+    ]
   where
-    (ponytailRubric, extra) = case subject of
-      OfDiff -> (ponytailReviewRubric, [])
-      OfChange -> (ponytailAuditRubric, [("architecture", architectureOfChange)])
+    codeLenses ponytailRubric =
+      [ ("correctness", reviewCorrectness)
+      , ("security", codeReviewerSecurity)
+      , ("tests", reviewTests)
+      , ("performance", perfReviewer)
+      , ("haskell", haskellReviewer)
+      , ("ponytail", ponytailRubric)
+      , ("doctrine", codeReview)
+      ]
+
+-- | 'lensesOf'\'s three laws as a refutable check: one 'Text' per law the set
+-- breaks, and @[]@ for a set that holds all three.
+--
+-- __Beside 'lensesOf' rather than in the test suite__, because the laws are
+-- stated on 'lensesOf' and an executable statement that lives somewhere else is
+-- one a reader of this module cannot reach — the haddock above linked a name
+-- that was not in scope here. A new 'Subject' now answers its laws in one file.
+--
+-- __A report rather than an assertion__, and that is the whole reason it is a
+-- separate binding. Quantified over 'Subject' these laws pass by construction,
+-- so a check that could only ever be pointed at 'lensesOf' would be a law
+-- nobody knows is wired to anything. Returning what is wrong instead of
+-- throwing is what lets a caller point it at a set that BREAKS each law and
+-- read back the right complaint.
+--
+-- Emptiness has no single-defect witness: @[]@ reports the missing ponytail
+-- too, because a set with no lenses has no ponytail lens either.
+lensSetViolations :: [(LeafName, Prompt)] -> [Text]
+lensSetViolations lenses =
+  concat
+    [ ["empty lens set" | null names]
+    , ["duplicate lens names: " <> T.pack (show dups) | not (null dups)]
+    , ["no ponytail lens" | "ponytail" `notElem` names]
+    ]
+  where
+    names = map (leafNameText . fst) lenses
+    dups = names \\ nub names
 
 -- | 'reviewArchitecture' is whole-tree by its own contract. This reorientation
 -- keeps its questions and points them at the shape a change moves toward; the
@@ -178,6 +291,94 @@ architectureOfChange =
     alone does not show you the shape it is landing in.
 
     If the change leaves the shape no worse, say `Sound.` and stop.
+  |]
+
+-- | The honesty rubric pointed at a document. A reorientation rather than a
+-- file under @prompts\/review@, for the reason "Incite.Prompts" gives on
+-- 'docsCompleteness': a second copy of 'fess' is one of the three homes
+-- 'docsStructure' is written to report.
+docsAccuracy :: Prompt
+docsAccuracy =
+  [__i|
+    #{fess}
+
+    ---
+
+    ONE ADJUSTMENT to the above, and it is a change of referent. You are a
+    reviewer; the account is not yours. It is a __document__ in this repository,
+    written by somebody else, and the record it answers to is the code. Wherever
+    the rubric says you, your account, a claim you made or the work you claimed,
+    read the document and its author instead.
+
+    So: the document is the claim, the code is the record. Every command it
+    tells the reader to run, and every flag, path, identifier, default and
+    version it names — open the code, check it, cite file:line on both sides.
+
+    Of the four shapes above, three repoint and one is void:
+
+    * verification gap — a claim nothing in the repository backs up;
+    * spec drift — a behaviour the code changed, still described the old way;
+    * quiet downgrades — prose left describing what was there before a change;
+      here that is most of the work;
+    * scope creep — VOID. A document modifies no file. Do not report it, and do
+      not report "none" for it either.
+
+    The closing paragraph above is VOID as well. There is no list of gaps "you
+    did not report", and "correcting means doing the work you claimed, not
+    editing the claim" inverts the remedy here: the claim IS the artifact, so
+    correcting a false sentence means editing that sentence, and never means
+    changing the code to match it.
+
+    A fact that is MISSING belongs to the completeness reviewer, and one in the
+    wrong PLACE to the structure reviewer; you judge only whether what is
+    written is true. Where you cannot reach the code that settles a claim, name
+    what you would read and do not grade it either way.
+
+    If every claim you checked holds, say `Sound.` and stop.
+  |]
+
+-- | The ponytail question — what should not exist — asked of prose. Raw,
+-- 'ponytailAuditRubric' hunts dependencies, factories and dead flags, so
+-- pointed at a README it finds nothing or invents something, and a lens that
+-- emits noise costs more than no lens.
+ponytailOfDocs :: Prompt
+ponytailOfDocs =
+  [__i|
+    #{ponytailAuditRubric}
+
+    ---
+
+    ONE ADJUSTMENT to the above, and it is a change of subject: you are reading
+    __documentation__, not a source tree. The measure stands — what would
+    deletion fix — and so does the ranking. Its named sections do not, and each
+    one is replaced here outright.
+
+    __Hunt.__ The list above (deps, interfaces, factories, wrappers, dead flags,
+    hand-rolled stdlib) is VOID; a document is made of none of them. Hunt these:
+
+    * a paragraph that says what the paragraph above it already said;
+    * a section for something that no longer exists, or a step nobody performs;
+    * prose explaining what the one command below it already shows;
+    * a table or example held in step with the code by hand, where the code
+      answers the same question — name what to point the reader at instead;
+    * ceremony: a preamble before the instruction, a summary of the document
+      inside the document.
+
+    __Tags.__ `delete:` is prose nothing needs; `yagni:` a section written for a
+    reader who does not exist; `shrink:` the same point in fewer lines, with the
+    shorter form shown. `stdlib:` and `native:` fire only where the document
+    maintains by hand what the tooling already prints, such as a help text.
+
+    __Output.__ One line per finding, ranked, as above, and `[path]` is the file
+    and the heading you would cut under. A document has no dependencies to
+    count, so the deps figure is VOID: end with `net: -<N> lines possible.`
+    Nothing to cut: `Lean already. Ship.`
+
+    __Boundaries.__ Read "over-engineering and complexity" as prose that should
+    not exist. What the document gets WRONG belongs to the accuracy reviewer,
+    what it LEAVES OUT to completeness, where a section SITS to structure.
+    Length alone is not a finding: a long passage the reader needs stays, and a
+    cut you cannot name a reader for is not a cut.
   |]
 
 -- | The cross-product: every lens answered by every backend, concurrently, over
@@ -292,6 +493,17 @@ plannerAudit =
 --
 -- Reports rather than rewrites: 'Incite.Feature'\'s @simple-english@ lens is
 -- where STE edits anything.
+--
+-- __@workflows\/@ is in scope too__, and it is the half no other STE check can
+-- reach. @checks.ste-prompts@ lints @.md@ files; a growing share of the prompt
+-- prose this repository owns is written as Haskell string literals instead —
+-- the orientation preambles, the worker briefs, the reorientation adjustments,
+-- and this very brief. A list of @.md@ directories leaves all of it uncovered
+-- by either instrument.
+--
+-- Named as a __directory__ rather than as a list of bindings on purpose. A list
+-- is a copy of the module contents kept by hand: it goes stale when a binding is
+-- renamed, and says nothing at all about the next literal somebody writes.
 promptLint :: Workflow
 promptLint =
   workflow
@@ -302,16 +514,31 @@ promptLint =
     |]
     [iii|
       The prompt files under prompts/, commands/, agents/ and skills/ in the
-      current working directory. Read them before reporting anything.
+      current working directory, and the prompt bodies written as Haskell
+      string literals under workflows/. Read them before reporting anything.
     |]
     $ withBackend claudeAgent fable5
     $ withMode Plan
-    $ refineWith "ste" (brief promptLintBrief) id
+    $ refineWith "ste" (brief (promptLintBrief promptLintScope)) id
 
--- | 'steSkill' plus the scoping that makes a prose rubric usable on a prompt
--- repository.
-promptLintBrief :: Prompt
-promptLintBrief =
+-- | What @prompt-lint@ is pointed at. A parameter of 'promptLintBrief' rather
+-- than a line inside it, so a second panel can borrow the STE rubric without
+-- telling its model it is reading a prompt repository.
+promptLintScope :: Text
+promptLintScope = "You are reading the prompt files of a repository whose product IS prompts."
+
+-- | 'steSkill' plus the scoping that makes a prose rubric usable on a body of
+-- text — @scope@ names what the reader is looking at, and everything else is
+-- fixed.
+--
+-- __The rule-numbers clause is a brief, not a fence.__ \"Cite only rule numbers
+-- that exist in the text above\" is grounded by the 'steSkill' splice being
+-- present above it, which is a property of this function and holds at every
+-- @scope@. That the model then obeys it is not checked anywhere, here or
+-- downstream. Widening @scope@ costs nothing; dropping the splice would take
+-- the grounding with it.
+promptLintBrief :: Text -> Prompt
+promptLintBrief scope =
   [__i|
     #{steSkill}
 
@@ -323,7 +550,7 @@ promptLintBrief =
     inventing STE rule numbers applies to you. If you cannot ground a number,
     name the rule instead.
 
-    You are reading the prompt files of a repository whose product IS prompts.
+    #{scope}
     Scope, and this decides whether the report is worth reading:
 
     - Report ONLY on PROCEDURAL passages — the instruction the agent must
