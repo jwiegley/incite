@@ -48,18 +48,33 @@ missing `extra-source-files` glob fails `cabal test`, not just `cabal sdist`.
 
 ## Deployed prompts reused by workflows
 
-Some deployed prompts are also workflow briefs:
+This is the one place that lists it — README.md and AGENTS.md point here rather
+than keeping their own copy.
 
-- `agents/code-review.md`;
-- `agents/haskell-review.md`;
-- `skills/fix-all.md`;
-- `commands/fess.md`;
-- `commands/post-commit-audit.md`;
-- `commands/wiggum.md`.
+Some deployed prompts are also workflow briefs, spliced into a `Flow` by
+`Incite.Feature` or `Incite.Review`:
+
+- `agents/code-review.md` — the `doctrine` review lens;
+- `skills/fix-all.md` — the `remediate` brief;
+- `commands/fess.md` — the `fess` review lens and the `fess-audit` workflow;
+- `commands/wiggum.md` — the `implement`/`document` worker briefs.
 
 This is intentional: one copy means no paraphrase drift. The cost is blast
 radius. Editing one of these changes both the installed prompt and every workflow
 leaf that splices it.
+
+Two deployed prompts are `[promptFile|…|]`-bound in `Incite.Prompts` but are
+**not** in the list above, and it matters why:
+
+- `agents/haskell-review.md` is deliberately **not** bound at all — the repo
+  comment on it says so: it would fire on a repo that is mostly Nix, so no
+  workflow reads it. It is deployed as an agent and nothing more.
+- `commands/post-commit-audit.md` **is** bound (`postCommitAudit`) so its
+  compile-time `promptFile` check runs and it must stay in both packaging
+  lists (see [Testing and packaging](testing-and-packaging.md)), but the bound
+  value is never spliced into any `Flow` — `wiggum.md`'s own text defers to it
+  by name instead of a workflow leaf reading it. Binding is not splicing;
+  only the four files above are read twice.
 
 When you add another deployed prompt that a workflow reads, make the dual use
 visible in three places:

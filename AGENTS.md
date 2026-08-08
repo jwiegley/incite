@@ -75,10 +75,13 @@ nix develop -c cabal test                       # run the unit test suite (see "
 worst-case leaf executions and node count, **never tokens**; a leaf carrying 10 KB
 of brief and a leaf carrying one line both count as 1. (See `codeReview` below.)
 
-`run` flags: `--backend NAME` (default `claude-agent`), `-i/--input TEXT`
-(prompts on tty if omitted), `--sandbox` (isolate world-acting runs in a
+`run` flags: `--backend NAME` (default `claude-agent`; every `claude-agent`
+leaf is pinned to a model matching `fable`, so `--model` cannot move it),
+`-i/--input TEXT` (prompts on tty if omitted; replaces rather than steers a
+workflow's baked-in default), `--sandbox` (isolate world-acting runs in a
 throwaway worktree; prompt-only flows ignore it), `--concurrency N` (fan-out
-cap, default 6, `0` = unbounded).
+cap, default 6, `0` = unbounded — and can 429 a rate-limited backend into an
+aborted run). Full detail: [Operations](docs/operations.md#run-workflows).
 
 ## The `agent-functor` input — two landmines
 
