@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (nub, sort, (\\))
+import Data.List (find, nub, sort, (\\))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -10,7 +10,9 @@ import System.Directory (listDirectory)
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Flow (Flow)
+import Agent.Flow.Skeleton (toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, prompt, promptText)
@@ -25,8 +27,11 @@ import Incite.Feature
   , decideContinue
   , document
   , orient
+  , planFeature
   , preambleOf
   , preambleViolations
+  , shipDocs
+  , shipFeature
   )
 import Incite.Prompts
   ( codeReview
@@ -47,12 +52,18 @@ import Incite.Review
   ( Subject (..)
   , architectureOfChange
   , docsAccuracy
+  , fessAudit
   , lensSetViolations
   , lensesOf
   , ponytailOfDocs
   , promptLint
   , promptLintBrief
   , promptLintScope
+  , retro
+  , reviewAudit
+  , reviewDocs
+  , reviewHeavy
+  , reviewLite
   )
 
 main :: IO ()
@@ -74,6 +85,7 @@ tests =
     , promptLintTests
     , packagingTests
     , backendTests
+    , docsInventoryTests
     ]
 
 decideContinueTests :: TestTree
@@ -933,6 +945,97 @@ packagingTests =
           , ("commands/fess.md", "commands/wiggum.md")
           ]
           @?= [True, False, False, True, False, False, True, False]
+    ]
+
+-- | The ten workflows "Main".workflows holds, rebuilt from library exports.
+-- This suite cannot import "Main" — it is the executable, not a library module
+-- — so this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
+-- binding, in the same order. A rename or reorder on either side is exactly
+-- what 'docsInventoryTests' exists to catch.
+mirrorWorkflows :: [Workflow]
+mirrorWorkflows =
+  [ planFeature
+  , shipFeature
+  , shipDocs
+  , fessAudit
+  , retro
+  , reviewLite
+  , reviewHeavy
+  , reviewAudit
+  , reviewDocs
+  , promptLint
+  ]
+
+-- | The backticked name in a markdown table row's __first__ cell, for every row
+-- that has one. Later cells (a lens name, a bound flow value) are deliberately
+-- not read: the first cell is what a table like "Exposed inventory" or "Review
+-- tiers and leaf counts" enumerates, and a prose cell may cite other backticked
+-- names in passing.
+tableFirstColumn :: Text -> [Text]
+tableFirstColumn body =
+  [ name
+  | l <- T.lines body
+  , let cells = T.splitOn "|" l
+  , length cells > 1
+  , let c1 = T.strip (cells !! 1)
+  , T.isPrefixOf "`" c1
+  , let name = T.takeWhile (/= '`') (T.drop 1 c1)
+  ]
+
+-- | 'tableFirstColumn', plus the integer in the row's second cell — the shape
+-- of "Review tiers and leaf counts"' @| Tier | Leaves | … |@ table.
+tableFirstTwoColumns :: Text -> [(Text, Int)]
+tableFirstTwoColumns body =
+  [ (name, n)
+  | l <- T.lines body
+  , let cells = T.splitOn "|" l
+  , length cells > 2
+  , let c1 = T.strip (cells !! 1)
+  , T.isPrefixOf "`" c1
+  , let name = T.takeWhile (/= '`') (T.drop 1 c1)
+  , let c2 = T.strip (cells !! 2)
+  , [(n, "")] <- [reads (T.unpack c2)]
+  ]
+
+-- | The body of one @## Heading@ section: everything between it and the next
+-- @## @ heading (or end of file). Both tables this suite fences sit under their
+-- own @## @ heading, so this is what keeps 'tableFirstColumn' off tables that
+-- name something other than a workflow — "Workflow constructors"' function
+-- names, for one.
+sectionBody :: Text -> Text -> Text
+sectionBody heading doc =
+  T.unlines
+    . takeWhile (not . T.isPrefixOf "## ")
+    . drop 1
+    . dropWhile (/= ("## " <> heading))
+    $ T.lines doc
+
+-- | Fences 'docs/workflows.md' against the two things in it that only code can
+-- prove: which workflows exist, and how many leaves a review tier costs.
+-- Neither is otherwise cross-validated — "Main".workflows and this file are
+-- two hand-kept lists, and a leaf count is arithmetic over a 'Flow' value that
+-- nothing forces back into the prose that quotes it.
+docsInventoryTests :: TestTree
+docsInventoryTests =
+  testGroup
+    "docs inventory"
+    [ testCase "Exposed inventory names exactly the workflows this binary exposes" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let named = tableFirstColumn (sectionBody "Exposed inventory" doc)
+        assertBool "no workflow names read from the table" (not (null named))
+        sort named @?= sort (map wfName mirrorWorkflows)
+    , testCase "Review tiers and leaf counts matches worstCaseCost . toSkeleton . wfFlow" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let counts = tableFirstTwoColumns (sectionBody "Review tiers and leaf counts" doc)
+        assertBool "no leaf-count rows read from the table" (not (null counts))
+        report
+          [ name <> ": docs/workflows.md says " <> T.pack (show n)
+              <> ", the flow's worst-case leaf count is " <> renderCost actual
+          | (name, n) <- counts
+          , Just wf <- [find ((== name) . wfName) mirrorWorkflows]
+          , let actual = worstCaseCost (toSkeleton (wfFlow wf))
+          , actual /= Finite n
+          ]
     ]
 
 -- | Every prompt a workflow's leaves actually send, in the order the sequential

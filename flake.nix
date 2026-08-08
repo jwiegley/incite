@@ -810,6 +810,7 @@
                     ./commands/fess.md
                     ./commands/post-commit-audit.md
                     ./commands/wiggum.md
+                    ./docs/workflows.md
                   ];
                 }
               } $out

@@ -35,6 +35,10 @@ extra-source-files:
     -- drops one builds clean and then fails the test suite with
     -- `openFile: does not exist`. `test/Spec.hs` asserts this cover too.
     test/golden/*.txt
+    -- Read at run time by `test/Spec.hs`'s docs-inventory fence, same reason
+    -- as the goldens above: an sdist that drops it builds clean and then fails
+    -- the suite with `openFile: does not exist`.
+    docs/workflows.md
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 library
