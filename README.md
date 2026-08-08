@@ -464,7 +464,7 @@ another, leaf by leaf. The terms the rest of this section uses:
 
 - **Leaf** — one agent call: a prompt, the artifact so far, and how to use the
   answer. The cheapest unit you can inspect; `cost` reports worst-case leaf
-  executions, and a one-line brief and an 18 KB brief both count as 1.
+  executions, and a one-line brief and a 10 KB brief both count as 1.
 - **Fan-out (`exploreFlows`)** — run several leaves concurrently on the same
   input, then reduce. The review tiers are a fan-out: independent reviewers,
   each pinned to its own backend and read-only (`withMode Plan`).
