@@ -14,6 +14,7 @@ module Incite.Backend
   , reviewer
   ) where
 
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import Agent.Backend
   ( BackendTag (ClaudeAgent)
@@ -44,12 +45,19 @@ fable5 = claudeModel "fable"
 --
 -- That erasure is what makes a lens × backend cross-product expressible as a
 -- list comprehension rather than three hand-written copies.
-backends :: [(LeafName, Flow Text Text -> Flow Text Text)]
+--
+-- __'NonEmpty' rather than a list__, and it buys a real theorem rather than
+-- documentation. "Incite.Review".@spread@ pairs one backend per lens by zipping
+-- against @cycle@, which diverges on an empty list; here the type retires that
+-- check, so @spread@ needs no guard and no partial head match. It also makes
+-- 'claudeAgentBackend' being the first entry a fact of the definition rather
+-- than of a @head@ nobody proved was safe.
+backends :: NonEmpty (LeafName, Flow Text Text -> Flow Text Text)
 backends =
-  [ claudeAgentBackend
-  , ("codex", withBackend codex defaultModel)
-  , ("opencode", withBackend opencode defaultModel)
-  ]
+  claudeAgentBackend
+    :| [ ("codex", withBackend codex defaultModel)
+       , ("opencode", withBackend opencode defaultModel)
+       ]
 
 -- | The claude-agent entry of 'backends', named so a flow can scope to just
 -- this one without indexing into that list. 'backends' is built from it, so tag

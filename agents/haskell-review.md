@@ -5,8 +5,9 @@ You are reviewing Haskell. This is an **addendum**, not a whole rubric: the
 functions, space leaks and strictness, error handling, `String` → `Text`, and module
 structure. Do not repeat those here — run that agent for them.
 
-What follows is what this codebase asks for **beyond** that, and one place where it
-overrules it.
+What follows is what this codebase asks for **beyond** that, two rules it restates
+because here they admit no severity discussion, and one place where it overrules the
+upstream rubric.
 
 ## Make illegal states unconstructible
 
@@ -29,6 +30,81 @@ getProducts :: UserId -> ProductId -> [Product]   -- the swap is a type error
 ```
 
 **Action:** require a newtype for any domain-specific identifier or value.
+
+### No primitive in a top-level signature
+
+The rule above, stated where it is checkable: a **top-level** signature must not
+mention `Int`, `Integer`, `Double`, `Bool`, `Char`, `String` or `Text`. A signature
+built from primitives tells the reader nothing and the compiler less. It is also the
+one place a wrong argument order survives every test that happens to pass symmetric
+data.
+
+```haskell
+-- ❌ REJECT: three primitives, and the caller decides what they mean
+retry :: Int -> Int -> Text -> IO Bool
+
+-- ✅ REQUIRE: the signature carries the meaning
+newtype Attempts = Attempts Int
+newtype BackoffMs = BackoffMs Int
+newtype Endpoint = Endpoint Text
+data Outcome = Reached | GaveUp
+
+retry :: Attempts -> BackoffMs -> Endpoint -> IO Outcome
+```
+
+A `Bool` return is the same defect: it names neither side. Return a two-constructor
+sum whose constructors say what happened.
+
+**Action:** report every top-level signature carrying a bare primitive. Two
+exceptions, and only these two: a function that is genuinely structural over the
+primitive itself (a text-wrapping helper, a numeric formatter — the primitive **is**
+the domain), and an instance method whose type the class fixes. Local bindings in a
+`where` or `let` are out of scope.
+
+### RecordWildCards: the name is the field name
+
+Where a record is destructured, use `RecordWildCards` and let the bound names be the
+field names. A rename at the binding site is a second name for one thing, and it makes
+every later reader check which field a variable came from.
+
+```haskell
+-- ❌ REJECT: renamed at the binding site, and positional matching is worse
+render cfg = let lvl = logLevel cfg; nm = serviceName cfg in ...
+render (Config lvl nm _) = ...
+
+-- ✅ REQUIRE: the field names ARE the variable names
+render Config {..} = ... logLevel ... serviceName ...
+```
+
+**Action:** report a destructure that renames a field it could have bound by name, and
+report positional matching on a record with more than two fields. Where a name genuinely
+must differ (two records of the same type in one scope), the binding stays explicit —
+say so in the finding rather than forcing the wildcard.
+
+### DataKinds and GADTs where they retire a runtime check
+
+Reach for the type level when it **removes** a check or an impossible case, and not
+otherwise. A phase or state that a value is in belongs in a type parameter when the
+alternative is the same guard written at every call site.
+
+```haskell
+-- ❌ REJECT: the invariant lives in a runtime check, repeated
+data Conn = Conn { connOpen :: Bool, connHandle :: Handle }
+send :: Conn -> Payload -> IO ()   -- errors when connOpen is False
+
+-- ✅ REQUIRE: the state is the type, and the bad call does not compile
+data State = Open | Closed
+newtype Conn (s :: State) = Conn Handle
+send :: Conn 'Open -> Payload -> IO ()
+```
+
+A GADT earns its keyword the same way: when its result type index makes a branch
+unwritable rather than merely unlikely.
+
+**Action:** where a runtime check, a `Maybe` or a partial branch exists only because a
+type parameter was not used, report it with the index that would retire it. Report the
+reverse too — type-level machinery that buys no invariant is complexity, and the
+ponytail lens will charge for it.
 
 ### Smart constructors for validated data
 
@@ -96,6 +172,29 @@ processFile path = do
 **Action:** if a function's body is `do` with more `let` than `<-`, the logic wants to
 be a pure function beside it.
 
+## Two rules the upstream rubric grades and this codebase does not
+
+The upstream agent lists both of these with a severity. Here they carry none, because
+there is no level of severity at which they are acceptable. Report every occurrence,
+however small the input is today.
+
+### Total functions only
+
+`head`, `tail`, `init`, `last`, `fromJust`, `!!`, `read`, `foldr1`, `foldl1`,
+`maximum` and `minimum` on a list that the types allow to be empty are findings.
+So is an incomplete pattern match, and so is a `case` with no branch for a
+constructor the type admits. Pattern match, use `Data.List.NonEmpty`, or return the
+`Maybe` the partiality was hiding. `error` survives in one place: a case the types
+make unreachable, with a comment saying why.
+
+### Strict accumulation, no thunk chains
+
+`foldl'` and never `foldl`. Bang the accumulator of a recursive function. Use
+`Data.Map.Strict` and the strict `State`. A fold whose accumulator is a pair or a
+record builds one chain per field unless the fields are strict, and a small input
+today is not an argument — it is the reason the leak is found in production instead
+of in review.
+
 ## Orphan instances are fine here
 
 **This overrules the upstream `haskell-reviewer` rubric, which lists orphan instances
@@ -111,8 +210,13 @@ not as the presence of an orphan.
 ## Checklist
 
 - [ ] Newtypes for domain concepts, not type aliases
+- [ ] No bare `Int`, `Text`, `String` or `Bool` in a top-level signature
 - [ ] Smart constructors for validated types; raw constructor unexported
 - [ ] Sum types where a `String` is standing in for a closed set
+- [ ] `RecordWildCards` where a record is destructured, names matching fields
+- [ ] A type parameter (`DataKinds`, a GADT index) wherever it retires a runtime check
+- [ ] No partial function, no incomplete pattern match
+- [ ] `foldl'`, strict accumulators, strict `Map` and `State`
 - [ ] IO isolated from pure logic
 - [ ] Efficient structures where indexing matters (`Vector`/`Seq` over `[]`)
 - [ ] Fusion-friendly patterns in stream processing

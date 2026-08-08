@@ -40,6 +40,7 @@ module Incite.Prompts
   , postCommitAudit
   , wiggum
   , codeReview
+  , haskellHouse
   , fixAll
     -- * Review lenses
   , reviewCorrectness
@@ -49,6 +50,16 @@ module Incite.Prompts
   , reviewSynthesis
   , docsCompleteness
   , docsStructure
+    -- * Grind lenses
+  , paradoxFacts
+  , grindStubs
+  , grindVacuous
+  , grindDry
+  , grindHardcodings
+  , grindTargetConsistency
+  , grindValidatorCalls
+  , grindCodegenGaps
+  , grindEmittedCode
     -- * Review regroupings (views, not judges)
   , reviewUnits
   , reviewSequence
@@ -65,6 +76,9 @@ module Incite.Prompts
   , agenticCoder
   , lookaheadPlanningSpecialist
   , codeReviewerSecurity
+  , technicalDocsStrategist
+  , stopSlop
+  , qaAgent
     -- * Upstream: promptdeploy
   , haskellReviewer
   , perfReviewer
@@ -130,6 +144,20 @@ wiggum = [promptFile|commands/wiggum.md|]
 codeReview :: Prompt
 codeReview = [promptFile|agents/code-review.md|]
 
+-- | The repo's @haskell-review@ agent: what this codebase asks for beyond the
+-- upstream Haskell rubric — no primitive in a top-level signature, newtypes and
+-- smart constructors for domain values, @RecordWildCards@ binding fields by their
+-- own names, a type parameter wherever it retires a runtime check, totality and
+-- strict accumulation as absolutes — and the one rule it overrules, orphan
+-- instances.
+--
+-- Read here as well as deployed, so the review panel enforces the same rules the
+-- sub-agent does. It is an addendum by construction, which is why it reaches the
+-- panel only through 'Incite.Review.haskellOfHouse' and never as a lens of its
+-- own: alone it would report a codebase against half a rubric.
+haskellHouse :: Prompt
+haskellHouse = [promptFile|agents/haskell-review.md|]
+
 -- | The @fix-all@ skill: \"fix every issue, no exceptions\". ~4 KB per leaf.
 fixAll :: Prompt
 fixAll = [promptFile|skills/fix-all.md|]
@@ -163,6 +191,58 @@ reviewSynthesis = [promptFile|prompts/review/synthesis.md|]
 docsCompleteness, docsStructure :: Prompt
 docsCompleteness = [promptFile|prompts/review/docs-completeness.md|]
 docsStructure = [promptFile|prompts/review/docs-structure.md|]
+
+-- Grind lenses ---------------------------------------------------------------------
+
+-- | Everything a leaf of the grind panel needs to know about the tree it is
+-- reading: how to build it, how to run one filtered test, where the recorded
+-- golden output lives, what the source language means, and the disciplines a
+-- repair stands under.
+--
+-- __One file, read by both halves of the run.__ The audit leaves receive it
+-- beneath their lens and the fixer receives it beneath 'Incite.Feature.codeRule',
+-- because a fixer told to regenerate a golden without being told never to
+-- hand-edit one is a fixer with a cheap way to turn the gate green.
+--
+-- __Paths are relative to the working directory__, and the file opens with a
+-- probe that proves two of them before anything else runs. A leaf started
+-- somewhere other than the checkout root would otherwise resolve every path to
+-- nothing and report no findings, which reads exactly like a clean tree.
+paradoxFacts :: Prompt
+paradoxFacts = [promptFile|prompts/grind/paradox-facts.md|]
+
+-- | The four whole-tree grind lenses: unfinished work, tests that cannot fail,
+-- one decision written three times, and values baked in where they must be
+-- derived.
+--
+-- Repo-agnostic by construction — every path, suite name and build command
+-- lives in 'paradoxFacts' instead, which each leaf receives beneath its lens.
+-- A lens that named this tree's directories would report confident findings
+-- about paths that exist on no other one.
+grindStubs, grindVacuous, grindDry, grindHardcodings :: Prompt
+grindStubs = [promptFile|prompts/grind/stubs.md|]
+grindVacuous = [promptFile|prompts/grind/vacuous.md|]
+grindDry = [promptFile|prompts/grind/dry.md|]
+grindHardcodings = [promptFile|prompts/grind/hardcodings.md|]
+
+-- | The four grind lenses that only a __code generator__ admits: targets that
+-- disagree about one source construct, validators emitted and never called,
+-- constructs a backend silently drops, and the quality of the emitted code
+-- itself.
+--
+-- 'grindEmittedCode' is one lens where upstream had two. Run time and compile
+-- time of generated code were split by accident: both read the recorded golden
+-- output, both repair the emitter, and both regenerate the same cases. Split,
+-- they draw two backends to do one read.
+--
+-- These sit in 'Incite.Review.emissionLenses' rather than under a 'Subject' of
+-- their own, because a subject owes a ponytail lens and nobody asked what
+-- should not exist in generated code.
+grindTargetConsistency, grindValidatorCalls, grindCodegenGaps, grindEmittedCode :: Prompt
+grindTargetConsistency = [promptFile|prompts/grind/target-consistency.md|]
+grindValidatorCalls = [promptFile|prompts/grind/validator-calls.md|]
+grindCodegenGaps = [promptFile|prompts/grind/codegen-gaps.md|]
+grindEmittedCode = [promptFile|prompts/grind/emitted-code.md|]
 
 -- | The review-audit regroupings: re-express the change into logical units, or
 -- into the commits it should have been. Views, not judges — except
@@ -219,10 +299,46 @@ lookaheadPlanningSpecialist = [promptFile|prompts/upstream/awesome-prompts/looka
 codeReviewerSecurity :: Prompt
 codeReviewerSecurity = [promptFile|prompts/upstream/awesome-prompts/code-reviewer-security.md|]
 
+-- | The documentation strategy rubric: audiences, information architecture,
+-- content types (reference, tutorial, how-to, concept), docs-as-code, quality
+-- gates, and what a documentation task's definition of done is.
+--
+-- Left alone it does what its own Task section asks for — designs a ten-section
+-- strategy for a hypothetical SaaS product, which is a deliverable no repository
+-- wants. It reaches a workflow only through
+-- 'Incite.Review.docsStrategyOfPlan', for the same reason
+-- 'lookaheadPlanningSpecialist' needs its format override.
+technicalDocsStrategist :: Prompt
+technicalDocsStrategist = [promptFile|prompts/upstream/awesome-prompts/technical-documentation-strategist.md|]
+
+-- | The anti-slop prose editor: filler openers, adverbs, the @not X but Y@
+-- contrast, passive voice, inanimate subjects doing human verbs, metronomic
+-- sentence rhythm, pull-quote endings.
+--
+-- An __editor__ upstream — it returns rewritten prose — and the docs panel is
+-- read-only by construction, so it reaches the panel only through
+-- 'Incite.Review.slopOfDocs', which turns the rewrite into findings.
+stopSlop :: Prompt
+stopSlop = [promptFile|prompts/upstream/awesome-prompts/stop-slop.md|]
+
+-- | The adversarial QA reviewer: assume the code fails and find how. Edge cases,
+-- error paths, an OWASP walk, scaling, integration contracts, observability,
+-- each finding carrying a severity.
+--
+-- 2.6 KB, which is what makes it affordable in the cheap tier where
+-- 'codeReviewerSecurity' at 8.5 KB is not. It reaches 'Incite.Review.reviewLite'
+-- through 'Incite.Review.qaOfCommit', which points it at a commit and fences it
+-- off the four lenses beside it — that tier reduces by a pure fold, so nothing
+-- downstream de-duplicates two reviewers reporting one defect.
+qaAgent :: Prompt
+qaAgent = [promptFile|prompts/upstream/awesome-prompts/qa-agent.md|]
+
 -- | Specialists from the @promptdeploy@ input (BSD 3-Clause, © 2025-2026 John
--- Wiegley), read from the same files agent-pm deploys as sub-agents. The
--- repo-specific Haskell addendum (@agents\/haskell-review.md@) is deliberately
--- not a lens: it would fire on a repo that is mostly Nix.
+-- Wiegley), read from the same files agent-pm deploys as sub-agents.
+--
+-- 'haskellReviewer' is the __base__ of the panel's Haskell lens, not the lens:
+-- 'Incite.Review.haskellOfHouse' splices 'haskellHouse' under it, so a review
+-- carries this codebase's own rules rather than the upstream rubric alone.
 haskellReviewer, perfReviewer :: Prompt
 haskellReviewer = [promptFile|prompts/upstream/promptdeploy/haskell-reviewer.md|]
 perfReviewer = [promptFile|prompts/upstream/promptdeploy/perf-reviewer.md|]

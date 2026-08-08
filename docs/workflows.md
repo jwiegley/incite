@@ -26,13 +26,13 @@ text.
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
-| `ship-docs` | world-acting | explore, plan, SimpleEnglish plan wording, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
+| `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on codex |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
-| `review-lite` | prompt-only | four per-commit reviewers (correctness on claude-agent, fess and ponytail on codex, complexity on opencode), pure fold reduction |
+| `review-lite` | prompt-only | five per-commit reviewers (correctness on claude-agent, fess, complexity and ponytail on codex, adversarial QA on opencode), pure fold reduction |
 | `review-heavy` | prompt-only | full-diff review by seven lenses on three backends, two regrouped views on claude-agent, then synthesis |
 | `review-audit` | prompt-only | eight-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
-| `review-docs` | prompt-only | documentation panel: accuracy, completeness, structure, ponytail, each on three backends, then synthesis |
+| `review-docs` | prompt-only | documentation panel: accuracy, completeness, structure, slop, ponytail, each on three backends, then synthesis |
 | `prompt-lint` | prompt-only | one SimpleEnglish CHECK-mode pass over procedural prompt text |
 
 `plannerAudit` is defined but not exposed. It is a read-only planner-design audit
@@ -62,7 +62,7 @@ permission flow.
   of the tree they all land in) — then the planner;
 - `editPlan`: code-oriented plan lenses: ponytail, denotational, risk,
   verification, lookahead, SimpleEnglish;
-- `simpleEnglishLens`: the only plan lens used by `ship-docs`, because the code
+- `docsStrategyOfPlan` and `simpleEnglishLens`: the plan lenses `ship-docs` uses, because the code
   lenses have no useful purchase on a prose plan;
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`, capped by `workerFuel`;
@@ -95,10 +95,10 @@ node bounds, not prompt size.
 
 | Tier | Leaves | What the cost buys |
 |---|---:|---|
-| `review-lite` | 4 | cheap per-commit independence across correctness, fess, complexity, and ponytail |
+| `review-lite` | 5 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails |
 | `review-heavy` | 38 | 21 full-diff reviewers, two regrouping leaves, 14 single-backend regrouped-view reviewers, and synthesis |
 | `review-audit` | 75 | full 24-leaf panel over three views, with regrouping leaves and synthesis |
-| `review-docs` | 13 | four documentation lenses across three backends, plus synthesis |
+| `review-docs` | 16 | five documentation lenses across three backends, plus synthesis |
 | `prompt-lint` | 1 | one grounded STE CHECK-mode report |
 
 The regrouping leaves in `review-heavy` and `review-audit` are views, not

@@ -1,0 +1,9 @@
+
+
+The change in this repository is the artifact and the tests are the record.
+Where a comment or a document has drifted from the code it describes, either
+side may be the wrong one — fix the one that is wrong and say which.
+
+The ranked review findings follow. Fix every one of them in this
+repository, in the shortest change that fixes it. Where you judge
+a finding wrong, say so and why rather than silently skipping it:

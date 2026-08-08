@@ -3,8 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    agent-pm.url = "gitlab:fresheyeball/flake-prompt";
-    agent-pm.inputs.nixpkgs.follows = "nixpkgs";
+    flake-prompt.url = "gitlab:fresheyeball/flake-prompt";
+    flake-prompt.inputs.nixpkgs.follows = "nixpkgs";
 
     macha = {
       url = "git+ssh://git@gitlab.com/mecha-team-zero/macha-orchestration";
@@ -67,7 +67,7 @@
     #     ours;
     #   * we want its markdown and nothing else.
     #
-    # Not adopted as a deployer. agent-pm is a pure-Nix renderer producing a
+    # Not adopted as a deployer. flake-prompt is a pure-Nix renderer producing a
     # package plus the `lib.prompts` inventory nixos-dots consumes; promptdeploy
     # is a stateful Python CLI with SHA-256 manifests and rsync-over-SSH. Swapping
     # loses the pure-Nix property for capabilities this repo does not need.
@@ -89,13 +89,13 @@
     };
   };
 
-  outputs = { self, nixpkgs, agent-pm, macha, agent-functor, ponytail, awesome-prompts, promptdeploy, simple-english }:
+  outputs = { self, nixpkgs, flake-prompt, macha, agent-functor, ponytail, awesome-prompts, promptdeploy, simple-english }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       inherit (pkgs) lib;
 
-      # ponytail's markdown carries its own YAML frontmatter; agent-pm renders
+      # ponytail's markdown carries its own YAML frontmatter; flake-prompt renders
       # frontmatter itself from `name`/`description`, so passing the file through
       # verbatim would emit two `---` blocks. Keep the body only.
       #
@@ -178,8 +178,20 @@
           builtins.readFile "${awesome-prompts}/prompts/lookahead_planning_specialist.txt";
         "prompts/upstream/awesome-prompts/code-reviewer-security.md" =
           builtins.readFile "${awesome-prompts}/prompts/code_reviewer_security.txt";
+        # The two documentation prompts `ship-docs` runs: a strategy rubric for
+        # the plan, and a prose editor for the panel. Both are reoriented in
+        # `Incite.Review` rather than used bare — see `docsStrategyOfPlan` and
+        # `slopOfDocs` for what each one is pointed at instead.
+        "prompts/upstream/awesome-prompts/technical-documentation-strategist.md" =
+          builtins.readFile "${awesome-prompts}/prompts/Technical_Documentation_Strategist.txt";
+        "prompts/upstream/awesome-prompts/stop-slop.md" =
+          builtins.readFile "${awesome-prompts}/prompts/stop_slop.txt";
+        # The fifth `review-lite` reviewer, reoriented to a commit by
+        # `Incite.Review.qaOfCommit`.
+        "prompts/upstream/awesome-prompts/qa-agent.md" =
+          builtins.readFile "${awesome-prompts}/prompts/qa_agent.txt";
         # promptdeploy's per-language and cross-cutting reviewers, used as lenses
-        # in `review-heavy`. Same files agent-pm deploys as sub-agents below —
+        # in `review-heavy`. Same files flake-prompt deploys as sub-agents below —
         # one copy, read twice, exactly like `agents/` and `skills/`.
         "prompts/upstream/promptdeploy/haskell-reviewer.md" = stripFrontmatter (
           builtins.readFile "${promptdeploy}/agents/haskell-reviewer.md"
@@ -195,7 +207,7 @@
         # offending text, a compliant rewrite", plus its own warning that models
         # invent STE rule numbers from memory) — that grounding is the whole
         # value for a linter, and worth the size on a workflow you run
-        # deliberately. Same files agent-pm deploys as the `simple-english`
+        # deliberately. Same files flake-prompt deploys as the `simple-english`
         # skill below.
         "prompts/upstream/simple-english/rules.md" =
           builtins.readFile "${simple-english}/prompts/system-prompt.md";
@@ -219,6 +231,7 @@
           ./prompts/explore
           ./prompts/review
           ./prompts/retro
+          ./prompts/grind
           ./commands/fess.md
           ./commands/post-commit-audit.md
           ./commands/wiggum.md
@@ -405,7 +418,7 @@
         {
           type = "agent";
           name = "haskell-review";
-          description = "Local Haskell review addendum, to run alongside haskell-reviewer rather than instead of it: newtypes over type aliases for domain concepts, smart constructors with the raw constructor unexported, sum types where a String stands in for a closed set, and pure logic extracted out of IO. Overrules the upstream rubric on orphan instances, which are fine in this codebase.";
+          description = "Local Haskell review addendum, to run alongside haskell-reviewer rather than instead of it: no bare primitive in a top-level signature, newtypes over type aliases for domain concepts, smart constructors with the raw constructor unexported, sum types where a String stands in for a closed set, RecordWildCards binding fields by their own names, DataKinds and GADT indices where they retire a runtime check, pure logic extracted out of IO, and totality and strict accumulation as absolutes. Overrules the upstream rubric on orphan instances, which are fine in this codebase.";
           mode = "subagent";
           extraFrontmatter = {
             tools = {
@@ -514,6 +527,18 @@
           name = "grind-tests";
           description = "Comprehensive test suite grinder — fans out 12+ parallel audit agents, remediates every finding";
           body = builtins.readFile ./commands/grind-tests.md;
+        }
+
+        # Upstream, read straight from the pinned input like `fstar-erlang-ell`
+        # below: no local copy to drift, and `nix flake update awesome-prompts`
+        # is the whole update path. A command rather than an agent because a
+        # vault is where the operator works, not a lens over a changeset —
+        # nothing in the workflows reads it.
+        {
+          type = "command";
+          name = "obsidian-vault";
+          description = "Operate an Obsidian vault: Obsidian Flavored Markdown (wikilinks, embeds, callouts, properties), the Obsidian CLI, JSON Canvas, Bases queries, and Defuddle web extraction. Use for creating, editing, navigating, or restructuring notes in a vault rather than generic Markdown.";
+          body = builtins.readFile "${awesome-prompts}/prompts/obsidian_vault_operator.txt";
         }
 
         {
@@ -655,9 +680,9 @@
         #
         # Captured with `skillFromDir`, so its references/ (use-cases,
         # checklist) deploy beside SKILL.md. The description is declared here:
-        # the upstream frontmatter is a `|` block scalar, which agent-pm's
+        # the upstream frontmatter is a `|` block scalar, which flake-prompt's
         # single-line YAML parser cannot read — same reasoning as ponytail's.
-        (agent-pm.lib.skillFromDir {
+        (flake-prompt.lib.skillFromDir {
           dir = "${simple-english}/skills/simple-english";
           name = "simple-english";
           keepExtraFrontmatter = false;
@@ -671,7 +696,7 @@
       lib.prompts = prompts;
 
       packages.${system} = {
-        default = agent-pm.lib.mkPromptsPackage pkgs {
+        default = flake-prompt.lib.mkPromptsPackage pkgs {
           inherit prompts;
           tools.claude.enable = true;
           tools.codex.enable = true;

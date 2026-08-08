@@ -1,7 +1,9 @@
 module Main (main) where
 
+import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (find, nub, sort, (\\))
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -12,9 +14,9 @@ import Test.Tasty.HUnit
 
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Flow (Flow)
-import Agent.Flow.Skeleton (toSkeleton)
+import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, leafNameText)
+import Agent.Op (LeafName, leafNameOf, leafNameText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, claudeAgentBackend)
@@ -23,13 +25,17 @@ import Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
+  , codeRule
   , continueMarker
   , decideContinue
+  , docsRule
   , document
   , orient
   , planFeature
   , preambleOf
   , preambleViolations
+  , remediate
+  , retrospective
   , shipDocs
   , shipFeature
   )
@@ -39,31 +45,54 @@ import Incite.Prompts
   , docsCompleteness
   , docsStructure
   , fess
+  , fixAll
+  , grindCodegenGaps
+  , grindDry
+  , grindEmittedCode
+  , grindHardcodings
+  , grindStubs
+  , grindTargetConsistency
+  , grindValidatorCalls
+  , grindVacuous
   , haskellReviewer
   , perfReviewer
   , ponytailAuditRubric
+  , ponytailLadder
   , ponytailReviewRubric
+  , qaAgent
   , reviewArchitecture
+  , reviewComplexity
   , reviewCorrectness
   , reviewTests
   , steSkill
+  , stopSlop
+  , technicalDocsStrategist
   )
 import Incite.Review
   ( Subject (..)
   , architectureOfChange
   , docsAccuracy
+  , docsStrategyOfPlan
+  , emissionLenses
   , fessAudit
+  , haskellOfHouse
   , lensSetViolations
   , lensesOf
+  , ofTree
   , ponytailOfDocs
+  , ponytailOfTree
   , promptLint
   , promptLintBrief
   , promptLintScope
+  , qaOfCommit
+  , reporting
   , retro
   , reviewAudit
   , reviewDocs
   , reviewHeavy
   , reviewLite
+  , slopOfDocs
+  , spread
   )
 
 main :: IO ()
@@ -79,8 +108,11 @@ tests =
     , preambleViolationsTests
     , orientTests
     , documentTests
+    , remediateTests
+    , retrospectiveTests
     , lensSetViolationsTests
     , lensesOfTests
+    , grindPanelTests
     , reorientationTests
     , promptLintTests
     , packagingTests
@@ -337,6 +369,72 @@ documentTests =
           )
     ]
 
+-- | The bytes of the fixer brief that this repository owns, recorded off the
+-- shipped flow.
+--
+-- Same split as 'promptLintGolden' and for the same reason: 'ponytailLadder'
+-- and 'fixAll' are named rather than copied, because recording their contents
+-- would put a flake input into git and go red on @nix flake update@. Everything
+-- below them — the artifact rule and the closing paragraph — is text this repo
+-- wrote, and it is here verbatim.
+remediateGolden :: FilePath
+remediateGolden = goldenDir <> "/remediate-code.txt"
+
+-- | The one leaf that acts on a panel's findings, fenced at the byte.
+--
+-- __Recorded before the brief was generalised__, and that ordering is the whole
+-- point. Nothing else in this repository can see this text: @plan@ renders leaf
+-- names, @cost@ counts them, and 'lensBodyMismatches' reads lens tables rather
+-- than worker briefs. An expectation written after a refactor pins the new
+-- bytes and calls the refactor conservative by construction.
+remediateTests :: TestTree
+remediateTests =
+  testGroup
+    "remediate"
+    [ testCase "is one leaf" $ do
+        sent <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
+        length sent @?= 1
+    , -- Total equality on everything this repo owns, so a reordering, a
+      -- separator change or one reworded sentence all fail it.
+      testCase "under codeRule it sends the ladder, fix-all, and exactly the recorded local text" $ do
+        recorded <- TIO.readFile remediateGolden
+        [leafText] <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
+        leafText
+          @?= promptText ponytailLadder
+            <> "\n\n"
+            <> promptText fixAll
+            <> recorded
+            <> "\n\n"
+            <> "THE FINDINGS"
+    , -- The parameterisation, which nothing else checks: splicing the rule and
+      -- then ignoring it, or splicing it twice, leaves the assertion above
+      -- looking right. And the rule is the ONLY thing the argument moves —
+      -- which is what lets both acting workflows share this leaf.
+      testCase "the artifact rule is the only thing the argument changes" $ do
+        [underCode] <- flowLeafPrompts "remediate" (remediate codeRule) "THE FINDINGS"
+        [underDocs] <- flowLeafPrompts "remediate" (remediate docsRule) "THE FINDINGS"
+        T.count (promptText codeRule) underCode @?= 1
+        underDocs @?= T.replace (promptText codeRule) (promptText docsRule) underCode
+    ]
+
+-- | The merge between the work and the retrospective, read off the flow's
+-- OUTPUT rather than off any leaf's prompt.
+--
+-- A pure merge is invisible everywhere else: it changes no leaf text, so
+-- 'flowLeafPrompts' cannot see it, and a @dimap'@ reifies as a node with no
+-- function in it, so @plan@ cannot either. Both sides of the merge are 'Text',
+-- so swapping them is not a type error — it would wrap the retrospective
+-- heading around the work and hand the next leaf a retrospective where it
+-- wanted the change.
+retrospectiveTests :: TestTree
+retrospectiveTests =
+  testGroup
+    "retrospective"
+    [ testCase "appends the retro under its own heading, below the work" $ do
+        out <- flowOutput "retrospective" retrospective "THE WORK"
+        out @?= "THE WORK\n\n## retrospective\n\n" <> leafAnswer
+    ]
+
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the
 -- report in full, and the minimal repair of that same set.
 --
@@ -508,7 +606,7 @@ expectedLensesOf subject = case subject of
     , ("security", codeReviewerSecurity)
     , ("tests", reviewTests)
     , ("performance", perfReviewer)
-    , ("haskell", haskellReviewer)
+    , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailReviewRubric)
     , ("doctrine", codeReview)
     ]
@@ -517,7 +615,7 @@ expectedLensesOf subject = case subject of
     , ("security", codeReviewerSecurity)
     , ("tests", reviewTests)
     , ("performance", perfReviewer)
-    , ("haskell", haskellReviewer)
+    , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailAuditRubric)
     , ("doctrine", codeReview)
     , ("architecture", architectureOfChange)
@@ -526,7 +624,23 @@ expectedLensesOf subject = case subject of
     [ ("accuracy", docsAccuracy)
     , ("completeness", docsCompleteness)
     , ("structure", docsStructure)
+    , ("slop", slopOfDocs)
     , ("ponytail", ponytailOfDocs)
+    ]
+  OfTree ->
+    [ ("correctness", ofTree reviewCorrectness)
+    , ("tests", ofTree reviewTests)
+    , ("stubs", reporting grindStubs)
+    , ("vacuous", reporting grindVacuous)
+    , ("dry", reporting grindDry)
+    , ("hardcodings", reporting grindHardcodings)
+    , ("refactor", ofTree reviewComplexity)
+    , -- 'reporting' alone, NOT 'ofTree': the architecture rubric opens by
+      -- saying it reads a whole tree, so the tree clause would be the second
+      -- copy of a sentence its own file already carries.
+      ("architecture", reporting reviewArchitecture)
+    , ("performance", ofTree perfReviewer)
+    , ("ponytail", ponytailOfTree)
     ]
 
 -- | Where a lens set disagrees with the table it is supposed to be: one 'Text'
@@ -563,6 +677,11 @@ bodyTag body =
 
 tshow :: (Show a) => a -> Text
 tshow = T.pack . show
+
+-- | Does a prompt contain this text? For fencing a rule a composed lens is
+-- supposed to carry, where the whole body is far too big to assert on.
+says :: Prompt -> Text -> Bool
+says p needle = T.isInfixOf needle (promptText p)
 
 -- | Run an assertion at every 'Subject', naming the one that failed. A new
 -- constructor is covered on arrival rather than when someone remembers.
@@ -610,6 +729,25 @@ lensesOfTests =
           @?= [ "accuracy"
               , "completeness"
               , "structure"
+              , "slop"
+              , "ponytail"
+              ]
+    , -- ORDER is what this asserts, and here order is semantic rather than
+      -- cosmetic. @Incite.Review.spread@ pairs one backend per lens by
+      -- position, so moving a row moves which model audits that lens, with no
+      -- type error and no name anywhere changing. A set comparison could not
+      -- see it and neither could a count.
+      testCase "OfTree lens names, in the order spread pairs them to backends" $
+        map (leafNameText . fst) (lensesOf OfTree)
+          @?= [ "correctness"
+              , "tests"
+              , "stubs"
+              , "vacuous"
+              , "dry"
+              , "hardcodings"
+              , "refactor"
+              , "architecture"
+              , "performance"
               , "ponytail"
               ]
     , -- The point of the docs subject, as an assertion rather than a comment:
@@ -643,22 +781,32 @@ lensesOfTests =
       -- that each one picks the rubric pointed at it is a claim about bodies,
       -- and every other case in this group reads @fst@. Point two subjects at
       -- one rubric and this is what says so.
-      testCase "each subject's ponytail lens is its own rubric" $
+      --
+      -- __Written as the two laws rather than as the counts that stood in for
+      -- them.__ @(length, length . nub) \@?= (3, 3)@ said both things at once
+      -- and needed an arithmetic edit on every new constructor — and a
+      -- constructor added without that edit went red for the count rather than
+      -- for the law, which is a different sentence. Quantified over
+      -- @[minBound ..]@, a fourth subject is covered on arrival and the numbers
+      -- are nobody's to maintain.
+      testCase "every subject contributes exactly one ponytail rubric, and no two share one" $
         let rubrics =
-              [ promptText body
+              [ (s, promptText body)
               | s <- [minBound .. maxBound :: Subject]
               , (name, body) <- lensesOf s
               , leafNameText name == "ponytail"
               ]
-         in (length rubrics, length (nub rubrics)) @?= (3, 3)
-    , -- The guard on the hardcoded name lists above, NOT on the quantified law.
-      -- The law needs no guard: @[minBound .. maxBound]@ picks up a constructor
-      -- by itself, which is how @OfDocs@ arrived already covered by it. The name
-      -- lists are written one per constructor and go stale in silence, and so
-      -- does the rubric count on the case above. This line is what forces the
-      -- edit that notices a subject has appeared.
-      testCase "Subject enumerates 3 constructors" $
-        length ([minBound .. maxBound] :: [Subject]) @?= 3
+            bodies = map snd rubrics
+         in do
+              -- One per subject, in subject order: this is the arithmetic the
+              -- count used to do, said as a statement about which subjects
+              -- answered rather than about how many did.
+              map fst rubrics @?= [minBound .. maxBound :: Subject]
+              report
+                [ tshow s <> " shares its ponytail rubric with another subject: " <> bodyTag b
+                | (s, b) <- rubrics
+                , length (filter (== b) bodies) > 1
+                ]
     , -- The fence on the BODIES. Every assertion above reads @fst@, and so does
       -- every other check this repository has: swap two entries inside the
       -- shared @codeLenses@ helper and the names, the plan skeletons and the
@@ -679,6 +827,113 @@ lensesOfTests =
            in map (("repeated lens body: " <>) . bodyTag) (nub repeats)
     ]
 
+-- | The whole grind panel: the tree subject's lenses and the emission lenses
+-- that are appended to them, in the order @grind-paradox@ hands them to
+-- @spread@.
+grindLenses :: [(LeafName, Prompt)]
+grindLenses = lensesOf OfTree <> emissionLenses
+
+-- | 'emissionLenses' written out flat, for the reason 'expectedLensesOf' is
+-- written out flat — and with one gap this closes that that one cannot.
+--
+-- 'expectedLensesOf' is total in 'Subject' and GHC forces a case per
+-- constructor. 'emissionLenses' is deliberately __not__ a subject (see
+-- "Incite.Review".'emissionLenses'), so nothing forces a second statement of
+-- it: swap two entries and every name, plan skeleton and cost estimate is
+-- byte-identical while two lenses run each other's rubric. This is the
+-- independent copy that says so.
+expectedEmissionLenses :: [(LeafName, Prompt)]
+expectedEmissionLenses =
+  [ ("target-consistency", reporting grindTargetConsistency)
+  , ("validator-calls", reporting grindValidatorCalls)
+  , ("codegen-gaps", reporting grindCodegenGaps)
+  , ("emitted-code", reporting grindEmittedCode)
+  ]
+
+-- | The finding contract every grind lens must carry, written HERE as literals
+-- rather than read off 'reporting'.
+--
+-- Deriving it from the binding under test would make the law @x@ contains @x@:
+-- it would pass with 'reporting' replaced by 'id', which is the one mutation it
+-- exists to catch. Written out, it is a statement about what the panel sends,
+-- and it goes red the moment the contract stops being spliced.
+--
+-- The phrases are 'Incite.Prompts.reviewSynthesis'\'s own admission test —
+-- location, what is wrong, what fixes it — because a finding missing any of
+-- them is one the reduction behind these lenses drops unread.
+grindContract :: [Text]
+grindContract = ["file:line", "the concrete fix"]
+
+-- | Every leaf name a 'Flow' reaches, read off its skeleton.
+--
+-- The skeleton is what @agent-functor plan@ renders, so this is the same view
+-- an operator gets before spending anything — and the only one that can count
+-- leaves without running them.
+leafNames :: Flow Text Text -> [Text]
+leafNames flow = [leafNameOf t | FLeaf t <- toList (skeleton (toSkeleton flow))]
+
+-- | The panel @grind-paradox@ fans out, and the combinator that fans it.
+--
+-- __Nothing else in this repository can see any of this.__ @plan@ renders leaf
+-- names and no prompt text, so a lens whose body lost its output contract plans
+-- identically; @cost@ counts leaves and cannot say which lens sits on which
+-- model. The laws below are where the panel's shape is written down.
+grindPanelTests :: TestTree
+grindPanelTests =
+  testGroup
+    "grind panel"
+    [ -- The union is what the workflow actually fans out, and neither half is
+      -- checked by 'lensesOfTests' — that quantifies over 'Subject', and
+      -- 'emissionLenses' is deliberately not one. A name colliding across the
+      -- two halves would give two reviewers one @lens\@backend@ block.
+      testCase "the union of tree lenses and emission lenses holds all three laws" $
+        lensSetViolations grindLenses @?= []
+    , -- The guard on the body fence below, and on the backend pairing: two
+      -- lenses rendering the same text are two leaves doing one leaf's work on
+      -- two different models, which reads as agreement in the synthesis.
+      testCase "no grind lens repeats another's body" $
+        let bodies = map (promptText . snd) grindLenses
+            repeats = bodies \\ nub bodies
+         in report (map (("repeated grind lens body: " <>) . bodyTag) (nub repeats))
+    , -- The output contract, as a property of every body the panel sends. See
+      -- 'grindContract' for why the needles are literals here.
+      testCase "every grind lens carries the finding contract" $
+        report
+          [ leafNameText name <> " does not say " <> tshow needle
+          | (name, body) <- grindLenses
+          , needle <- grindContract
+          , not (says body needle)
+          ]
+    , testCase "emission lenses carry the bodies they name" $
+        report (lensBodyMismatches expectedEmissionLenses emissionLenses)
+    , -- 'spread' is a zip against a cycled backend list, so the leaf count is
+      -- the LENS count — not @min@ of the two, and not the cross-product a
+      -- panel would give.
+      --
+      -- __A law about 'spread', and it needs the case below beside it.__ Both
+      -- sides here are derived from 'grindLenses', so a lens deleted from the
+      -- panel moves them together and this stays green. What it refutes is
+      -- 'spread' itself: point it at @panelAcross@ and the count triples.
+      testCase "spread gives one leaf per lens" $
+        length (leafNames (spread backends grindLenses)) @?= length grindLenses
+    , -- The panel's WIDTH, as a plain number, because the law above cannot see
+      -- it. 42 leaves is what a full panel over these lenses would cost and 14
+      -- is what @grind-paradox@ pays; a lens quietly dropped from either half
+      -- of the union is a lens nobody runs, and the run reports a clean tree
+      -- for the part it never read.
+      testCase "the grind panel is 14 lenses wide" $
+        length grindLenses @?= 14
+    , -- And the pairing preserves distinctness: 'unionFindings' heads each
+      -- block by leaf name, so two leaves sharing one would make two reviewers
+      -- indistinguishable in the reduction. Distinct LENS names do not imply
+      -- distinct LEAF names on their own — the pairing is what appends the
+      -- backend tag, and this is the case that reads the result.
+      testCase "spread leaf names are distinct" $
+        let ns = leafNames (spread backends grindLenses)
+         in report
+              [ "repeated leaf name: " <> n | n <- nub (ns \\ nub ns) ]
+    ]
+
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
 -- adjustment, each paired with the rubric it is a delta against.
 --
@@ -693,6 +948,10 @@ reorientations =
   [ ("docsAccuracy", fess, docsAccuracy)
   , ("ponytailOfDocs", ponytailAuditRubric, ponytailOfDocs)
   , ("architectureOfChange", reviewArchitecture, architectureOfChange)
+  , ("haskellOfHouse", haskellReviewer, haskellOfHouse)
+  , ("qaOfCommit", qaAgent, qaOfCommit)
+  , ("docsStrategyOfPlan", technicalDocsStrategist, docsStrategyOfPlan)
+  , ("slopOfDocs", stopSlop, slopOfDocs)
   ]
 
 -- | The text a reorientation adds __below__ the rubric it splices. Meaningful
@@ -766,9 +1025,11 @@ reorientationTests =
           ]
     , -- 'architectureOfChange' is absent on purpose: its delta is TOTAL
       -- (\"Everything else stands\"), so it maps every section at once and has
-      -- nothing to enumerate. The two docs deltas void part of their base, and
-      -- a part that is neither repointed nor voided is a section still pointed
-      -- at code.
+      -- nothing to enumerate. 'haskellOfHouse' is absent for the opposite
+      -- reason — its delta ADDS rules and voids exactly one line of its base,
+      -- which the case below is what fences. The two docs deltas void part of
+      -- their base, and a part that is neither repointed nor voided is a
+      -- section still pointed at code.
       testCase "every voiding reorientation names every section of its base" $
         report
           [ T.pack label <> " leaves section " <> tshow section <> " unmapped"
@@ -790,6 +1051,26 @@ reorientationTests =
                   ]
                 , [ T.pack label <> ": adjustment does not say " <> tshow inAdjustment
                   | not (T.isInfixOf inAdjustment adjustment)
+                  ]
+                ]
+          ]
+    , -- 'haskellOfHouse' overrules exactly one rule of its base, and the
+      -- override is a statement about text the addendum does not contain: drop
+      -- the orphan-instance rule upstream and the addendum spends a section
+      -- countermanding a rule nobody states, with nothing else to notice. Both
+      -- sides are asserted for the same reason 'voidedSentences' asserts both.
+      testCase "haskellOfHouse overrules a rule its base still states" $
+        report
+          [ complaint
+          | complaint <-
+              concat
+                [ ["haskell-reviewer no longer lists orphan instances" | not (says haskellReviewer "Orphan instances")]
+                , ["the house addendum no longer overrules them" | not (says haskellOfHouse "Orphan instances are fine here")]
+                , -- The house rules the lens exists to carry: absent from the
+                  -- base, so their presence here is the composition working.
+                  [ "the haskell lens no longer carries " <> tshow rule
+                  | rule <- ["No primitive in a top-level signature", "RecordWildCards", "DataKinds"]
+                  , not (says haskellOfHouse rule)
                   ]
                 ]
           ]
@@ -841,7 +1122,7 @@ promptLintGolden = goldenDir <> "/prompt-lint-brief.txt"
 -- checked against the __directory__ instead, which is the set
 -- @extra-source-files@ has to carry in any case.
 goldensRead :: [FilePath]
-goldensRead = promptLintGolden : [path | (_, _, path) <- reframings]
+goldensRead = promptLintGolden : remediateGolden : [path | (_, _, path) <- reframings]
 
 -- | The entries of the cabal file\'s @extra-source-files@ stanza: the indented
 -- non-comment lines after it, up to the next column-zero line.
@@ -1111,6 +1392,32 @@ flowLeafPrompts name flow input = do
       input
   readIORef sent
 
+-- | What every prompt leaf answers under 'flowOutput'. Distinctive, so a merge
+-- that puts an agent's output where the incoming log belongs is tellable from
+-- one that does not — @\"\"@ would make both sides of a swap look alike.
+leafAnswer :: Text
+leafAnswer = "<<LEAF>>"
+
+-- | What a flow RETURNS, rather than what its leaves were sent — the other half
+-- of 'flowLeafPrompts'\'s interpretation, run the same way.
+--
+-- 'flowLeafPrompts' throws this value away, which is exactly why a pure stage
+-- between two leaves has no fence anywhere: it changes no prompt, so that
+-- helper cannot see it, and it carries no leaf name, so @plan@ cannot either.
+flowOutput :: String -> Flow Text Text -> Text -> IO Text
+flowOutput name flow input =
+  fst
+    <$> interpret
+      ( leafRunner
+          LeafHandlers
+            { lhPrompt = \_ -> pure leafAnswer
+            , lhExec = \cmd -> assertFailure (name <> " ran an exec leaf: " <> show cmd)
+            , lhAsk = \_ -> assertFailure (name <> " reached an ask leaf")
+            }
+      )
+      flow
+      input
+
 -- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather
 -- than picking one when it is not. @prompt-lint@ is a single @ste@ refinement
 -- under two scopes, so a second leaf appearing is a change to what it sends and
@@ -1198,9 +1505,12 @@ backendTests =
     [ testCase "has three backends" $
         length backends @?= 3
     , testCase "backend names" $
-        map (leafNameText . fst) backends
+        map (leafNameText . fst) (NE.toList backends)
           @?= ["claude-agent", "codex", "opencode"]
-    , testCase "claudeAgentBackend name matches first entry" $
+    , -- 'NE.head' rather than 'head': the list is 'NonEmpty' so that
+      -- @Incite.Review.spread@ can cycle it without a guard, and this case
+      -- comes along for free — there is no empty case left to answer.
+      testCase "claudeAgentBackend name matches first entry" $
         leafNameText (fst claudeAgentBackend)
-          @?= leafNameText (fst (head backends))
+          @?= leafNameText (fst (NE.head backends))
     ]

@@ -7,11 +7,11 @@
         "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1786212485,
-        "narHash": "sha256-O12PntMxCSYzAq10MVyFnvVdluhWsbE8K3jf4RTIFWA=",
+        "lastModified": 1786215447,
+        "narHash": "sha256-67iezMQMfpIcgj5Y15UdvgbYqWvYrlHyda+NblXcOgk=",
         "ref": "refs/heads/master",
-        "rev": "885779acb65599ce53c5264b55cb420fa74c0a14",
-        "revCount": 210,
+        "rev": "466ba136dc185ae015942882f17e044e058d62e3",
+        "revCount": 211,
         "type": "git",
         "url": "file:///home/isaac/_/agent-functor/master"
       },
@@ -20,7 +20,23 @@
         "url": "file:///home/isaac/_/agent-functor/master"
       }
     },
-    "agent-pm": {
+    "awesome-prompts": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786209214,
+        "narHash": "sha256-7WqGTlaGy6M5FSVC9XcKOrEFo4lT4m357nHlCCCfTvk=",
+        "owner": "ai-boost",
+        "repo": "awesome-prompts",
+        "rev": "f387d66861817c9e244931f3ff80223f75d45e79",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ai-boost",
+        "repo": "awesome-prompts",
+        "type": "github"
+      }
+    },
+    "flake-prompt": {
       "inputs": {
         "home-manager": "home-manager",
         "nixpkgs": [
@@ -39,22 +55,6 @@
         "owner": "fresheyeball",
         "repo": "flake-prompt",
         "type": "gitlab"
-      }
-    },
-    "awesome-prompts": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1785992635,
-        "narHash": "sha256-vzAvhhI9kom81/kC9GkeyVIDD+vHmjRgazdUWjCCGOo=",
-        "owner": "ai-boost",
-        "repo": "awesome-prompts",
-        "rev": "d83eecce7754463fc582342faa4b102ee1175a68",
-        "type": "github"
-      },
-      "original": {
-        "owner": "ai-boost",
-        "repo": "awesome-prompts",
-        "type": "github"
       }
     },
     "flake-utils": {
@@ -78,7 +78,7 @@
     "home-manager": {
       "inputs": {
         "nixpkgs": [
-          "agent-pm",
+          "flake-prompt",
           "nixpkgs"
         ]
       },
@@ -99,11 +99,11 @@
     "macha": {
       "flake": false,
       "locked": {
-        "lastModified": 1784053616,
-        "narHash": "sha256-xspLMIP/pdOgIY8d9ofG0zRGto2otC6A80u90/H9Fao=",
+        "lastModified": 1786211757,
+        "narHash": "sha256-7UiApSderqvYGnEcOfp2Yi87f1IfD9x166kd6kvM+7c=",
         "ref": "refs/heads/main",
-        "rev": "b51fa711a6cfeb570f7453376450ac5b3cc2f0a5",
-        "revCount": 93,
+        "rev": "c73caf0c039c910fa31fe9578cd49819d1e4d340",
+        "revCount": 94,
         "type": "git",
         "url": "ssh://git@gitlab.com/mecha-team-zero/macha-orchestration"
       },
@@ -130,11 +130,11 @@
     },
     "nixpkgs-adapters": {
       "locked": {
-        "lastModified": 1784992771,
-        "narHash": "sha256-xEE5I69+WNqcs7Z0v5D9xwcHYRbvC8k/fKBmlUBdCp4=",
+        "lastModified": 1785975029,
+        "narHash": "sha256-X44cn5rzytELc3NNoQsh0aLkjWA/QzPfc6HPQmsG3sU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "37bfb33419c6e367e8bb6f44041eaecf953b5236",
+        "rev": "70ce234312134a463ba7728e94da2486a1d237ac",
         "type": "github"
       },
       "original": {
@@ -146,11 +146,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1784115452,
-        "narHash": "sha256-BoYPdqk6jlKXy+DyUzyGV/CtRGfAhk2MmIgBhsemTGI=",
+        "lastModified": 1785975029,
+        "narHash": "sha256-X44cn5rzytELc3NNoQsh0aLkjWA/QzPfc6HPQmsG3sU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "35d3407a3816f3b341d8cf1d60abaf2b7b8166ac",
+        "rev": "70ce234312134a463ba7728e94da2486a1d237ac",
         "type": "github"
       },
       "original": {
@@ -163,11 +163,11 @@
     "ponytail": {
       "flake": false,
       "locked": {
-        "lastModified": 1784151135,
-        "narHash": "sha256-Y7d4s7uqjH6IbEXhqAiQ+yaxr6iiGcv2X64LuMtG1T8=",
+        "lastModified": 1786139041,
+        "narHash": "sha256-bGdXvzhWPwGdz3T2Yh2h6lf+3PBRFAfdBxP5pESmCHI=",
         "owner": "dietrichgebert",
         "repo": "ponytail",
-        "rev": "16f29800fd2681bdf24f3eb4ccffe38be3baec6b",
+        "rev": "2ed6c52c9d7e5e56942508591085fd45dea277d3",
         "type": "github"
       },
       "original": {
@@ -195,8 +195,8 @@
     "root": {
       "inputs": {
         "agent-functor": "agent-functor",
-        "agent-pm": "agent-pm",
         "awesome-prompts": "awesome-prompts",
+        "flake-prompt": "flake-prompt",
         "macha": "macha",
         "nixpkgs": "nixpkgs_2",
         "ponytail": "ponytail",
@@ -207,11 +207,11 @@
     "simple-english": {
       "flake": false,
       "locked": {
-        "lastModified": 1786029826,
-        "narHash": "sha256-8eqnxhW9D6DXodh2wzReuTlVahruPzrZOu6GRmIxts0=",
+        "lastModified": 1786113268,
+        "narHash": "sha256-QmlV9OZ4CNxI+pV7jDcn4n3Zet1+9W7h5oTNCUQ/vrY=",
         "owner": "AminBlg",
         "repo": "SimpleEnglish",
-        "rev": "8487d37c8b453bc194732770cf77871439f6f62a",
+        "rev": "59bf6702197a5aadc96d197ea17f290d8d50dcd3",
         "type": "github"
       },
       "original": {

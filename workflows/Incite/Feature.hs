@@ -26,6 +26,7 @@ module Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , document
+  , retrospective
   , remediate
   , docsRule
   , codeRule
@@ -58,8 +59,8 @@ import Agent.Grant (Grant, execGrant)
 import Agent.Prompt (Prompt, brief, i, iii, __i)
 import Agent.Run (Workflow, workflowGReq, workflowReq)
 
-import Incite.Backend (fable5)
-import Incite.Review (retroFlow, reviewDocsFlow, reviewHeavyFlow)
+import Incite.Backend (fable5, reviewer)
+import Incite.Review (docsStrategyOfPlan, retroFlow, reviewDocsFlow, reviewHeavyFlow)
 import Incite.Prompts
     ( intrepid,
       skeptic,
@@ -113,6 +114,7 @@ shipFeature =
       >>> remediate codeRule
       >>> retrospective
       >>> humanGate "Open a pull request for these changes?"
+
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- One worker implements the plan for real, editing this repository in
@@ -151,21 +153,29 @@ shipFeature =
     -- The panel's lenses are written for a diff, and the artifact here is the
     -- worker's closing summary: 'asReviewSubject' points them at the tree.
     reviewChange = dimap' asReviewSubject id reviewHeavyFlow
-    -- Close the run with 'Incite.Review.retroFlow'\'s three columns.
-    --
-    -- __Before the gate, not after the PR.__ 'humanGate' halts the workflow when
-    -- you decline, so anything downstream of it never runs on a no — and a change
-    -- you declined is precisely the run worth holding a retrospective on.
-    --
-    -- __A fanout, not a plain '>>>'.__ 'submitPR' quotes the value it receives as
-    -- \"work so far\", and handing that leaf a retrospective would describe the
-    -- session where it needs the change. So the worker's account flows on
-    -- untouched and the retro is appended under its own heading, which keeps it
-    -- in the run's final artifact without becoming the brief for the next leaf.
-    retrospective =
-      dimap' id merge (fanout' Id (dimap' asRetroSubject id retroFlow))
-      where
-        merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
+
+-- | Close a run with "Incite.Review".'retroFlow'\'s three columns, appended to
+-- the work rather than replacing it.
+--
+-- __Before the gate, not after the PR.__ 'humanGate' halts the workflow when you
+-- decline, so anything downstream of it never runs on a no — and a change you
+-- declined is precisely the run worth holding a retrospective on.
+--
+-- __A fanout, not a plain '>>>'.__ 'submitPR' quotes the value it receives as
+-- \"work so far\", and handing that leaf a retrospective would describe the
+-- session where it needs the change. So the worker's account flows on untouched
+-- and the retro is appended under its own heading, which keeps it in the run's
+-- final artifact without becoming the brief for the next leaf.
+--
+-- Top-level so the merge can be read at all. It changes no leaf's prompt and a
+-- @dimap'@ renders in a plan skeleton as a node with no function in it, so a
+-- flipped argument order here — the heading wrapped around the work instead of
+-- around the retro — is invisible to every other instrument in this repository.
+retrospective :: Flow Text Text
+retrospective =
+  dimap' id merge (fanout' Id (dimap' asRetroSubject id retroFlow))
+  where
+    merge (work, r) = work <> "\n\n## retrospective\n\n" <> r
 
 -- | 'shipFeature' for prose. It shares 'explorePlan', 'actingGrant',
 -- 'orchestrate' and 'remediate' with the code path — so the two cannot drift in
@@ -188,13 +198,21 @@ shipDocs =
   workflowGReq
     "ship-docs"
     [iii|
-      Explore a documentation request, plan it, then write under an orchestrator
-      that re-runs the worker until it reports the plan finished; review the
-      result with the four-lens documentation panel and remediate the findings
+      Explore a documentation request, plan it, edit the plan for documentation
+      strategy and plain English, then write under an orchestrator that re-runs
+      the worker until it reports the plan finished; review the result with the
+      five-lens documentation panel and remediate the findings
     |]
     actingGrant
     $ explorePlan
-      >>> lensEdit [("simple-english", brief simpleEnglishLens)]
+      -- Strategy first, then English: 'docsStrategyOfPlan' splits and cuts
+      -- steps — who each document is for, which content type it is, which
+      -- document owns a fact — and 'simpleEnglishLens' rewrites what survives.
+      -- The other order spends the rewrite on steps the strategy lens deletes.
+      >>> lensEdit
+        [ ("docs-strategy", brief docsStrategyOfPlan)
+        , ("simple-english", brief simpleEnglishLens)
+        ]
       >>> steer "Review the plan — add any guidance before writing begins"
       >>> orchestrate document
       -- The docs lenses read an artifact; what reaches them is the worker's
@@ -498,19 +516,22 @@ explorePlan = explore >>> plan
     -- backend with a sibling — a whole-tree structural read is the heaviest
     -- thinking here, and a shared backend would cost the fan-out the
     -- independence it exists for.
+    -- 'reviewer' builds each stance: named once, read-only, under a backend
+    -- scope. Same shape the review panels are built from, so a stance cannot
+    -- drift from a reviewer in mode or acquire write access.
     explore =
-      withMode Plan $
-        exploreFlows
-          [ ("intrepid", withBackend claudeAgent defaultModel (refineWith "intrepid" (brief intrepid) id))
-          , ("skeptic", withBackend codex defaultModel (refineWith "skeptic" (brief skeptic) id))
-          , ("contemplative", withBackend opencode defaultModel (refineWith "contemplative" (brief contemplative) id))
-          , ("architect", withBackend claudeAgent fable5 (refineWith "architect" (brief architect) id))
+      withMode Plan
+        $ exploreFlows
+          [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
+          , reviewer (withBackend codex defaultModel) "skeptic" skeptic
+          , reviewer (withBackend opencode defaultModel) "contemplative" contemplative
+          , reviewer (withBackend codex defaultModel) "architect" architect
           ]
-          -- Narrowing, not ranking by importance: what breaks, then the shape it
-          -- lands in, then which design, then the moves. The architect precedes
-          -- the design stance because the design stance is told to build on its
-          -- map.
-          (hierarchical ["skeptic", "architect", "contemplative", "intrepid"])
+        -- Narrowing, not ranking by importance: what breaks, then the shape it
+        -- lands in, then which design, then the moves. The architect precedes
+        -- the design stance because the design stance is told to build on its
+        -- map.
+        $ hierarchical ["skeptic", "architect", "contemplative", "intrepid"]
     -- Read-only, pinned to Fable 5: 'planBrief' leans on both.
     plan =
       withMode Plan
@@ -525,7 +546,7 @@ explorePlan = explore >>> plan
 -- ponytail owns the cuts, and dependency order is 'planBrief'\'s own format
 -- contract.
 editPlan :: Flow Text Text
-editPlan =
+editPlan = withBackend codex defaultModel $
   lensEdit
     [ ("ponytail", brief ponytailLens)
     , ("denotational", brief planDenotational)
