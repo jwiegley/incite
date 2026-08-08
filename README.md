@@ -332,7 +332,7 @@ Three uses, at two grades:
 | use | grade | why that grade |
 |---|---|---|
 | the `simple-english` **skill** | the full skill + its `references/` | deployed by `skillFromDir`; for writing docs, READMEs, runbooks |
-| the `simple-english` **plan lens** | `prompts/system-prompt.md` (~2 KB) | enough to *rewrite* a step; cheap enough to run on every plan |
+| the `simple-english` **plan lens** | `prompts/system-prompt.md` (2,947 B) | enough to *rewrite* a step; cheap enough to run on every plan |
 | the `prompt-lint` **workflow** | `SKILL.md` (~19.7 KB) | the only grade carrying the CHECK contract |
 
 **As a plan lens it runs last, and that is the point.** A plan step is procedural
@@ -538,7 +538,7 @@ The implementation brief is a three-document composition, each answering a
 different question — `agentic-coder` **how** to write it (plan first, read before
 editing, tests are not optional), ponytail's ladder **how much** (stop at the
 first rung that holds), and `commands/wiggum.md` **how long** (to completion,
-with a handoff document, auditing its own commits). ~7 KB per turn: deliberate,
+with a handoff document, auditing its own commits). ~8 KB per turn: deliberate,
 because it is the only leaf where an agent writes code unsupervised.
 
 They pull against each other on purpose — `fix-all` and `wiggum` push for
@@ -710,9 +710,11 @@ a lens that wanders into another's territory costs a turn and returns a
 duplicate. Security is upstream — `code_reviewer_security.txt`, an OWASP Top 10
 walkthrough that reports severity, attacker payoff, a corrected snippet and the
 preventing pattern per finding. It is verbose where the local lenses are terse,
-which `synthesis.md` absorbs, and at ~8.5 KB it is the second most expensive
-brief here after the doctrine — so it appears only in `review-heavy`, never in
-the per-commit `review-lite`.
+which `synthesis.md` absorbs, and at ~8.3 KB it is the second most expensive
+review lens after the doctrine (~10 KB) — not the second most expensive brief
+in the repo overall; `steSkill` (~19.7 KB, the `prompt-lint` brief) and the
+`lookahead` rubric (~8.4 KB) are both bigger. So it appears only in
+`review-heavy`, never in the per-commit `review-lite`.
 
 Haskell and performance are upstream too, from
 [promptdeploy](#promptdeploy--the-upstream-this-repo-descends-from), read out of

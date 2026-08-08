@@ -188,7 +188,7 @@
           builtins.readFile "${promptdeploy}/agents/perf-reviewer.md"
         );
         # SimpleEnglish at two grades, because the two uses want different
-        # things. `rules.md` is upstream's condensed system-prompt form (~2 KB) —
+        # things. `rules.md` is upstream's condensed system-prompt form (2,947 B) —
         # enough to REWRITE a plan step, cheap enough for a lens that runs on
         # every plan. `skill.md` is the full 19.7 KB skill, which is what the
         # CHECK mode lives in ("report each violation as: rule number, the

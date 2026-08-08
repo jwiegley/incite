@@ -233,7 +233,7 @@ perfReviewer = [promptFile|prompts/upstream/promptdeploy/perf-reviewer.md|]
 -- words, simple tenses). Every prompt this repo ships is both, and only the
 -- procedural half has to survive one read by a tired model.
 --
--- * 'steRules' — upstream's condensed system-prompt form, ~2 KB. Enough to
+-- * 'steRules' — upstream's condensed system-prompt form, 2,947 B. Enough to
 --   rewrite a plan step, cheap enough to run on every plan.
 -- * 'steSkill' — the full skill, ~19.7 KB, and the only one of the two that
 --   carries the CHECK contract: report each violation as rule number, offending
