@@ -665,7 +665,10 @@ view.
 written whole-tree and says so. Inside `review-audit` it is composed with a
 reorientation that keeps its questions — leaking boundaries, arrows pointing the
 wrong way, one decision in many homes — and points them at the shape the change
-moves toward. It stays whole-tree when run as a standalone agent.
+moves toward. The reorientation composes on top of the base file rather than
+editing it, so the file itself stays whole-tree, unmodified — there is no
+standalone architecture agent deployed to read it that way; today the only
+consumer is `review-audit`'s composed `architectureOfChange`.
 
 `planner-audit` is **not** one of these tiers and not a lens inside `review-audit`.
 It is a single read-only leaf running `lookahead_planning_specialist.txt`, and its

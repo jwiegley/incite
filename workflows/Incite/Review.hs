@@ -271,7 +271,8 @@ lensSetViolations lenses =
 
 -- | 'reviewArchitecture' is whole-tree by its own contract. This reorientation
 -- keeps its questions and points them at the shape a change moves toward; the
--- file is untouched, so the standalone agent stays whole-tree.
+-- file is untouched, so it stays whole-tree for any other consumer — though
+-- none is deployed here today; the only reader is this reorientation.
 architectureOfChange :: Prompt
 architectureOfChange =
   [__i|
