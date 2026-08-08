@@ -19,11 +19,7 @@ When all conflicts are resolved, complete the merge with `git commit --no-gpg-si
 
 ## Step 3: Ensure the build passes
 
-Run `nix flake check -L` and observe any problems. If the errors come from pre-commit hooks, then run `pre-commit run -a` as it will automatically fix most pre-commit errors.
-
-Note: When no pre-commit hook with `nix fmt` is present, the command will still attempt to resolve formatting errors to ensure code consistency.
-
-Avoid removing functionality and tests to make the build pass. Everything that is there now should be in a working state, not stubbed 'for now' to make the build pass. Repeat until the build passes. Use mecha-nick, auto-Kever, and robo-bobzvan respectively to handle language-specific, infrastructure, and functional programming style fixes.
+Run `/fix-build`.
 
 ## Step 4: Report
 

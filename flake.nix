@@ -484,7 +484,7 @@
         {
           type = "command";
           name = "fix-build";
-          description = "Run nix flake check and fix build issues using pre-commit hooks";
+          description = "Run nix flake check and fix build issues using nix fmt";
           body = builtins.readFile ./commands/fix-build.md;
         }
 
