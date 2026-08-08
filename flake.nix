@@ -457,13 +457,6 @@
 
         {
           type = "command";
-          name = "feature";
-          description = "Research, plan, implement, review, and PR a new feature";
-          body = builtins.readFile ./commands/feature.md;
-        }
-
-        {
-          type = "command";
           name = "fess";
           description = "Fess up";
           body = builtins.readFile ./commands/fess.md;
@@ -542,22 +535,6 @@
           name = "paradox-fsm-overlaps";
           description = "Find Elixir/Haskell/TypeScript code duplication AND dead/under-consumed Paradox code";
           body = builtins.readFile ./commands/paradox-fsm-overlaps.md;
-        }
-
-        {
-          type = "command";
-          name = "partner-cleanup";
-          description = "Consume partner review observations, fix them through a sub-agent, and commit the cleanup";
-          argumentHint = "[optional observations directory]";
-          body = builtins.readFile ./commands/partner-cleanup.md;
-        }
-
-        {
-          type = "command";
-          name = "partner-reviewer";
-          description = "Watch new commits and publish one atomic observation file per actionable review finding or worthwhile new idea";
-          argumentHint = "[optional baseline ref, commit range, or poll interval seconds]";
-          body = builtins.readFile ./commands/partner-reviewer.md;
         }
 
         {

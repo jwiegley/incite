@@ -269,7 +269,6 @@ there was no way to tell drift from deliberate divergence.
 | `commands/fess.md` | `commands/fess.md` | **ours** |
 | `skills/fix-all.md` | `skills/fix-all/SKILL.md` | **ours** — it is also a workflow brief |
 | `agents/fess-auditor.md` | `agents/fess-auditor.md` | **ours** |
-| `commands/partner-{reviewer,cleanup}.md` | same names | **ours** |
 | `commands/commit.md` | `commands/commit.md` | **theirs**, plus two re-asserted invariants — see below |
 | `agents/code-review.md` | *(no counterpart — split by language)* | **split**, see below |
 | `commands/code-review.md` | `commands/code-review.md` | **theirs** |
