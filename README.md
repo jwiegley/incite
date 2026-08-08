@@ -124,9 +124,12 @@ same way — see [Upstream prompts](#upstream-prompts).
 `agents/`, `skills/` and selected `commands/` do double duty: agent-pm renders
 them to `~/.claude`, *and* the workflows read those same files as briefs at run
 time. `agents/code-review.md` is the doctrine reviewer leaf, `skills/fix-all.md`
-is the remediation brief, and `commands/{fess,post-commit-audit,wiggum}.md` are
-read back by the workflow beats. One copy, no paraphrase, so editing any of
-these files changes both the deployed prompt and the workflow.
+is the remediation brief, and `commands/{fess,wiggum}.md` are read back by the
+workflow beats — `commands/post-commit-audit.md` is bound in `Incite.Prompts`
+too, but no workflow leaf splices it; see
+[Prompt authoring](docs/prompt-authoring.md#deployed-prompts-reused-by-workflows)
+for the authoritative list and why. One copy, no paraphrase, so editing any of
+the four spliced files changes both the deployed prompt and the workflow.
 
 The bill for that is real: `code-review.md` is ~10 KB and every leaf using it
 sends the whole thing, so a workflow reading it costs materially more per turn
