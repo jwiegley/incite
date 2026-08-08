@@ -32,16 +32,19 @@ Then compose it in `Incite.Feature` or `Incite.Review`:
 refineWith "my-leaf" (brief myBrief) id
 ```
 
-If you add a new directory under `prompts/`, update:
+If you add a new directory under `prompts/`, the Nix filesets need **no** edit:
+`librarySrc` in `flake.nix` takes `./prompts` wholesale, and both the runner
+and `testSrc` build on it, so any new subdirectory is already covered. What
+does need an edit:
 
-- `incite-workflows.cabal` `extra-source-files`;
-- the runner fileset in `flake.nix`;
-- the test fileset in `flake.nix`, if tests need the prompt;
-- `stePromptSrc`, if the file contains procedural prompt instructions.
+- `incite-workflows.cabal` `extra-source-files` — a new one-level glob
+  (`prompts/newdir/*.md`), since cabal globs do not recurse;
+- `stePromptSrc` in `flake.nix`, the fileset `checks.ste-prompts` lints (see
+  [Testing and packaging](testing-and-packaging.md#ste-checks)), if the file
+  contains procedural prompt instructions.
 
-The unit test suite checks the cabal side for spliced prompt files. It does not
-prove the Nix fileset is complete for a brand-new directory until the build tries
-to compile the splice in the sandbox.
+The unit test suite checks the cabal side for spliced prompt files, so a
+missing `extra-source-files` glob fails `cabal test`, not just `cabal sdist`.
 
 ## Deployed prompts reused by workflows
 

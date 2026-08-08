@@ -15,7 +15,11 @@ stdin at blocking points.
 
 ## Exposed inventory
 
-Only workflows listed in `workflows/Main.hs` are exposed.
+Only workflows listed in `workflows/Main.hs` are exposed. "SimpleEnglish"
+below is ASD-STE100 Simplified Technical English (see
+[Testing and packaging](testing-and-packaging.md#ste-checks)) — the aerospace
+controlled-language rule set this repo applies to its own procedural prompt
+text.
 
 | Workflow | Kind | Shape |
 |---|---|---|
@@ -24,7 +28,7 @@ Only workflows listed in `workflows/Main.hs` are exposed.
 | `ship-docs` | world-acting | explore, plan, SimpleEnglish plan wording, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on codex |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
-| `review-lite` | prompt-only | four per-commit reviewers, one backend each, pure fold reduction |
+| `review-lite` | prompt-only | four per-commit reviewers (correctness on claude-agent, fess and ponytail on codex, complexity on opencode), pure fold reduction |
 | `review-heavy` | prompt-only | full-diff review by seven lenses on three backends, two regrouped views on claude-agent, then synthesis |
 | `review-audit` | prompt-only | eight-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
 | `review-docs` | prompt-only | documentation panel: accuracy, completeness, structure, ponytail, each on three backends, then synthesis |

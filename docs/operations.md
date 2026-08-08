@@ -63,14 +63,29 @@ There is no CI config in this repository.
 
 ## Run workflows
 
+**Prerequisite:** `run` drives a real ACP backend, so the backend's own CLI
+must be installed and on `PATH` — the three known backends are `claude-agent`,
+`codex`, and `opencode`. `nix develop`'s shell does not provide these; `doctor`
+(below) is the fastest way to check what is actually reachable.
+
 Basic commands:
 
 ```bash
 nix run .#agent-functor -- list
 nix run .#agent-functor -- plan review-docs
 nix run .#agent-functor -- cost review-heavy
+nix run .#agent-functor -- doctor
+nix run .#agent-functor -- backends
 nix run .#agent-functor -- run ship-docs -i "document the project" --sandbox
+nix run .#agent-functor -- mcp
 ```
+
+`doctor` launches each supported backend, handshakes, and reports what it
+actually advertises — the way to tell a missing binary from a working one.
+`backends` lists the known backends and their launch commands, offline.
+`mcp` serves the `workflows` list to a coding agent as MCP tools over stdio —
+this is how a session like the one that wrote this documentation calls
+`review-lite`, `review-docs`, and the rest as tools rather than through the CLI.
 
 `ship-docs` is `workflowGReq` and edits files in place; drop `--sandbox` only
 when the edits must land in the real working tree.
@@ -79,10 +94,11 @@ Useful `run` flags:
 
 | Flag | Meaning |
 |---|---|
-| `--backend NAME` | override the default backend |
-| `-i`, `--input TEXT` | pass the workflow input |
-| `--sandbox` | isolate a world-acting run in a throwaway worktree |
-| `--concurrency N` | cap fan-out concurrency; `0` means unbounded |
+| `--backend NAME` | override the default backend (`claude-agent`); must be one of `claude-agent`, `codex`, `opencode` — a leaf under `withBackend` still pins its own backend regardless of this flag |
+| `--model KEY` | default model for leaves outside a `withBackend` scope |
+| `-i`, `--input TEXT` | the workflow input; for a `workflowReq`/`workflowGReq` leaf this is free-form text — the request, feature description, or review scope the first leaf reads, not a structured format. Prompts on a tty if omitted; required (errors) when piped with none given |
+| `--sandbox` | isolate a world-acting run in a throwaway worktree instead of editing in place |
+| `--concurrency N` | cap fan-out concurrency; default 6, or the workflow's own `withConcurrency`; `0` means unbounded |
 
 World-acting runs use the workflow's grant. In this repo, acting workflows share
 `actingGrant = execGrant ["nix*"]`.
@@ -161,4 +177,15 @@ Codex and Claude rendered trees differ:
 
 - that is expected where native concepts differ;
 - agents can degrade into skills unless `degradation = "skip"` prevents it.
+
+`ship-feature`/`ship-docs` aborts with the worker still ending on `WORK REMAINS`:
+
+- `orchestrate`'s `loopUntil workerFuel` (currently 8) aborts once the fuel
+  runs out rather than yielding partial work — a worker that never reports
+  `WORK COMPLETE` runs out the clock rather than stalling silently;
+- the work done so far is not lost: with `--sandbox` it is on the run's
+  `agent-functor/run-…` worktree branch, and without it, directly in the
+  working tree — `git status`/`git log` there to see what landed;
+- `resume`/`fork` can continue a stopped run without replaying leaves the
+  store already recorded (see `agent-functor fork --help`).
 

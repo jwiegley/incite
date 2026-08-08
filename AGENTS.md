@@ -25,10 +25,13 @@ Every directory that a `promptFile` splice can reach must appear in **both**:
 
 They are not cross-validated. A directory missing from the cabal list still
 builds under nix and only breaks `cabal sdist` — a **quiet** failure. When you
-add a new prompt directory, update both. Today both lists cover `workflows/`,
-`prompts/`, `agents/`, `skills/`, plus `commands/fess.md`,
-`commands/post-commit-audit.md` and `commands/wiggum.md` (which a workflow
-splices in as a brief).
+add a new prompt directory, update both. Today both lists cover `prompts/`,
+`agents/`, `skills/`, plus `commands/fess.md`, `commands/post-commit-audit.md`
+and `commands/wiggum.md` (which a workflow splices in as a brief). `workflows/`
+needs no `extra-source-files` entry — `hs-source-dirs: workflows` already
+covers the `.hs` sources there — but the Nix fileset union still lists
+`./workflows` explicitly, since it selects plain source paths and knows
+nothing about `hs-source-dirs`.
 
 ## Prompts are read at run time, not compiled in
 
@@ -57,7 +60,9 @@ root (candidate #3 is a deleted `/build/...` path). **Test the way you deploy**
 ## Commands
 
 ```bash
-nix build                                       # build both packages; result/ holds the prompt trees
+nix build                                       # builds packages.default (the prompt trees) only
+nix build .#agent-functor                       # the workflow runner binary
+nix build .#haddock                             # browsable Haddock for the library modules
 nix run .#agent-functor -- list                 # list defined workflows
 nix run .#agent-functor -- plan <name>          # offline: print the flow skeleton
 nix run .#agent-functor -- cost <name>          # offline: worst-case leaf-execution count + node count
@@ -101,7 +106,8 @@ There is exactly one copy of each. Editing `agents/code-review.md` changes both
 the deployed Claude agent **and** the workflow leaf that sends it. The bill is
 real: `agents/code-review.md` is ~10 KB and every leaf using it sends the whole
 thing — a workflow reading it costs materially more per turn than a one-line
-brief. `workflows/Main.hs` calls this out at the binding.
+brief. `workflows/Incite/Prompts.hs` calls this out at the `codeReview` binding
+(`Main.hs` is inventory-only — it names workflows, not prompt bindings).
 
 ## Adding things
 
@@ -180,6 +186,9 @@ previously untestable because it was buried in `where` clauses:
   every golden the suite reads, which is the one defect class no other check in
   this repo can see (they all run in a git checkout).
 - Backend structure.
+- `docsInventoryTests` — `docs/workflows.md`'s "Exposed inventory" table against
+  the actual ten-workflow list, and its "Review tiers and leaf counts" table
+  against `worstCaseCost . toSkeleton . wfFlow` for each named workflow.
 
 The workflows themselves — the `Flow` values and combinators — remain under test
 in the `agent-functor` library repo. The suite runs as

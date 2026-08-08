@@ -40,6 +40,7 @@ its skeleton, but it does not show prompt body text.
 | `promptLint` | the shipped workflow sending different STE instructions from the golden |
 | packaging coverage | spliced prompt files or goldens omitted from `extra-source-files` |
 | backends | backend names drifting from the expected cross-product |
+| `docsInventoryTests` | `docs/workflows.md`'s tables drifting from `Main.workflows` or from `worstCaseCost . toSkeleton . wfFlow` |
 
 The tests intentionally compare some full prompt bytes. Those goldens are not
 formatting trivia; they are the only local fence around text that a workflow

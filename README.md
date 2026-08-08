@@ -57,16 +57,19 @@ agents/            — sub-agent bodies
                      security and performance to the specialists below
   haskell-review.md — the LOCAL Haskell addendum to upstream's haskell-reviewer:
                      newtypes over aliases, smart constructors, IO isolation —
-                     and orphan instances are fine here, overruling upstream
-                     ALSO read as a workflow brief — see below
+                     and orphan instances are fine here, overruling upstream.
+                     NOT a workflow brief: `Incite.Prompts` deliberately does
+                     not splice it — it would fire on a repo that is mostly
+                     Nix. Deployed as a Claude/Codex agent only
   compiler.md      — Haskell/type-theory specialist (Opus)
   fess-auditor.md  — evidence-backed honesty check on a finished session
 commands/          — slash command bodies (frontmatter lives in flake.nix)
   fess.md          — the honesty rubric
                      ALSO read as a workflow brief — see below
-  post-commit-audit.md — the ONE description of the post-commit check; /wiggum
-                     defers to it and ship-feature's work loop fires it
-                     ALSO read as a workflow brief — see below
+  post-commit-audit.md — the ONE description of the post-commit check;
+                     /wiggum defers to it in its own text, but neither
+                     `wiggum` nor any workflow splices it — it is deployed as
+                     `/post-commit-audit` and read back nowhere else
   wiggum.md        — the autonomous loop
                      ALSO read as a workflow brief — see below
 skills/            — skill bodies
@@ -81,6 +84,10 @@ docs/              — maintained human-facing reference docs
 prompts/           — prompt bodies for the workflows, read at RUN time
   plan.md          — turn exploration findings into a one-step-per-line plan
   plan-step.md     — review one plan step for correctness/completeness/ordering
+  plan-denotational.md, plan-risk.md, plan-verification.md — three of
+                     `editPlan`'s six code-oriented plan-edit lenses (the other
+                     three are `ponytailLadder`, the `lookahead` rubric, and
+                     the local `simple-english` lens, all upstream or inline)
   explore/*.md     — the three explore stances: intrepid, skeptic, contemplative
   review/*.md      — the LOCAL review lenses fanned out by `review-lite`/
                      `-heavy`/`-audit`/`-docs`: correctness, complexity, tests,
@@ -194,13 +201,15 @@ input in `flake.nix`.
 
 ### Upstream prompts
 
-Three inputs supply prompt text this repo does not author. None is taken as a
-flake — all three come in with `flake = false` and their files are read directly.
+Four inputs supply prompt text this repo does not author — ponytail,
+awesome-prompts, promptdeploy, and SimpleEnglish — contributing ten files under
+`prompts/upstream/` between them. None is taken as a flake — all four come in
+with `flake = false` and their files are read directly.
 
 **Nothing is copied into git.** The update path is exactly:
 
 ```bash
-nix flake update ponytail     # or awesome-prompts
+nix flake update ponytail     # or awesome-prompts, promptdeploy, simple-english
 # then rebuild — that's it
 ```
 
@@ -217,14 +226,18 @@ nix flake update ponytail     # or awesome-prompts
 - **Workflow briefs.** `prompts/upstream/ponytail/{ladder,review,audit}.md`.
 
 One name per capability, all the way down — so `ponytail-audit` means the same
-thing whether you hit it as a skill in a chat, a file on disk, or an MCP tool:
+thing whether you hit it as a skill in a chat or a file on disk. Neither is a
+workflow or MCP tool of its own: `ponytailReviewRubric` and
+`ponytailAuditRubric` are lens bodies, spliced into the `ponytail` lens of
+`review-lite`/`review-heavy`/`review-audit` (the diff and whole-change forms)
+and into `docsAccuracy`'s sibling `ponytailOfDocs` for `review-docs`.
 
-| upstream | skill | prompt file | workflow / MCP tool | `Main.hs` |
+| upstream | skill | prompt file | `Incite.Prompts` binding | used as |
 |---|---|---|---|---|
-| `skills/ponytail-review` | `ponytail-review` | `ponytail/review.md` | `ponytail-review` | `ponytailReviewRubric` → `ponytailReview` |
-| `skills/ponytail-audit` | `ponytail-audit` | `ponytail/audit.md` | `ponytail-audit` | `ponytailAuditRubric` → `ponytailAudit` |
+| `skills/ponytail-review` | `ponytail-review` | `ponytail/review.md` | `ponytailReviewRubric` | the `ponytail` lens of `review-lite`/`review-heavy` |
+| `skills/ponytail-audit` | `ponytail-audit` | `ponytail/audit.md` | `ponytailAuditRubric` | the `ponytail` lens of `review-audit` |
 | `skills/ponytail-debt` | `ponytail-debt` | — | — | — |
-| `AGENTS.md` | `ponytail` | `ponytail/ladder.md` | — (a brief, not a flow) | `ponytailLadder` |
+| `AGENTS.md` | `ponytail` | `ponytail/ladder.md` | `ponytailLadder` | spliced into the `ship-feature`/`ship-docs` implementer and fixer briefs |
 
 [awesome-prompts](https://github.com/ai-boost/awesome-prompts) supplies exactly
 three named files, verbatim:
@@ -233,7 +246,7 @@ three named files, verbatim:
 |---|---|---|
 | `prompts/agentic_coder.txt` | `awesome-prompts/agentic-coder.md` | the `ship-feature` worker brief |
 | `prompts/lookahead_planning_specialist.txt` | `awesome-prompts/lookahead-planning-specialist.md` | the unexposed `plannerAudit` value **and** the `lookahead` lens |
-| `prompts/code_reviewer_security.txt` | `awesome-prompts/code-reviewer-security.md` | the `security` lens of `review-heavy` |
+| `prompts/code_reviewer_security.txt` | `awesome-prompts/code-reviewer-security.md` | the `security` lens of `review-heavy` and `review-audit` |
 
 The rest of that 3.5 MB repo is unaudited third-party text and the `upstream`
 attrset in `flake.nix` is the allowlist that keeps it out.
@@ -271,7 +284,7 @@ Two places where "take upstream" is not literal:
   the Haskell half moved to `agents/haskell-review.md`, the security, performance
   and test-quality halves were deleted as covered by the specialists, and what
   remained — AI-generated-code failure modes, which has no upstream counterpart —
-  kept the filename and the `codeReview` binding. 18 KB → 9.7 KB, and the
+  kept the filename and the `codeReview` binding. 18 KB → ~10 KB, and the
   `doctrine` lens got cheaper as a side effect.
 
 Four sub-agents are deployed from it, and two are read twice (agent *and*
@@ -372,7 +385,7 @@ briefs hit there and every repo-local brief misses and falls through to `$PWD`,
 which is what keeps `prompts/plan.md` and `agents/code-review.md` live-editable.
 `--set-default`, so an explicit `AGENT_FUNCTOR_PROMPTS=…` still wins.
 
-The one cost: unlike every other prompt here, the upstream two are **not**
+The one cost: unlike every other prompt here, the upstream four are **not**
 live-editable. The store is read-only; changing them means changing the input.
 
 ## Deploying the prompts
@@ -406,9 +419,12 @@ result/.claude/skills/<name>/SKILL.md
 
 The two trees are deliberately not mirror images. Commands map across one to
 one, but codex has no sub-agent concept, so agents degrade into skills there —
-`.codex/skills/` ends up holding the real skills *plus* `voice`, `compiler`
-and `fess-auditor` (and not `code-review`, per the `skip` above). That
-asymmetry is the degradation policy working, not a rendering bug.
+`.codex/skills/` ends up holding the real skills *plus* every agent that does
+not set `degradation = "skip"`: `voice`, `compiler`, `fess-auditor`,
+`haskell-review`, and the four `promptdeploy` specialists
+(`haskell-reviewer`, `nix-reviewer`, `perf-reviewer`, `security-reviewer`) —
+eight in total, and not `code-review`, per the `skip` above. That asymmetry is
+the degradation policy working, not a rendering bug.
 
 ## Running the workflows
 
@@ -453,8 +469,12 @@ TUI**: a context header, a stage list that fills in as leaves complete, a
 scrolling agent transcript with styled inline tool calls, and modals for the
 points where a flow blocks on you — `steer`, `humanGate`, and any permission
 prompt answer straight out of the TUI. Piped or in CI it falls back to an
-inline transcript and those same blocking points drop to plain stdin asks, so
-an unattended `ship-feature` still stops at its gate. `plan` and `cost`
+inline transcript and those same blocking points drop to plain stdin asks — but
+an unattended run (served over MCP, where `gateAnswer` defaults to `"yes"`)
+auto-answers `steer` and `humanGate` rather than stopping: `ship-feature` runs
+through to a real `submitPR`, with the PR leaf's title and body currently fixed
+constants (`"Add --json flag"` / `"Drafted by the ship-feature workflow."`,
+regardless of the actual request) rather than derived from it. `plan` and `cost`
 never touch an agent, so they work anywhere.
 
 ### Workflow vocabulary
@@ -561,8 +581,12 @@ trigger endpoint, which would have handed `review-lite`'s diff-shaped reviewers 
 conversation log. Fixed upstream in `Agent.Run` (`withCapturedTranscript` /
 `TriggerInput`, rev `800ea38`) and pinned here.
 
-On a plain `agent-functor mcp` server there is no capture, so `fess-audit` is not
-available at all — outside a run, `review-lite`'s `fess` lens is the whole of it.
+On a plain `agent-functor mcp` server there is no capture, so `withCapturedTranscript`'s
+mark is **inert** rather than fess-audit vanishing: `fess-audit` is still callable,
+still a `workflowReq` that demands an explicit `-i`/`--input`, and with no
+transcript to substitute there is nothing sensible to hand it there — outside a
+run, `review-lite`'s `fess` lens is the practical whole of it. `retro` carries the
+identical mark and the identical gap; nothing here documents that one separately.
 
 **Findings then go to a subagent running `fix-all`**, not fixed inline. The
 checks are tool calls and the fix is a subagent for opposite reasons: a check
@@ -575,10 +599,15 @@ the subagent changed, verifies the build itself, and commits. That commit gets
 neither check and no second `fix-all` — the loop has to terminate.
 
 **It is said once.** `commands/post-commit-audit.md` is the only description of
-which checks to run, what to pass them, and how to poll. `/wiggum` defers to it
-rather than restating it, and `ship-feature`'s work loop fires the same file as
-its commit beat — the third "read twice" prompt alongside `fess` and `wiggum`,
-deployed as `/post-commit-audit` and read as a brief from one copy.
+which checks to run, what to pass them, and how to poll. It is deployed as the
+`/post-commit-audit` slash command, and `wiggum.md`'s own text defers to it by
+name rather than restating it — but no workflow leaf splices
+`commands/post-commit-audit.md` itself. It is not the third "read twice" prompt
+alongside `fess` and `wiggum`: `postCommitAudit` is bound in `Incite.Prompts`
+and exported, but nothing in `Incite.Feature` or `Incite.Review` reads it. The
+enforcement is `wiggum`'s own text, spliced into the `ship-feature`/`ship-docs`
+implementer and fixer briefs, telling the worker to follow the procedure
+`post-commit-audit.md` describes.
 
 The duplication that arrangement replaced had already drifted: `wiggum` had come
 to say one call while the beat said two. What each caller still owns is what the
@@ -624,7 +653,8 @@ the whole 24-reviewer panel three times, over the same three views:
 
 Both regroupings are agent leaves, not pure splits — "logical unit" and "ideal
 sequence" are semantic judgements, so nothing `T.lines`-shaped can produce them
-(unlike `reviewScales` over a plan, where a line really is a step). Both are told
+(unlike a plan, where each lens's own instructions make one line one step, by
+convention rather than by a parser). Both are told
 to reproduce every hunk exactly once, verbatim, because the panel reads their
 output *as* the change: anything elided is invisible to the reviewers of that
 view.
@@ -661,10 +691,12 @@ convenient but forecloses a better route later.
 
 That lens carries a **format override, and it is load-bearing**. The prompt ships
 its own OUTPUT FORMAT section demanding ten headed sections, while everything
-downstream here is line-oriented: `plan.md` says one step per line, every sibling
-lens re-asserts it, and the review stage is `reviewScales T.lines`, which treats
-each line as a step. Left unoverridden, a ten-section design document becomes
-~150 "plan steps". So the lens instruction opens by telling it to ignore its own
+downstream here is line-oriented: `plan.md` says one step per line, and every
+lens in `editPlan` re-asserts it in its own instructions and emits the plan the
+same way — there is no separate parser enforcing this, only each lens's own
+prompt text agreeing to treat one line as one step. Left unoverridden, a
+ten-section design document becomes ~150 "plan steps". So the lens instruction
+opens by telling it to ignore its own
 output format, and sits *after* the rubric where it is read last.
 
 ponytail is **one reviewer among several**, never the whole review. It only hunts
@@ -713,8 +745,10 @@ Write a `Workflow` in `Incite.Feature` (request → plan → PR) or `Incite.Revi
 (the review and audit tiers), import it, and add it to the `workflows` list in
 `workflows/Main.hs` — the one place that decides what exists; a workflow not in
 that list is exposed as nothing, no matter how well defined. The CLI picks it
-up automatically. Keep the two hand-kept mirrors of that list accurate too:
-the inventory table above and the one in `AGENTS.md`.
+up automatically. Update `docs/workflows.md`'s "Exposed inventory" and "Review
+tiers and leaf counts" tables too — they are the one place both live now, and
+`test/Spec.hs`'s `docsInventoryTests` fences both against the code: a name or a
+leaf count left stale there fails `cabal test`, not just a reader's trust.
 
 ```bash
 nix develop   # GHC with agent-functor in scope, plus cabal and HLS
@@ -739,8 +773,13 @@ extra dependency); the module needs `{-# LANGUAGE QuasiQuotes #-}`, already on i
 
 A new prompt directory must be added to the `fileset` in `flake.nix`, or the nix
 build sandbox will not see it and the compile-time check will fail. It currently
-unions the cabal file plus `workflows/`, `prompts/`, `agents/` and `skills/` —
-the last two are there precisely because workflows splice prompts out of them.
+unions the cabal file plus `workflows/`, `prompts/`, `agents/`, `skills/` and
+the three commands read back as briefs (`commands/fess.md`,
+`commands/post-commit-audit.md`, `commands/wiggum.md`) — named individually
+rather than the whole `commands/` directory, so adding an ordinary slash
+command does not rebuild the runner. This union is shared by name: `librarySrc`
+in `flake.nix` is what the runner, `packages.haddock`, and the `unit-test`
+check's `testSrc` all build on, so it is defined once rather than three times.
 Keeping it a `fileset` rather than `./.` means editing this README or a `flake.nix`
 prompt body does not rebuild the runner.
 
