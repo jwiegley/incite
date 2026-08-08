@@ -7,7 +7,7 @@ than restating it, so there is one copy to keep true.
 ## What to run
 
 **Always call `review-lite`.** It runs four independent reviewers over the commit,
-concurrently, each on a different backend, ranked:
+concurrently across three backends (`fess` and `ponytail` both run on codex), ranked:
 
 | lens | judges | a finding means |
 |---|---|---|
