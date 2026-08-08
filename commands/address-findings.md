@@ -1,68 +1,43 @@
 # Mission
 
-Fix every issue uncovered during this work ("finding"). No exceptions, no excuses, no deferrals. "Out of scope," "pre-existing," and "follow-up ticket" are not acceptable framings — if it surfaced, it gets fixed here.
+Follow `/fix-all` (`skills/fix-all.md`) in full — same Mission, Execution, Testing standards,
+Upstream-fixes, and Definition of done, verbatim. One copy means no paraphrase drift; this command
+adds only the project-specific rules below, for repositories with generated code (e.g. Paradox
+`.dox` codegen) and a commit-signing requirement `fix-all` does not assume.
 
-# Execution
-
-## Parallelization
-
-- Decompose the work and run subagents in parallel wherever tasks are independent.
-- Use git worktrees for parallel work. Worktree directories **must** use the prefix `wg-<short-id>/<task>/` so they are trivial to identify, audit, and clean up afterward.
-- Subagents inherit every rule in this document. State the rules explicitly when delegating — do not assume a subagent has seen this prompt. In particular, repeat the commit-signing, generated-code, and upstream-fix rules verbatim.
-
-The TODO list must have an item for each finding. If there are X findings, the TODO list must have X items. Make the plan. Then re-read every finding. Then make sure that the plan covers each one. Then do the double-check again.
+# Additional rules
 
 ## Commits
-- Every commit **must** use `--no-gpg-sign`. Non-negotiable. Pass this through to subagents explicitly.
-- Each commit contains one logical change. Messages explain the *why*, not just the *what*.
-- **Never** commit generated code. Generated artifacts are built, not stored. If you find generated output checked in anywhere, treat that as a bug and remove it.
 
-# Testing standards
+- Every commit **must** use `--no-gpg-sign`. Non-negotiable. Pass this through to subagents
+  explicitly, alongside `fix-all`'s own rules.
+- **Never** commit generated code. Generated artifacts are built, not stored. If you find
+  generated output checked in anywhere, treat that as a bug and remove it.
 
-- Everything you change or add has tests. Period.
-- Tests exist to catch bugs. That is their only purpose. Do not write a test that cannot fail when the code is wrong.
-- **No reward hacking.** Specifically forbidden:
-  - Weakening assertions to get green.
-  - Deleting, skipping, or `xfail`-ing tests to get green.
-  - Mocking the system under test.
-  - Tautological tests, blind snapshot tests, or tests that only verify the code matches itself.
-- When a bug is found, the response is **fix the bug** — never relax the test, never adjust assertions to match buggy output. The standard does not move when it becomes inconvenient.
-- For each bug fixed, add the test that would have caught it. If you genuinely cannot, say so explicitly and explain why.
+## Upstream fixes — generated code
 
-# Upstream fixes are non-negotiable
+`fix-all`'s upstream-fix rule extends here to codegen specifically:
 
-If a problem is caused upstream, **fix it upstream**. Always. There is no version of this rule that ends with a workaround downstream.
-
-This applies to every layer above us, without exception:
-- Generated code from `.dox` → fix the `.dox` source (or the generator) and regenerate. Never patch generated output.
-- Vendored or third-party dependencies → patch upstream, land the fix there, then consume it. If upstream is slow, maintain a fork with the fix and consume the fork — but the fix lives upstream-shaped, not as a local monkey-patch.
-- Tooling, build systems, generators, frameworks → same rule. Fix at the source.
-- Shared libraries owned by other teams → file the fix in their repo. Coordinate, do not route around.
-
-**Forbidden downstream workarounds:** shims that paper over upstream bugs, post-processing scripts that mutate generated output, conditional branches that exist only because upstream is wrong, "temporary" patches in our tree, comments like `// workaround for X` instead of a fix in X.
-
-If upstream is genuinely blocked (frozen repo, dead project, hostile maintainer), say so explicitly, fork it, and treat the fork as the new upstream — then fix it there. The rule is not "fix it upstream when convenient." The rule is **fix it upstream**.
+- Generated code from `.dox` → fix the `.dox` source (or the generator) and regenerate. Never
+  patch generated output.
+- Forbidden downstream workarounds also include: post-processing scripts that mutate generated
+  output.
 
 # Language / stack hierarchy
 
 Prefer in this order. Drop a level only with explicit justification stated in the commit or PR.
 
-1. **Paradox `.dox`** — default for any shared domain logic. Edit `.dox` source; consume generated output. Do not edit generated code directly.
-2. **F\* with proofs** — for logic that is not shared domain logic and where correctness warrants proof obligations.
-3. **Elixir / TypeScript / Rust direct** — last resort. Use only when neither `.dox` nor F\* fits, and document why.
+1. **Paradox `.dox`** — default for any shared domain logic. Edit `.dox` source; consume generated
+   output. Do not edit generated code directly.
+2. **F\* with proofs** — for logic that is not shared domain logic and where correctness warrants
+   proof obligations.
+3. **Elixir / TypeScript / Rust direct** — last resort. Use only when neither `.dox` nor F\* fits,
+   and document why.
 
 # Definition of done
 
-A task is done only when **all** of the following hold:
-- Every issue uncovered has been fixed — not deferred, not ticketed.
-- Every upstream-caused problem has been fixed upstream, with our tree consuming the upstream fix. No local workarounds remain.
-- All new and modified code has high-value tests of the kind that catch the relevant bug class.
-- The full test suite passes locally.
-- No generated code has been committed; any generated-code workarounds have been replaced by upstream fixes in `.dox`.
-- All commits are unsigned (`--no-gpg-sign`). Each commit contains one logical change.
-- Worktrees used for the work are merged or cleanly removed. Nothing orphaned, nothing prefixed `wg-*` left lying around.
+Everything `fix-all`'s Definition of done requires, plus:
 
-# When rules conflict
-
-- Do the harder, more correct thing.
-- If following these rules would require shipping something broken, surface the conflict explicitly. Do not silently lower the bar.
+- No generated code has been committed; any generated-code workarounds have been replaced by
+  upstream fixes in `.dox`.
+- All commits are unsigned (`--no-gpg-sign`).
