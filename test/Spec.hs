@@ -1304,6 +1304,28 @@ grindPanelTests =
           , let line = T.unwords (NE.toList cmd)
           , not (permitExec grindGrant line)
           ]
+    , -- __Every check carries its own toolchain.__ 'execStep' runs argv
+      -- directly — no shell, no profile, no dev shell — so a check that needs
+      -- the target project's environment has to ask for it in its own argv.
+      --
+      -- This is not a style rule; a rehearsal found it the expensive way.
+      -- Paradox's `test.sh` ends by executing a path built from `$GHC_VER` and
+      -- `$PARADOX_VER`, which its dev shell sets and nothing else does. Run
+      -- bare it exits non-zero on a tree in perfect health, so the gate is red
+      -- on every run, for a reason no repair leaf can fix: `repairFuel` trips
+      -- hunting a defect in the code, then an abort. A gate that cannot go
+      -- green is worse than no gate.
+      --
+      -- Nothing else can see this. `plan` renders the leaf NAME, `cost` counts
+      -- it, and the grant case below passes either way — an ungranted command
+      -- and an unrunnable one both fail, and only one of them is about the
+      -- grant.
+      testCase "every check runs inside the target project's dev shell" $
+        report
+          [ leafNameText n <> " runs bare: " <> tshow (T.unwords (NE.toList cmd))
+          | (n, cmd) <- grindChecks
+          , take 3 (NE.toList cmd) /= ["nix", "develop", "--command"]
+          ]
     , -- The synthesis leaf's two, which are nobody's check. Without them its
       -- write fails inside the agent while it still returns the whole ranked
       -- report — so the run reports success with no file on disk, and only the

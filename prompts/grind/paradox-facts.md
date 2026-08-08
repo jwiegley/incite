@@ -23,6 +23,13 @@ The project is the Paradox compiler: a Haskell domain-specification language
 that compiles `.dox` files to many target languages. Every path below is
 relative to the working directory you just probed.
 
+- Every build and test command runs inside the project dev shell. Start it once
+  with `nix develop`, and work in that shell. If your tools give you no shell
+  that persists, put `nix develop --command bash -c '<command>'` around each
+  command instead. The test script ends by running a path built from `GHC_VER`
+  and `PARADOX_VER`. The dev shell sets those two, and nothing else does, so a
+  bare `./test.sh` fails on a tree that is in perfect health. A failure that
+  names an empty version in a path is this and not a defect in the code.
 - Build: `cabal build`. Tests: `./test.sh lib-tests -p '<pattern>'`. Always
   filter with `-p` while you work. Run the full suite only at the final gate.
 - Golden tests: `lib/test/golden/` (`CodeGen/`, `Command/`, `Strap/`,

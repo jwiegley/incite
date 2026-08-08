@@ -433,9 +433,30 @@ workerFuel = 8
 -- grant derived from this list and a grant that agrees with it today.
 grindChecks :: [(LeafName, NonEmpty Text)]
 grindChecks =
-  [ ("build", "cabal" :| ["build"])
-  , ("tests", "./test.sh" :| ["lib-tests"])
+  [ ("build", devShell "cabal build")
+  , ("tests", devShell "./test.sh lib-tests")
   ]
+
+-- | A check, run inside the __target project's own dev shell__.
+--
+-- __This is not ceremony, and a rehearsal is what proved it.__ 'execStep' runs
+-- argv directly: no shell, no profile, no @nix develop@. Paradox's @test.sh@
+-- ends by executing
+-- @dist-newstyle\/build\/…\/ghc-$GHC_VER\/paradox-$PARADOX_VER\/…@, and those
+-- two variables are set by its dev shell and by nothing else. Run bare, the
+-- path collapses to @ghc-\/paradox-\/@, the script exits non-zero, and it does
+-- so on a tree in perfect health.
+--
+-- The gate would then be red on every run, for a reason no repair leaf could
+-- fix — it would spend 'repairFuel' trips looking for a defect in the code and
+-- then abort. A permanently red gate is worse than none: it teaches a reader
+-- that the gate means nothing.
+--
+-- @nix@ as every check's head also lines the derived 'grindGrant' up with
+-- 'actingGrant'\'s @nix*@, which is the same bargain the other acting workflows
+-- already make: we run nothing ourselves that the project cannot reproduce.
+devShell :: Text -> NonEmpty Text
+devShell cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
 
 -- | The exec policy 'grindParadox' runs under, __derived from 'grindChecks'__
 -- rather than written beside it.
