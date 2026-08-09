@@ -15,18 +15,20 @@
     # pinned nixpkgs (its Haskell deps are built against nixos-24.11), so it does
     # NOT follow incite's unstable.
     #
-    # Points at the `master` worktree — the primary repository of the
-    # agent-functor worktree set (its sibling dirs `agent-deck`, `mcplease`,
-    # `nohomo`, `thinking`, `user-prompts` are linked worktrees of it). All of
-    # that work has landed on master — file-backed prompts (`Agent.Prompt`),
-    # per-node backends (`withBackend`), the MCP server, fork/resume recording,
-    # and reasoning display — so this is the integration point.
+    # Points at the public GitLab remote, on `master` — the branch every
+    # agent-functor worktree (`agent-deck`, `mcplease`, `nohomo`, `thinking`,
+    # `user-prompts`) integrates into. Over `git+ssh://`, like `macha` above.
     #
-    # Locked to a real revision — keep it that way. Committing agent-functor
-    # before re-locking means `nix flake update agent-functor` just works; an
-    # uncommitted branch forces a `dirtyRev` NAR-hash pin that is not
-    # reproducible and breaks on the next edit to agent-functor.
-    agent-functor.url = "git+file:///home/isaac/_/agent-functor/master";
+    # A remote, not the local `git+file:///home/isaac/_/agent-functor/master`
+    # it used to be: a `file://` pin resolves to nothing on any other machine
+    # and on CI, so the lock was reproducible only here. It also made the
+    # local checkout's uncommitted state a build input — an uncommitted branch
+    # forces a `dirtyRev` NAR-hash pin that breaks on the next edit.
+    #
+    # The cost is that __pushing is now part of re-locking__: `git push public
+    # master` in the agent-functor checkout before `nix flake update
+    # agent-functor`, or the update silently re-locks the same old revision.
+    agent-functor.url = "git+ssh://git@gitlab.com/fresheyeball/agent-functor";
 
     # ponytail — the "lazy senior dev" prompt pack: a ladder (does this need to
     # exist → already here → stdlib → native → installed dep → one line → the

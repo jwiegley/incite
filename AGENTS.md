@@ -91,19 +91,21 @@ throwaway worktree; prompt-only flows ignore it), `--concurrency N` (fan-out
 cap, default 6, `0` = unbounded — and can 429 a rate-limited backend into an
 aborted run). Full detail: [Operations](docs/operations.md#run-workflows).
 
-## The `agent-functor` input — two landmines
+## The `agent-functor` input — push before you re-lock
 
-`agent-functor` is the typed workflow library. In `flake.nix` it points at a
-**local filesystem worktree** (`git+file:///home/isaac/_/agent-functor/master`),
-on its **own pinned nixpkgs** (its Haskell deps need 24.11), so it deliberately
-does **not** `follows` incite's unstable nixpkgs.
+`agent-functor` is the typed workflow library. In `flake.nix` it points at the
+**public GitLab remote** (`git+ssh://git@gitlab.com/fresheyeball/agent-functor`,
+`refs/heads/master`), on its **own pinned nixpkgs** (its Haskell deps need
+24.11), so it deliberately does **not** `follows` incite's unstable nixpkgs.
 
-- This flake **will not evaluate on any machine** without that exact worktree
-  checked out. No fallback, no remote.
-- Keep it locked to a **committed** revision. Committing agent-functor before
-  `nix flake update agent-functor` makes the relock just work; an uncommitted
-  branch forces a non-reproducible `dirtyRev` NAR hash that breaks on the next
-  edit. The rule is documented in the comment above the input.
+- It used to be a `git+file://` pin on the local `master` worktree, which made
+  the lock resolvable only on the one machine that had that checkout. The
+  remote removes that, at the cost of the rule below.
+- `nix flake update agent-functor` reads the **remote**, so a local commit that
+  has not been pushed re-locks the same old revision and reports success. Run
+  `git push public master` in the agent-functor checkout first.
+- Evaluating needs SSH access to `gitlab.com` as `git`. The rule and its
+  reasoning are in the comment above the input.
 
 ## Prompts do double duty
 

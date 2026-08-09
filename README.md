@@ -187,21 +187,21 @@ The split is deliberate: the reviewer never writes, the fixer never reviews.
 | `awesome-prompts` | `github:ai-boost/awesome-prompts`, `flake = false` | exactly seven files: `agentic_coder.txt`, `lookahead_planning_specialist.txt`, `code_reviewer_security.txt`, `Technical_Documentation_Strategist.txt`, `stop_slop.txt`, `qa_agent.txt`, `obsidian_vault_operator.txt` |
 | `promptdeploy` | `github:jwiegley/promptdeploy`, `flake = false` | the upstream this repo's prompts descend from — pinned to reconcile against, plus four sub-agents |
 | `simple-english` | `github:AminBlg/SimpleEnglish`, `flake = false` | ASD-STE100 as a skill, a plan lens, and the `prompt-lint` rubric |
-| `agent-functor` | `git+file:///home/isaac/_/agent-functor/master` | local worktree input, `refs/heads/master` |
+| `agent-functor` | `git+ssh://git@gitlab.com/fresheyeball/agent-functor` | the workflow library, `refs/heads/master` |
 
 `agent-functor` is pinned to its own nixpkgs (its Haskell deps want 24.11), so
 it deliberately does *not* `follows` incite's unstable.
 
-It is also a **local filesystem input**, which is two separate landmines:
+It is the one input taken over **ssh from GitLab** rather than `github:`/
+`gitlab:`, so evaluating it needs SSH access to `gitlab.com` as `git`. It was
+previously `git+file:///home/isaac/_/agent-functor/master`, a local worktree
+that no other machine had; the remote is what makes the lock mean the same
+thing everywhere.
 
-- The URL is the `master` *worktree*, not `/home/isaac/_/agent-functor` — that
-  parent path is a container of worktrees rather than a repository, so nix
-  cannot fetch or update it at all.
-- This flake will not evaluate on any machine without that exact worktree
-  checked out. There is no fallback and no remote.
-
-Why that branch, and the rule for re-locking it, are in the comment above the
-input in `flake.nix`.
+The consequence to hold on to: `nix flake update agent-functor` reads the
+remote, so **push first** — an unpushed local commit re-locks the old revision
+and looks like it worked. That rule is in the comment above the input in
+`flake.nix`.
 
 ### Upstream prompts
 

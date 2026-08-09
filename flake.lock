@@ -13,11 +13,11 @@
         "rev": "3cca001b8d4d8580e19c35a14cbbcf5fbcfae3c9",
         "revCount": 253,
         "type": "git",
-        "url": "file:///home/isaac/_/agent-functor/master"
+        "url": "ssh://git@gitlab.com/fresheyeball/agent-functor"
       },
       "original": {
         "type": "git",
-        "url": "file:///home/isaac/_/agent-functor/master"
+        "url": "ssh://git@gitlab.com/fresheyeball/agent-functor"
       }
     },
     "awesome-prompts": {

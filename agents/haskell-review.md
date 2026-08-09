@@ -289,7 +289,7 @@ hand-written instance is re-checked at every review. Common cases:
   does not reach.
 
 **Action:** when a hand-written instance could be replaced by a derivable one from
-an existing or addable package, name the package in the finding. "We don't have that
+an existing or addable package, name the package in the finding. "We do not have that
 dependency" is not an answer — the finding is "add the dependency and derive".
 
 ### Hand-written instances must carry property tests

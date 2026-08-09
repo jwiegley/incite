@@ -139,14 +139,15 @@ After an upstream update, rebuild and run tests that cover the affected wiring.
 If a local reorientation splices an upstream rubric, inspect the reorientation
 tests first; they are designed to catch section drift.
 
-`agent-functor` is different. It is a local filesystem input:
+`agent-functor` is different. It comes over ssh from GitLab:
 
 ```nix
-agent-functor.url = "git+file:///home/isaac/_/agent-functor/master";
+agent-functor.url = "git+ssh://git@gitlab.com/fresheyeball/agent-functor";
 ```
 
-Keep that worktree committed before relocking. A dirty filesystem input can
-produce a non-reproducible `dirtyRev` lock that breaks on the next edit.
+`nix flake update agent-functor` fetches that remote, not the local checkout.
+Push `master` to the `public` remote before you relock, or the update re-locks
+the revision already in `flake.lock` and reports success.
 
 ## Development shell
 
