@@ -20,7 +20,7 @@ import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, scopeDeclText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
-import Incite.Backend (backends, claudeAgentBackend)
+import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
 import Incite.Feature
   ( Orientation (..)
   , fixerContinuation
@@ -1322,24 +1322,59 @@ grindPanelTests =
       -- So this reads the WORKFLOW's own skeleton, and it pins the pairing
       -- rather than the order: a reader can see here that @stubs@ runs on
       -- opencode without executing the zip in their head.
+      --
+      -- __Two tables, because the roster is two rosters.__ 'spread' cycles
+      -- 'Incite.Backend.backends', which narrows to claude-agent and codex under
+      -- @BLOCK_OPENCODE@ — so the pairing genuinely differs and a single table
+      -- would fence whoever's shell ran the suite. Both are written out by hand
+      -- rather than derived from a cycle, for this case's own reason: a derived
+      -- expectation is 'spread' restated, and would move with any reassignment
+      -- it is supposed to catch.
       testCase "grind-paradox fans out exactly these lens@backend leaves" $
         let panelLeaves = takeWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
-         in panelLeaves
-              @?= [ "correctness@claude-agent"
-                  , "tests@codex"
-                  , "stubs@opencode"
-                  , "vacuous@claude-agent"
-                  , "dry@codex"
-                  , "hardcodings@opencode"
-                  , "refactor@claude-agent"
-                  , "architecture@codex"
-                  , "performance@opencode"
-                  , "ponytail@claude-agent"
-                  , "target-consistency@codex"
-                  , "validator-calls@opencode"
-                  , "codegen-gaps@claude-agent"
-                  , "emitted-code@codex"
-                  ]
+            full =
+              [ "correctness@claude-agent"
+              , "tests@codex"
+              , "stubs@opencode"
+              , "vacuous@claude-agent"
+              , "dry@codex"
+              , "hardcodings@opencode"
+              , "refactor@claude-agent"
+              , "architecture@codex"
+              , "performance@opencode"
+              , "ponytail@claude-agent"
+              , "target-consistency@codex"
+              , "validator-calls@opencode"
+              , "codegen-gaps@claude-agent"
+              , "emitted-code@codex"
+              ]
+            -- Two backends, so the cycle alternates and every lens still gets
+            -- exactly one leaf — which is the property 'spread' exists for, and
+            -- the reason blocking narrows the MODEL per lens without dropping a
+            -- lens.
+            blocked =
+              [ "correctness@claude-agent"
+              , "tests@codex"
+              , "stubs@claude-agent"
+              , "vacuous@codex"
+              , "dry@claude-agent"
+              , "hardcodings@codex"
+              , "refactor@claude-agent"
+              , "architecture@codex"
+              , "performance@claude-agent"
+              , "ponytail@codex"
+              , "target-consistency@claude-agent"
+              , "validator-calls@codex"
+              , "codegen-gaps@claude-agent"
+              , "emitted-code@codex"
+              ]
+         in do
+              panelLeaves @?= if blockOpencode then blocked else full
+              -- Both tables cover every lens, whichever is live: a table that
+              -- lost a row would otherwise pass by agreeing with a panel that
+              -- had lost the same lens.
+              length full @?= length grindLenses
+              length blocked @?= length grindLenses
     , -- The acting half's leaves, in order, after the panel. A stage dropped
       -- from the chain — the fixer, the repair leaf, either check — leaves a
       -- workflow that still plans and still costs, and reports a green gate it
@@ -1794,14 +1829,17 @@ mirrorWorkflows =
   , promptLint
   ]
 
--- | The row-level primitive 'tableFirstColumn' and 'tableFirstTwoColumns' both
--- build on: every markdown table row whose first cell opens with a backticked
--- name, paired with that row's remaining cells (unparsed, unfiltered). Written
--- once so the convention for what counts as a row — split on @|@, strip, check
--- the backtick prefix, take the name up to the closing backtick — moves both
--- readers together. Before this was two independent copies, and reformatting
--- the doc convention meant finding and editing both in lockstep or watching
--- them drift.
+-- | The row-level primitive every table reader here builds on: every markdown
+-- table row whose first cell opens with a backticked name, paired with that
+-- row's remaining cells (unparsed, unfiltered). Written once so the convention
+-- for what counts as a row — split on @|@, strip, check the backtick prefix,
+-- take the name up to the closing backtick — moves every reader together.
+-- Before this was two independent copies, and reformatting the doc convention
+-- meant finding and editing both in lockstep or watching them drift.
+--
+-- __Cells stay unparsed.__ A reader that parsed counts eagerly silently dropped
+-- the rows that failed to parse, which is exactly the defect @docsInventoryTests@
+-- exists to catch. Parsing — and reporting a parse failure — is the test's job.
 tableRows :: Text -> [(Text, [Text])]
 tableRows body =
   [ (name, drop 2 cells)
@@ -1820,20 +1858,6 @@ tableRows body =
 -- names in passing.
 tableFirstColumn :: Text -> [Text]
 tableFirstColumn = map fst . tableRows
-
--- | 'tableRows', plus the __raw text__ of the row's second cell — the shape of
--- "Review tiers and leaf counts"' @| Tier | Leaves | … |@ table.
---
--- Left as 'Text' rather than parsed to 'Int' here, on purpose: a cell that
--- fails to parse used to be silently filtered out by this reader before
--- @docsInventoryTests@ ever saw it (via a failed @reads@ pattern match), which
--- is exactly the defect that check exists to catch. Parsing — and reporting a
--- parse failure — is now the test's job, not this reader's.
-tableFirstTwoColumns :: Text -> [(Text, Text)]
-tableFirstTwoColumns body =
-  [ (name, T.strip c2)
-  | (name, c2 : _) <- tableRows body
-  ]
 
 -- | The body of one @## Heading@ section: everything between it and the next
 -- @## @ heading (or end of file). Both tables this suite fences sit under their
@@ -1874,13 +1898,25 @@ docsInventoryTests =
       -- saw them: a row naming a workflow absent from 'mirrorWorkflows' (the old
       -- @Just wf <- [find …]@ pattern match failing inside the list
       -- comprehension, which drops that iteration rather than failing it), and a
-      -- row whose count cell is not a bare 'Int' (dropped by
-      -- 'tableFirstTwoColumns' itself, back when it parsed eagerly). Both are
-      -- text at this point — 'tableFirstTwoColumns' no longer parses — so both
-      -- get their own complaint below instead of disappearing.
+      -- row whose count cell is not a bare 'Int' (dropped by the reader itself,
+      -- back when it parsed eagerly). Both are text at this point — 'tableRows'
+      -- does not parse — so both get their own complaint below instead of
+      -- disappearing.
+      -- __Which column, decided by the environment the suite runs in.__ The
+      -- table states each tier twice — the roster with opencode, and the same
+      -- tier under @BLOCK_OPENCODE@ — because the flows are built from
+      -- 'Incite.Backend.backends', which reads that variable. A single column
+      -- would have made this fence a statement about whoever's shell ran the
+      -- suite: green under nix (which sandboxes the environment away) and red
+      -- on the machine the variable exists for. Both columns are hand-written
+      -- and each is checked whenever it is the live one, so neither is a
+      -- restatement of the arithmetic it fences.
       testCase "Review tiers and leaf counts matches worstCaseCost . toSkeleton . wfFlow" $ do
         doc <- TIO.readFile "docs/workflows.md"
-        let counts = tableFirstTwoColumns (sectionBody "Review tiers and leaf counts" doc)
+        let counts =
+              [ (name, T.strip (if blockOpencode then blocked else full))
+              | (name, full : blocked : _) <- tableRows (sectionBody "Review tiers and leaf counts" doc)
+              ]
         assertBool "no leaf-count rows read from the table" (not (null counts))
         report
           [ complaint
@@ -1958,12 +1994,15 @@ backendProseTests =
         -- named no backend at all would satisfy this rule vacuously, forever.
         assertBool "no Shape cell names any backend — the rule is over nothing" $
           not (null mentioned)
+        -- The vocabulary must stay the FULL one under @BLOCK_OPENCODE@ too, or
+        -- this rule quietly stops covering the name that blocking is about.
+        assertBool "the backend vocabulary narrowed — opencode mentions would go unread" $
+          "opencode" `elem` backendNames
         report
           [ wfName wf <> ": docs/workflows.md says " <> b <> ", but its leaves run on "
-            <> T.intercalate ", " agents
+            <> T.intercalate ", " (runsOn wf)
           | (wf, b) <- mentioned
-          , let agents = nub (map (backendOf . snd) (scopedLeaves (wfFlow wf)))
-          , b `notElem` agents
+          , b `notElem` runsOn wf
           ]
     , -- The rule above only refutes a backend the workflow runs NOWHERE, which
       -- is blind to a tier that runs on all three and misattributes one lens —
@@ -1981,7 +2020,23 @@ backendProseTests =
           ]
     ]
   where
-    backendNames = map leafNameText (map fst (NE.toList backends))
+    -- __The full roster, not the running one.__ These documents describe the
+    -- configuration this repository ships, so the names they may be held to
+    -- cannot depend on one machine's environment. Built from @backendsFor
+    -- False@: reading 'Incite.Backend.backends' here narrowed the vocabulary to
+    -- two names under @BLOCK_OPENCODE@, and the review-lite row's "qa on
+    -- opencode" then matched nothing and went unchecked — the rule went dark on
+    -- exactly the name blocking is about, and passed while doing it.
+    backendNames = map leafNameText (map fst (NE.toList (backendsFor False)))
+    -- What a workflow may be said to run on. Under @BLOCK_OPENCODE@ the opencode
+    -- slot resolves elsewhere, so a document that correctly describes the
+    -- default configuration would otherwise be reported as wrong for saying so.
+    -- Adding the slot's default name back is what keeps the rule live for every
+    -- OTHER name while blocked, rather than skipping the case wholesale: a row
+    -- claiming a backend its workflow never touches is still caught either way.
+    runsOn wf =
+      let agents = nub (map (backendOf . snd) (scopedLeaves (wfFlow wf)))
+       in agents <> ["opencode" | blockOpencode, leafNameText (fst opencodeBackend) `elem` agents]
 
 -- | Fences @README.md@'s inputs table against the only thing that decides what
 -- a third-party input can reach: @flake.nix@'s @builtins.readFile@ calls.
@@ -2025,6 +2080,15 @@ inputAllowlistTests =
 -- @code-review.md@ mentions the tier in one line of a review ladder and states
 -- only the count, so only the count is required of it. Demanding five pairings
 -- there would be demanding worse prose.
+-- __The pairings are the DEFAULT roster's, and are only demanded of the prose
+-- when that is the roster running.__ @qa@ is pinned to the opencode slot, which
+-- resolves to codex under @BLOCK_OPENCODE@ — and these documents describe the
+-- configuration this repository ships, not one machine's local override. Asking
+-- them to say \"qa on codex\" because of an environment variable would be
+-- demanding that the documents track a shell.
+--
+-- The count clause survives blocking, because five reviewers is five either
+-- way, so neither mode leaves this fence checking nothing.
 reviewLiteProse :: [(Text, Text)] -> [(FilePath, [Text])]
 reviewLiteProse lenses =
   [ ("commands/post-commit-audit.md", count "independent reviewers" : pairings)
@@ -2033,7 +2097,9 @@ reviewLiteProse lenses =
   ]
   where
     count noun = countWord (length lenses) <> " " <> noun
-    pairings = [n <> " on " <> backendOf a | (n, a) <- lenses]
+    pairings
+      | blockOpencode = []
+      | otherwise = [n <> " on " <> backendOf a | (n, a) <- lenses]
 
 -- | A small count, spelled — which is how the documents write it, and so the
 -- only form a substring check can look for.
@@ -2213,11 +2279,16 @@ scopeTests =
       -- reaches it. Written out rather than derived, because every derivation
       -- available here reads the same expression the workflow is built from and
       -- would move with it.
+      --
+      -- @contemplative@ is the opencode stance, so its cell moves with
+      -- @BLOCK_OPENCODE@ — read off 'opencodeBackend' rather than spelled twice,
+      -- because that binding IS what the stance is scoped to and a second
+      -- spelling here could only disagree with it.
       testCase "plan-feature runs each leaf on the agent its module argues for" $
         scopedLeaves (wfFlow planFeature)
           @?= [ ("intrepid", "claude-agent")
               , ("skeptic", "codex")
-              , ("contemplative", "opencode")
+              , ("contemplative", leafNameText (fst opencodeBackend))
               , ("architect", "claude-agent/fable")
               , ("plan", "claude-agent/fable")
               , ("ponytail", runDefault)
@@ -2232,14 +2303,23 @@ scopeTests =
       -- backends, so the fourth independence is bought with a MODEL —
       -- @claude-agent\/fable@ against @claude-agent@ — which is why this reads
       -- the whole agent spec and not the backend tag.
-      testCase "no two explore stances share an agent" $
+      --
+      -- __Under @BLOCK_OPENCODE@ the law weakens, and it has to.__ The stances
+      -- hold claude-agent, codex, claude-agent\/fable and opencode; drop
+      -- opencode and three distinct agents remain for four stances, so a
+      -- collision is FORCED rather than chosen — @contemplative@ lands on codex
+      -- beside @skeptic@. What stays refutable is that the fan-out still uses
+      -- every agent available to it: a second avoidable collision, or a stance
+      -- silently re-pinned, moves this count.
+      testCase "no two explore stances share an agent the roster can tell apart" $
         let stances = [a | (n, a) <- scopedLeaves (wfFlow planFeature), n `elem` stanceNames]
          in do
               -- The reader proved before the law is quantified over it: a
               -- renamed stance would otherwise make distinctness a statement
               -- about the empty list.
               length stances @?= length stanceNames
-              nub stances @?= stances
+              length (nub stances)
+                @?= (if blockOpencode then length stanceNames - 1 else length stanceNames)
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at
@@ -2466,11 +2546,104 @@ backendTests :: TestTree
 backendTests =
   testGroup
     "backends"
-    [ testCase "has three backends" $
-        length backends @?= 3
-    , testCase "backend names" $
-        map (leafNameText . fst) (NE.toList backends)
+    [ -- Over 'backendsFor', not over 'backends': the shipped roster reads
+      -- @BLOCK_OPENCODE@ through an 'unsafePerformIO' CAF, so an assertion on
+      -- it states a property of whoever's shell ran the suite. The pure
+      -- function is the same definition with the environment as an argument,
+      -- and asking it both questions is what makes either answer a check.
+      testCase "with opencode available, three backends" $
+        map (leafNameText . fst) (NE.toList (backendsFor False))
           @?= ["claude-agent", "codex", "opencode"]
+    , -- __The duplicate is dropped, not aliased.__ 'opencodeBackend' resolves to
+      -- codex when blocked, so a roster that kept three slots would hold codex
+      -- twice — and @panelAcross@ is a cross-product, so every lens would get
+      -- two @lens\@codex@ leaves: one model's opinion, paid for twice and ranked
+      -- as two findings. That failure is invisible in a leaf NAME list unless
+      -- something asserts distinctness, so this does.
+      testCase "with opencode blocked, codex takes its place exactly once" $ do
+        let named = map (leafNameText . fst) (NE.toList (backendsFor True))
+        named @?= ["claude-agent", "codex"]
+        nub named @?= named
+    , -- __The whole point of the variable, quantified over the inventory.__
+      -- Everything else here fences a consequence of blocking — the roster
+      -- shape, which backend answers the fess rubric, what each tier costs.
+      -- None of them says the thing @BLOCK_OPENCODE@ exists to guarantee: that
+      -- no leaf ANYWHERE resolves to opencode. A tier written later that pins a
+      -- leaf with @withBackend opencode@ directly, rather than through
+      -- 'opencodeScope', satisfies every other case in this file and still
+      -- opens a session against a backend the machine cannot reach.
+      --
+      -- Both directions are asserted, because the blocked half alone is
+      -- unfalsifiable: a repository that reached opencode nowhere would satisfy
+      -- it forever. Unblocked, opencode must actually be reachable — which is
+      -- what gives the blocked case something to bite on.
+      testCase "BLOCK_OPENCODE removes opencode from every workflow, and nothing else does" $
+        let agents = nub (map (backendOf . snd) (concatMap (scopedLeaves . wfFlow) mirrorWorkflows))
+         in if blockOpencode
+              then
+                assertBool
+                  ("blocked, but these workflows still resolve a leaf to opencode: " <> show agents)
+                  ("opencode" `notElem` agents)
+              else
+                assertBool
+                  "unblocked, no workflow reaches opencode at all — the blocked case fences nothing"
+                  ("opencode" `elem` agents)
+    , -- An environment variable that halves a review panel and is written down
+      -- nowhere is a trap: nothing else in this suite reads the documents for
+      -- it, and a reader who does not know it exists cannot explain why their
+      -- run cost less than the table says. The leaf-count table's second column
+      -- is checked by 'docsInventoryTests'; this is what keeps the prose that
+      -- explains the column from being deleted out from under it.
+      testCase "BLOCK_OPENCODE is documented, with what it costs" $ do
+        doc <- proseNormal <$> TIO.readFile "docs/workflows.md"
+        report
+          [ "docs/workflows.md does not say " <> tshow needle
+          | needle <-
+              [ "BLOCK_OPENCODE"
+              , -- The three consequences, each in the words that section uses.
+                "panels get narrower"
+              , "fess rubric always runs on claude"
+              , "explore fan-out loses one axis"
+              ]
+          , not (T.isInfixOf needle doc)
+          ]
+    , -- __The name and the scope of the opencode slot, pinned together.__
+      -- 'Incite.Review.admits' refuses the fess rubric to codex by reading a
+      -- backend's NAME, so a slot whose name says @opencode@ while its scope
+      -- runs codex keeps an admission it should have lost, and the rubric runs
+      -- on codex anyway.
+      --
+      -- Nothing else here catches that. 'backendsFor' never calls
+      -- 'opencodeBackendFor' on its blocked branch — it drops the entry — so
+      -- the roster cases above stay green under the decoupling. The
+      -- resolved-scope check in 'codexFessTests' does catch it, but only when
+      -- @BLOCK_OPENCODE@ is set, and nix sandboxes that variable away: in CI
+      -- that check has never once run against a blocked roster. This is the
+      -- one that runs in both.
+      --
+      -- The scope is resolved through 'Incite.Backend.reviewer' — the same
+      -- builder the shipped stances go through — rather than trusted from the
+      -- name beside it. A pair whose two halves are read off each other proves
+      -- nothing about either.
+      testCase "the opencode slot's name and its scope name the same backend" $
+        let resolved (n, scope) =
+              (leafNameText n, map snd (scopedLeaves (snd (reviewer scope "probe" anyPrompt))))
+         in do
+              resolved (opencodeBackendFor False) @?= ("opencode", ["opencode"])
+              resolved (opencodeBackendFor True) @?= ("codex", ["codex"])
+    , -- The fence the substitution leans on, stated where the substitution is.
+      -- "Incite.Review".'admits' refuses the fess rubric to codex by reading a
+      -- backend's NAME, so the name and the scope have to move together: swap
+      -- the scope to codex under the name @opencode@ and the rubric keeps its
+      -- admission and runs on codex anyway. With the entry substituted whole,
+      -- claude-agent is the only backend left that admits it — which is the
+      -- property that makes blocking safe rather than merely quiet.
+      testCase "blocked, the fess rubric is left with claude-agent alone" $
+        [ b
+        | b <- map fst (NE.toList (backendsFor True))
+        , admits b fess
+        ]
+          @?= ["claude-agent"]
     , -- 'NE.head' rather than 'head': the list is 'NonEmpty' so that
       -- @Incite.Review.spread@ can cycle it without a guard, and this case
       -- comes along for free — there is no empty case left to answer.
