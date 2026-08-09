@@ -19,7 +19,7 @@ other specialists directly where the diff calls for them: `haskell-review`, `has
 
 **Review ladder.** This command reviews one diff — the current commit against `$1`. For a
 whole-repository audit instead, or for a diff reviewed by more than one backend, use the
-`agent-functor` workflows: `review-lite` (four reviewers, cheap enough per commit), `review-heavy`
+`agent-functor` workflows: `review-lite` (five reviewers, cheap enough per commit), `review-heavy`
 (21 reviewers plus a synthesis pass, before a PR), `review-audit` (75-leaf whole-change audit
 across three granularities). `/pr-review` reviews a GitHub PR in a worktree and never posts back
 without explicit instruction.

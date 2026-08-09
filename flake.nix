@@ -144,8 +144,9 @@
       # store path, `nix flake update ponytail` moves it, and a rebuild picks the
       # new one up with no file in git to re-sync and no chance of a stale copy.
       #
-      # Also the allowlist for `awesome-prompts`: one named file out of a 3.5 MB
-      # repo of unaudited third-party text, and nothing else can reach a prompt.
+      # Also the allowlist for `awesome-prompts`: each file is named here, out of
+      # a 3.5 MB repo of unaudited third-party text, and nothing else can reach a
+      # prompt. `README.md`'s inputs table lists what that comes to.
       #
       # The layout is rooted so that `$out` IS a prompt root — see
       # `AGENT_FUNCTOR_PROMPTS` on the runner below.
@@ -861,10 +862,15 @@
             # compile time, so dropping one here builds clean and then fails
             # the suite with `openFile: does not exist`.
             #
-            # `./flake.nix` is deliberately absent. It declares the input, so a
-            # stale renderer name in it is an evaluation error rather than
-            # documentation drift, and copying it in would rebuild this suite
-            # on every comment edit to it.
+            # `./flake.nix` is here, and it is read for a reason no other file
+            # can serve: the `builtins.readFile` calls in it ARE the allowlist
+            # of third-party prompt text, and `README.md` publishes a list of
+            # them that nothing else holds to account. It was left out before on
+            # the argument that a comment edit here should not rebuild this
+            # suite — a rebuild of a suite that runs in hundredths of a second,
+            # traded against the published account of what unaudited text
+            # reaches a prompt. `./commands/code-review.md` joins for the
+            # backend-prose fence, which reads its review-lite claim.
             testSrc = pkgs.runCommand "incite-test-src" { } ''
               cp -r --no-preserve=mode,ownership ${librarySrc} $out
               cp -r --no-preserve=mode,ownership ${
@@ -875,6 +881,8 @@
                     ./docs
                     ./README.md
                     ./AGENTS.md
+                    ./flake.nix
+                    ./commands/code-review.md
                   ];
                 }
               }/. $out/

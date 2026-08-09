@@ -185,8 +185,9 @@ reviewAudit =
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses
 
 -- | The same shape pointed at prose: four lenses that only a document admits,
--- plus the ponytail question every artifact admits, each answered by all three
--- backends, then the same synthesis leaf.
+-- plus the ponytail question every artifact admits, each answered by every
+-- backend 'admits' allows it — all three but @accuracy@, which is 'fess'
+-- renamed and so is never paired with codex — then the same synthesis leaf.
 --
 -- __No regroupings.__ 'reviewAudit' buys its third tier by re-expressing a
 -- change as logical units and as the commits it should have been. Neither view
@@ -200,8 +201,9 @@ reviewDocs =
       Review documentation with four lenses only prose admits (accuracy against
       the code, completeness for a reader who follows it, structure, and the
       AI-slop tells that mark prose as machine-written) plus the ponytail cuts
-      every artifact admits, each run on all three backends, then synthesise one
-      ranked list
+      every artifact admits, each run on every backend that admits it — all
+      three, except accuracy, which carries the fess rubric and so never runs on
+      codex — then synthesise one ranked list
     |]
     reviewDocsFlow
 

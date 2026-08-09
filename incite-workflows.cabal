@@ -26,10 +26,12 @@ extra-source-files:
     prompts/upstream/simple-english/*.md
     agents/*.md
     skills/*.md
-    -- Slash commands read back as workflow briefs (fess-audit, implement).
+    -- Slash commands read back as workflow briefs (fess-audit, implement),
+    -- plus the two the backend-prose fence reads for their review-lite claims.
     commands/fess.md
     commands/post-commit-audit.md
     commands/wiggum.md
+    commands/code-review.md
     -- The recorded prompt bytes `test/Spec.hs` fences with `TIO.readFile`. Same
     -- rule as the prompt globs above and a worse failure without it: a golden
     -- read at run time is not checked when anything compiles, so an sdist that
@@ -46,6 +48,10 @@ extra-source-files:
     docs/*.md
     README.md
     AGENTS.md
+    -- The allowlist fence reads `flake.nix` itself: the `builtins.readFile`
+    -- calls in it are the only statement of which third-party prompt files can
+    -- reach a prompt, and `README.md`'s inputs table is checked against them.
+    flake.nix
 
 -- The runner binary is named `agent-functor` so `nix run .#agent-functor -- run <name>` works.
 library

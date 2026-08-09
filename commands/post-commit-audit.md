@@ -6,13 +6,15 @@ than restating it, so there is one copy to keep true.
 
 ## What to run
 
-**Always call `review-lite`.** It runs four independent reviewers over the commit,
-concurrently across three backends (`fess` and `ponytail` both run on codex), ranked:
+**Always call `review-lite`.** It runs five independent reviewers over the commit,
+concurrently across three backends — correctness on claude-agent, fess on
+claude-agent, complexity on codex, ponytail on codex, qa on opencode — ranked:
 
 | lens | judges | a finding means |
 |---|---|---|
 | `correctness` | the code — does it do what it claims, on every input | it is wrong; fix it |
 | `fess` | **your claims** — against what the diff actually shows | your account is wrong; correct the record *and* do the work you said you had done |
+| `qa` | the cases nobody wrote — edge, error, scale, observability | an untested path; cover it |
 | `complexity` | the shape — what a reshape would fix | structural debt; decide whether to pay it now |
 | `ponytail` | the size — what deletion would fix | cut it, or say why not |
 

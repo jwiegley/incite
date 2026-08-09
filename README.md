@@ -184,7 +184,7 @@ The split is deliberate: the reviewer never writes, the fixer never reviews.
 | `flake-prompt` | `gitlab:fresheyeball/flake-prompt` | the renderer |
 | `macha` | private ssh, `flake = false` | supplies two prompt bodies |
 | `ponytail` | `github:dietrichgebert/ponytail`, `flake = false` | four skills + three workflow briefs |
-| `awesome-prompts` | `github:ai-boost/awesome-prompts`, `flake = false` | exactly three files: `agentic_coder.txt`, `lookahead_planning_specialist.txt`, `code_reviewer_security.txt` |
+| `awesome-prompts` | `github:ai-boost/awesome-prompts`, `flake = false` | exactly seven files: `agentic_coder.txt`, `lookahead_planning_specialist.txt`, `code_reviewer_security.txt`, `Technical_Documentation_Strategist.txt`, `stop_slop.txt`, `qa_agent.txt`, `obsidian_vault_operator.txt` |
 | `promptdeploy` | `github:jwiegley/promptdeploy`, `flake = false` | the upstream this repo's prompts descend from — pinned to reconcile against, plus four sub-agents |
 | `simple-english` | `github:AminBlg/SimpleEnglish`, `flake = false` | ASD-STE100 as a skill, a plan lens, and the `prompt-lint` rubric |
 | `agent-functor` | `git+file:///home/isaac/_/agent-functor/master` | local worktree input, `refs/heads/master` |

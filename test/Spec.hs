@@ -143,6 +143,8 @@ tests =
     , factsFileTests
     , rendererNameTests
     , docsInventoryTests
+    , backendProseTests
+    , inputAllowlistTests
     ]
 
 decideContinueTests :: TestTree
@@ -1833,6 +1835,135 @@ docsInventoryTests =
           , not (T.isInfixOf n body)
           ]
     ]
+
+-- | Fences the prose that says __which backend runs which reviewer__ against
+-- the scopes the flows carry.
+--
+-- This is the drift 'scopedLeaves' predicted and nothing caught. A backend pin
+-- moves no leaf name, no node count and no cost, so every other check in this
+-- file stays green while the documents go on quoting the old pairing — and they
+-- did, in four places at once: @fess@ moved off codex and @qa@ joined the tier,
+-- and @post-commit-audit.md@, @code-review.md@ and two rows of
+-- @docs\/workflows.md@ all kept describing the tier before both changes. Three
+-- of those files are the contract @\/wiggum@ and @ship-feature@ defer to, so the
+-- stale text is what an agent acts on.
+--
+-- The inventory rule below reads a bare mention, so the table's convention is
+-- to attribute backends __positively__: name the one a workflow runs on, not
+-- the one it avoids. A row that reaches for \"never on codex\" as shorthand for
+-- a pin gets a failure telling it to say what the pin IS — which is the more
+-- useful cell anyway. (@review-docs@ names codex negatively and passes only
+-- because it does run there; the exclusion it describes is one lens of five.)
+backendProseTests :: TestTree
+backendProseTests =
+  testGroup
+    "the prose that names backends"
+    [ -- Quantified over the WHOLE inventory rather than the rows known to name
+      -- a backend, so a row that acquires a backend claim later is covered the
+      -- day it does. Rows are keyed by workflow name; a row naming no workflow
+      -- needs no complaint here, because the case above already asserts the
+      -- table's first column is exactly 'mirrorWorkflows'.
+      testCase "no Shape cell names a backend its workflow does not run on" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let rows =
+              [ (wf, cells)
+              | (name, cells) <- tableRows (sectionBody "Exposed inventory" doc)
+              , Just wf <- [find ((== name) . wfName) mirrorWorkflows]
+              ]
+            mentioned = [(wf, b) | (wf, cells) <- rows, b <- backendNames, any (T.isInfixOf b) cells]
+        -- The reader proved before the rule is quantified over it: a table that
+        -- named no backend at all would satisfy this rule vacuously, forever.
+        assertBool "no Shape cell names any backend — the rule is over nothing" $
+          not (null mentioned)
+        report
+          [ wfName wf <> ": docs/workflows.md says " <> b <> ", but its leaves run on "
+            <> T.intercalate ", " agents
+          | (wf, b) <- mentioned
+          , let agents = nub (map (backendOf . snd) (scopedLeaves (wfFlow wf)))
+          , b `notElem` agents
+          ]
+    , -- The rule above only refutes a backend the workflow runs NOWHERE, which
+      -- is blind to a tier that runs on all three and misattributes one lens —
+      -- exactly 'reviewLite'. So the three files that state its roster state it
+      -- lens by lens, and this reads the pairings back out of the flow.
+      testCase "every file describing review-lite names its reviewers and their backends" $ do
+        let lenses = scopedLeaves (wfFlow reviewLite)
+        assertBool "review-lite has no leaves to describe" (not (null lenses))
+        claims <- mapM (\(p, ws) -> (,,) p ws <$> TIO.readFile p) (reviewLiteProse lenses)
+        report
+          [ T.pack path <> " does not say \"" <> want <> "\""
+          | (path, wants, txt) <- claims
+          , want <- wants
+          , not (T.isInfixOf want (proseNormal txt))
+          ]
+    ]
+  where
+    backendNames = map leafNameText (map fst (NE.toList backends))
+
+-- | Fences @README.md@'s inputs table against the only thing that decides what
+-- a third-party input can reach: @flake.nix@'s @builtins.readFile@ calls.
+--
+-- @awesome-prompts@ is 3.5 MB of unaudited leaked and community system prompts,
+-- and the flake's named-file list is the whole of the allowlist. The README
+-- documented it as three files and stayed at three across four more being
+-- added, so the published account of what third-party text reaches a prompt
+-- understated it by more than half. Nothing links the two but this.
+inputAllowlistTests :: TestTree
+inputAllowlistTests =
+  testGroup
+    "the third-party prompt allowlist"
+    [ testCase "README's awesome-prompts row lists exactly the files flake.nix reads" $ do
+        nix <- TIO.readFile "flake.nix"
+        readme <- TIO.readFile "README.md"
+        let marker = "${awesome-prompts}/prompts/"
+            allowed =
+              sort . nub $
+                [ T.takeWhile (/= '"') (T.drop (T.length marker) m)
+                | (_, m) <- T.breakOnAll marker nix
+                ]
+            note = case [cs | (n, cs) <- tableRows (sectionBody "Inputs" readme), n == "awesome-prompts"] of
+              (_ : c : _) : _ -> c
+              _ -> ""
+            listed = sort (nub [x | (i, x) <- zip [0 :: Int ..] (T.splitOn "`" note), odd i])
+        -- Both readers proved before the equality is stated over them: either
+        -- one reading nothing would make this an assertion that @[] == []@.
+        assertBool "flake.nix reads no awesome-prompts file at all" (not (null allowed))
+        assertBool "no awesome-prompts row found in README's Inputs table" (not (T.null note))
+        listed @?= allowed
+        assertBool ("README does not say " <> T.unpack (countWord (length allowed)) <> " files") $
+          T.isInfixOf (countWord (length allowed) <> " files") note
+    ]
+
+-- | The files that describe 'reviewLite' in prose, and the phrases each must
+-- carry given the tier's resolved leaves: the reviewer count, in the words that
+-- file uses for it, and — for the two that go lens by lens — one @lens on
+-- backend@ pairing per reviewer.
+--
+-- @code-review.md@ mentions the tier in one line of a review ladder and states
+-- only the count, so only the count is required of it. Demanding five pairings
+-- there would be demanding worse prose.
+reviewLiteProse :: [(Text, Text)] -> [(FilePath, [Text])]
+reviewLiteProse lenses =
+  [ ("commands/post-commit-audit.md", count "independent reviewers" : pairings)
+  , ("docs/workflows.md", count "per-commit reviewers" : pairings)
+  , ("commands/code-review.md", [count "reviewers"])
+  ]
+  where
+    count noun = countWord (length lenses) <> " " <> noun
+    pairings = [n <> " on " <> backendOf a | (n, a) <- lenses]
+
+-- | A small count, spelled — which is how the documents write it, and so the
+-- only form a substring check can look for.
+countWord :: Int -> Text
+countWord n = fromMaybe (tshow n) (lookup n (zip [1 ..] ws))
+  where
+    ws = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+
+-- | Prose flattened to what a phrase check can see through: markdown emphasis
+-- dropped, and all whitespace collapsed to single spaces so a claim that
+-- happens to wrap across a line still reads as one phrase.
+proseNormal :: Text -> Text
+proseNormal = T.unwords . T.words . T.filter (`notElem` ("`*" :: String))
 
 -- | Every prompt a workflow's leaves actually send, in the order the sequential
 -- interpretation reaches them — recovered by running the workflow's own 'Flow'
