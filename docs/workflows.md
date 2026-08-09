@@ -49,6 +49,43 @@ Use the constructor that matches the contract:
 | `workflowReq` | caller must provide input | no grant |
 | `workflowGReq` | caller must provide input | takes an `execGrant` whitelist |
 
+## Blocking opencode
+
+Some machines cannot reach the opencode backend. Set `BLOCK_OPENCODE` to any
+non-empty value and no leaf runs there:
+
+```bash
+BLOCK_OPENCODE=1 nix run .#agent-functor -- run review-heavy -i "…"
+```
+
+An empty value counts as unset, so `BLOCK_OPENCODE= nix run …` turns it off for
+one command. `Incite.Backend.blockOpencode` reads the variable once at process
+start; `backendsFor` and `opencodeBackendFor` are pure functions of it.
+
+The substitution replaces the roster **entry** — the name and the scope
+together, never the scope alone. `admits` decides whether a backend may answer a
+lens by reading its name, and the one pairing it refuses is the fess rubric on
+codex. A scope swapped under the name `opencode` would keep that admission and
+run the rubric on codex anyway.
+
+Three things change, and all three are consequences of the machine having two
+backends instead of three:
+
+- **The panels get narrower.** The roster drops to `claude-agent` and `codex`
+  rather than keeping a third slot holding codex twice. A duplicate is not
+  cosmetic: `panelAcross` is a lens × backend cross-product, so every lens would
+  get two identical `lens@codex` leaves — one model's opinion, paid for twice
+  and ranked by the synthesis leaf as two findings. The leaf-count table above
+  states what each tier costs either way.
+- **The fess rubric always runs on claude.** With codex refused and opencode
+  gone, `claude-agent` is the only backend left that admits it. Nothing
+  special-cases this; it falls out of `admits`.
+- **The explore fan-out loses one axis.** `contemplative` was the opencode
+  stance and lands on codex beside `skeptic`, so `plan-feature` runs four
+  stances across three distinct agents. Three is all there is: the other two
+  stances already hold `claude-agent` and `claude-agent/fable`, so a collision
+  is forced rather than chosen.
+
 `ship-feature` and `ship-docs` use `workflowGReq` with `actingGrant`, currently
 `execGrant ["nix*"]`. That grant gates `Agent.Op.Exec` leaves. The agent's own
 tools, such as git or GitHub operations, are still mediated by the backend's tool
@@ -165,13 +202,17 @@ publishing it stays explicit.
 The counts below are prompt leaves, not tokens. `cost` reports leaf counts and
 node bounds, not prompt size.
 
-| Tier | Leaves | What the cost buys |
-|---|---:|---|
-| `review-lite` | 5 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails |
-| `review-heavy` | 38 | 21 full-diff reviewers, two regrouping leaves, 14 single-backend regrouped-view reviewers, and synthesis |
-| `review-audit` | 75 | full 24-leaf panel over three views, with regrouping leaves and synthesis |
-| `review-docs` | 15 | five documentation lenses across three backends, less the one pairing `admits` forbids, plus synthesis |
-| `prompt-lint` | 1 | one grounded STE CHECK-mode report |
+The second count is the same tier with `BLOCK_OPENCODE` set — see
+[Blocking opencode](#blocking-opencode). A tier pinned leaf by leaf costs the
+same either way; a tier that fans across the roster gets narrower.
+
+| Tier | Leaves | Leaves, opencode blocked | What the cost buys |
+|---|---:|---:|---|
+| `review-lite` | 5 | 5 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails |
+| `review-heavy` | 38 | 31 | 21 full-diff reviewers, two regrouping leaves, 14 single-backend regrouped-view reviewers, and synthesis |
+| `review-audit` | 75 | 51 | full 24-leaf panel over three views, with regrouping leaves and synthesis |
+| `review-docs` | 15 | 10 | five documentation lenses across three backends, less the one pairing `admits` forbids, plus synthesis |
+| `prompt-lint` | 1 | 1 | one grounded STE CHECK-mode report |
 
 The regrouping leaves in `review-heavy` and `review-audit` are views, not
 judges. They re-express a change as logical units or as an ideal sequence so the
