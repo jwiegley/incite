@@ -1038,26 +1038,37 @@ codexFessTests =
         forbiddenPairings backendNames [("tests", reviewTests)] @?= []
     , -- Every workflow, not only the ones known to hold a fess lens: the point
       -- is that no tier can build the pairing, including one written later.
+      --
+      -- Over RESOLVED SCOPES, not leaf names. Only @spread@ suffixes
+      -- @\@backend@ onto a name, and the two tiers that pin a fess leaf by hand
+      -- — 'reviewLite' and 'fessAudit' — name it bare @fess@. A name reader is
+      -- therefore blind at exactly the two sites where reverting the pin would
+      -- land: it passed over nothing while @fess@ sat on codex under a name
+      -- carrying no @\@@ at all. 'scopedLeaves' reads where a leaf RUNS.
       testCase "no workflow builds a leaf that pairs the rubric with codex" $
         report
-          [ wfName wf <> " builds " <> n
+          [ wfName wf <> " runs " <> n <> " on " <> agent
           | wf <- mirrorWorkflows
-          , n <- leafNames (wfFlow wf)
+          , (n, agent) <- scopedLeaves (wfFlow wf)
           , fessNamed n
-          , "@codex" `T.isSuffixOf` n
+          , isCodex agent
           ]
-    , -- The guard on the case above: it reads leaf NAMES, so it only refutes
-      -- while the fess-carrying lenses are still named what this expects. A
-      -- panel that renamed them would leave it passing over nothing.
-      testCase "the leaf-name reader finds the fess leaves it is quantified over" $
+    , -- The two guards on the case above, and it needs both: it is quantified
+      -- over the fess-carrying leaves it can NAME, and refutes through a
+      -- predicate on an agent string it has to be able to MATCH. A rename on
+      -- either side leaves it passing over nothing.
+      testCase "the reader finds the fess leaves, and knows codex when it sees it" $ do
         report
           [ "no fess-named leaf in " <> wfName wf
           | wf <- [reviewLite, fessAudit, reviewDocs]
-          , not (any fessNamed (leafNames (wfFlow wf)))
+          , not (any (fessNamed . fst) (scopedLeaves (wfFlow wf)))
           ]
+        assertBool "isCodex matches no agent any workflow resolves to" $
+          any (isCodex . snd) (concatMap (scopedLeaves . wfFlow) mirrorWorkflows)
     ]
   where
     backendNames = map fst (NE.toList backends)
+    isCodex a = backendOf a == "codex"
     -- The leaves whose body is the rubric or a reorientation of it, by the
     -- names the tiers give them: @fess@ in the two code tiers, @accuracy@ in the
     -- docs panel. Panels suffix @\@backend@, so this matches a prefix.
@@ -1146,6 +1157,13 @@ scopedLeaves :: Flow Text Text -> [(Text, Text)]
 scopedLeaves = foldLeavesScoped (\sc op -> [(leafNameOf (opTag op), agentOf sc)])
   where
     agentOf = maybe runDefault agentSpecText . scopeAgent
+
+-- | The backend half of what 'scopedLeaves' reports. 'agentSpecText' renders a
+-- named model as @backend\/model@, so a pin like @withBackend codex someModel@
+-- has to be recognised as codex exactly as readily as the bare one — and the
+-- prose that attributes a lens to a backend names the backend, not the model.
+backendOf :: Text -> Text
+backendOf = T.takeWhile (/= '/')
 
 -- | What 'scopedLeaves' reports for a leaf under no backend scope at all: it
 -- runs on whatever @--backend@ the run was started with.
