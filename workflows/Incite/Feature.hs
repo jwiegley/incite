@@ -11,7 +11,7 @@
 --
 -- __The acting half is shared by name, not by count.__ 'actingGrant' is the
 -- exec policy, 'orchestrate' is the fuelled worker loop over 'continueMarker'
--- and @keepGoing@, and 'remediate' is the one leaf that fixes what a panel
+-- and 'decideTrip', and 'remediate' is the one leaf that fixes what a panel
 -- found. What an acting workflow supplies for itself is its steer label, its
 -- worker, its panel, the artifact rule its fixer stands under ('docsRule' or
 -- 'codeRule'), and where it stops. Bindings rather than copies for one reason:
@@ -24,6 +24,7 @@ module Incite.Feature
   , grindParadox
   , continueMarker
   , decideContinue
+  , decideTrip
   , isRed
   , decideRed
   , asReviewSubject
@@ -58,7 +59,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
-import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', withMode, (>>>))
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', second'', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
   , hierarchical
@@ -331,19 +332,19 @@ document =
 
 -- | The marker a worker ends on to ask the orchestrator for another trip.
 -- Bound rather than written twice: the @implement@ brief tells the worker to
--- emit it and @keepGoing@ matches on it, and the two drifting apart would
+-- emit it and 'decideTrip' matches on it, and the two drifting apart would
 -- strand the loop. Exported for the same reason — a second worker brief must
 -- splice this and not its own spelling.
 continueMarker :: Text
 continueMarker = "WORK REMAINS"
 
--- | 'Right' ends an orchestrator loop, 'Left' feeds the worker's summary back
--- as the next trip's input. Continue only on the explicit marker: see the note
--- on exhaustion in 'orchestrate'.
+-- | The pure marker predicate: 'Right' ends the loop, 'Left' keeps it going.
+-- Continue only on the explicit marker — see 'decideTrip' for the budget that
+-- backs it.
 --
 -- The match is the briefs' own contract — the marker alone on the last line —
 -- not an infix scan of the whole summary: prose like "no work remains"
--- contains the marker and would spin the loop until the fuel aborts it.
+-- contains the marker and would otherwise ask for another trip every time.
 decideContinue :: Text -> Either Text Text
 decideContinue out
   | lastNonEmptyLine out == T.toLower continueMarker = Left out
@@ -361,8 +362,23 @@ lastOrDefault :: a -> [a] -> a
 lastOrDefault d [] = d
 lastOrDefault _ xs = last xs
 
-keepGoing :: Flow Text (Either Text Text)
-keepGoing = dimap' id decideContinue Id
+-- | The trip-budgeted continuation decision 'orchestrate' loops on. 'Left'
+-- hands the worker's summary back as the next trip's input; 'Right' ends the
+-- loop and yields the summary to the stage after it.
+--
+-- 'Nothing' is no ceiling: the loop continues as long as 'decideContinue'\'s
+-- marker is present and ends the moment it is not — the worker decides trip
+-- count. @'Just' n@ caps it: once n trips are spent the last summary yields
+-- rather than asking for a trip the budget does not have, so a large job still
+-- reaches review instead of aborting with its edits stranded.
+decideTrip :: Maybe Int -> Text -> Either (Maybe Int, Text) Text
+decideTrip fuel out = case decideContinue out of
+  Left _ -> case fuel of
+    Nothing -> Left (Nothing, out)
+    Just n
+      | n > 1 -> Left (Just (n - 1), out)
+      | otherwise -> Right out
+  Right _ -> Right out
 
 -- | Is this check log a __failing__ one? True exactly when some line, ANSI
 -- stripped and whitespace stripped, opens with the marker
@@ -415,10 +431,12 @@ decideRed t = if isRed t then Left t else Right t
 actingGrant :: Grant
 actingGrant = execGrant ["nix*"]
 
--- | The ceiling on how many times a worker may hand itself back its own summary
--- before the run is called a runaway. Fuel, not a schedule.
-workerFuel :: Int
-workerFuel = 8
+-- | The ceiling on how many times a worker may hand itself back its own summary.
+-- 'Nothing' — the default — is no ceiling: the worker runs until it reports
+-- WORK COMPLETE. @'Just' n@ caps it at n trips, after which the last summary
+-- yields to the next stage rather than aborting.
+workerFuel :: Maybe Int
+workerFuel = Nothing
 
 -- | The checks the grind gate runs __itself__, as argv rather than as a shell
 -- string: the target tree's own build and its own test harness.
@@ -506,17 +524,33 @@ paradoxRule =
 -- the loop ends the moment that summary does not ask to continue.
 --
 -- __'loopUntil', not a fixed unroll.__ Trip count is runtime and the worker
--- decides it. 'workerFuel' is the ceiling, not the plan — a job finished on
--- trip two costs two turns, where @workLoop n@ always cost @n@ and could not
--- stop.
+-- decides it. 'workerFuel' is the ceiling ('Nothing' = no ceiling), not the
+-- plan — a job finished on trip two costs two turns.
 --
--- The default direction is deliberate. 'loopUntil' __aborts on exhaustion__ by
--- upstream design (there is no yield-what-you-have policy), so @keepGoing@
--- continues only on an explicit marker and treats everything else as finished:
--- a confused worker ends the loop and gets reviewed, rather than burning the
--- fuel and halting the run with the work stranded.
+-- __Yields on exhaustion, never aborts.__ 'loopUntil' aborts on exhaustion by
+-- upstream design, and for an acting loop that is the wrong policy: a worker
+-- or fixer that needs more than its ceiling has still edited the tree on every
+-- trip it took, and an abort there strands every one of those edits — the
+-- review panel never sees them in 'shipFeature'\/'shipDocs', and the gate
+-- never runs in 'grindParadox'. So when 'workerFuel' is @'Just' n@ the loop
+-- threads a trip budget ('decideTrip') that yields the last summary at trip n,
+-- and whatever stage follows reads what landed. When 'workerFuel' is 'Nothing'
+-- there is no budget — the loop runs until the worker reports WORK COMPLETE.
+--
+-- The 'loopUntil' fuel mirrors 'workerFuel': @'maxBound' \`div\` 2@ when
+-- 'Nothing' — practically infinite, and the largest value that keeps
+-- 'Agent.Cost.worstCaseCost' arithmetic from overflowing — and n when
+-- @'Just' n@.
+--
+-- @second''@ carries the budget alongside the summary so the worker itself only
+-- ever sees its own text — the briefs' \"your own summary as input\" contract
+-- is unchanged, and the accounting is plumbing beside it, not inside it.
 orchestrate :: Flow Text Text -> Flow Text Text
-orchestrate worker = loopUntil workerFuel (worker >>> keepGoing)
+orchestrate worker =
+  dimap' (\summary -> (workerFuel, summary)) id
+    ( loopUntil (maybe (maxBound `div` 2) id workerFuel)
+        ( second'' worker >>> dimap' id (uncurry decideTrip) Id )
+    )
 
 -- | __What a stage is pointed at__ when the artifact reaching it is a worker's
 -- closing summary rather than the thing under review.
@@ -777,9 +811,9 @@ grindParadox =
     withFacts steerText = promptText paradoxFacts <> "\n\n" <> steerText
 
 -- | The ceiling on how many times the gate may hand a still-red tree to a
--- repair leaf. Fuel, not a schedule — same reading as 'workerFuel', and much
--- smaller: a failing check after three repairs is an integration problem a
--- person should look at, not one more turn.
+-- repair leaf. Fuel, not a schedule — a finite 'Int' where 'workerFuel' is a
+-- 'Maybe', and much smaller: a failing check after three repairs is an
+-- integration problem a person should look at, not one more turn.
 repairFuel :: Int
 repairFuel = 3
 

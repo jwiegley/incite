@@ -172,6 +172,138 @@ processFile path = do
 **Action:** if a function's body is `do` with more `let` than `<-`, the logic wants to
 be a pure function beside it.
 
+## Derive, never hand-write
+
+**This is non-negotiable: derive every type class instance.** A hand-written
+instance is a test surface — code that can be wrong in ways the compiler cannot
+catch, and every line of it is a line a derived instance would not have. The
+default is derivation, the preference is derivation, and the only thing left to
+discuss at review is *which* derivation strategy.
+
+Three rules govern this, in order:
+
+1. **Derive inline with the data declaration.** The `deriving` clause lives on the
+   `data`/`newtype` it serves — never standalone, never in another module unless
+   the orphan policy below forces it.
+2. **Name the strategy on every clause** (`DerivingStrategies`).
+3. **Add the dependency that lets you derive.** If a library — `deriving-aeson`,
+   `generic-monoid`, `quickcheck-instances`, `generic-deriving` — turns a
+   hand-written instance into a derived one, add the dependency. A dependency is
+   audited once; a hand-written instance is re-checked at every review.
+
+A hand-written instance is permitted only when no derivation path exists *at all* —
+not by adding a package, not by a `via` wrapper, not by `GeneralizedNewtypeDeriving`.
+Then, and only then, it is backed by a property test or it is a finding.
+
+### DerivingStrategies on every clause (required)
+
+Every `deriving` clause must name its strategy — `stock`, `newtype`, `anyclass`, or
+`via`. A bare `deriving (Eq, Show)` is a finding: it leaves the strategy to the
+compiler's default, which is exactly the kind of implicit decision review exists to
+catch, and a future GHC version can change the default under you.
+
+```haskell
+-- ❌ REJECT: no strategy — the compiler picks, and silently
+data Foo = Foo Int deriving (Eq, Show)
+
+-- ✅ REQUIRE: every class has an explicit strategy
+data Foo = Foo Int
+  deriving stock (Eq, Show)
+```
+
+**Action:** report every `deriving` clause that does not name a strategy.
+
+### DerivingVia for a shared codec shape
+
+When several types share the same class shape — the same JSON field-label modifier,
+the same `Options` — that shape is a `newtype` wrapper used `via`, not a hand-written
+instance copied per type. `deriving-aeson` or a one-line local wrapper both qualify.
+
+```haskell
+-- ❌ REJECT: N types, 2N hand-written instances, all identical
+instance ToJSON Foo where toJSON = genericToJSON (acpOptions 3)
+instance FromJSON Foo where parseJSON = genericParseJSON (acpOptions 3)
+
+-- ✅ REQUIRE: one wrapper, derived once, reused
+newtype AcpJson a = AcpJson a
+
+instance ToJSON a => ToJSON (AcpJson a) where ...
+
+data Foo = Foo { fooA :: Int }
+  deriving (ToJSON, FromJSON) via AcpJson Foo
+```
+
+**Action:** report any `instance ToJSON X where toJSON = genericToJSON opts` — it is a
+`DerivingVia` candidate. Report two or more instances sharing the same options as a
+DRY violation resolvable by a single wrapper.
+
+### GeneralizedNewtypeDeriving for newtype wrappers
+
+A `newtype` exists to inherit the wrapped type's instances for free. Re-declaring
+`Eq`, `Ord`, `ToJSON`, and other classes by hand on a newtype defeats the point.
+
+```haskell
+-- ❌ REJECT: hand-writing what the newtype gets for free
+newtype UserId = UserId Text
+instance ToJSON UserId where toJSON (UserId t) = toJSON t
+
+-- ✅ REQUIRE: derive through the representation
+newtype UserId = UserId Text
+  deriving newtype (Eq, Ord, Show, ToJSON, FromJSON)
+```
+
+**Action:** report a hand-written instance on a `newtype` whose body is a delegation
+to the wrapped value.
+
+### No standalone deriving
+
+`deriving instance Eq Foo` separates the instance from the type it belongs to, making
+the instance set harder to read at the definition site. Put the deriving in the data
+declaration's own clause.
+
+```haskell
+-- ❌ REJECT: the instance is away from the type
+data Foo = Foo Int
+deriving instance Eq Foo
+
+-- ✅ REQUIRE: the instance is part of the declaration
+data Foo = Foo Int
+  deriving stock (Eq)
+```
+
+**Action:** report every `deriving instance` (standalone). The one exception is when
+the instance must live in a different module than the data type — and the orphan
+policy below already governs that.
+
+### Add the dependency, not the instance
+
+If an instance can be derived by adding a library instead of hand-writing it, **add
+the dependency**. This is not a judgement call — a dependency is audited once; a
+hand-written instance is re-checked at every review. Common cases:
+
+- `deriving-aeson` — `ToJSON`/`FromJSON` with a field-label modifier, `via` a wrapper.
+- `generic-monoid` — `Semigroup`/`Monoid` for record types whose fields are all
+  monoids, derived generically instead of hand-written.
+- `quickcheck-instances` — `Arbitrary` for common types.
+- `generic-deriving` — `Eq`, `Ord`, `Show` and more for types the stock deriving
+  does not reach.
+
+**Action:** when a hand-written instance could be replaced by a derivable one from
+an existing or addable package, name the package in the finding. "We don't have that
+dependency" is not an answer — the finding is "add the dependency and derive".
+
+### Hand-written instances must carry property tests
+
+This is the cost of admission for a hand-written instance: it is a liability backed
+by a property test, or it is a finding. No property test, no hand-written instance —
+derive instead. For `ToJSON`/`FromJSON`: a round-trip test
+(`decode . encode == id`). For `Eq`: reflexivity. For `Semigroup`/`Monoid`:
+associativity and identity laws.
+
+**Action:** report every hand-written instance that has no corresponding property
+test. The fix is either to add the test, or — preferred — to find the derivation
+path that removes the instance entirely.
+
 ## Two rules the upstream rubric grades and this codebase does not
 
 The upstream agent lists both of these with a severity. Here they carry none, because
@@ -218,6 +350,11 @@ not as the presence of an orphan.
 - [ ] No partial function, no incomplete pattern match
 - [ ] `foldl'`, strict accumulators, strict `Map` and `State`
 - [ ] IO isolated from pure logic
+- [ ] `DerivingStrategies` on every `deriving` clause — `stock`/`newtype`/`anyclass`/`via`
+- [ ] `DerivingVia` wherever a codec shape is shared across types
+- [ ] `GeneralizedNewtypeDeriving` on every newtype, not hand-written delegations
+- [ ] No standalone `deriving instance` — derive in the data declaration
+- [ ] Every hand-written instance backed by a property test
 - [ ] Efficient structures where indexing matters (`Vector`/`Seq` over `[]`)
 - [ ] Fusion-friendly patterns in stream processing
 - [ ] No orphan-instance findings (see above)

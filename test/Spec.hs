@@ -35,6 +35,7 @@ import Incite.Feature
   , codeRule
   , continueMarker
   , decideContinue
+  , decideTrip
   , decideRed
   , docsRule
   , docsPlanLenses
@@ -122,6 +123,7 @@ tests =
   testGroup
     "incite-workflows"
     [ decideContinueTests
+    , decideTripTests
     , isRedTests
     , continueMarkerTests
     , reframingTests
@@ -226,6 +228,54 @@ decideContinueTests =
                   @?= Right (T.pack (c : "WORK REMAINS" <> [c]))
             | c <- "?!:;,)]}>\"'#~-+="
             ]
+        ]
+    ]
+
+-- | The budget 'orchestrate' threads through 'decideTrip', stated from both
+-- sides: the trips that keep the loop alive, and the ones that end it.
+--
+-- 'Nothing' is the default — no ceiling — so the load-bearing cases are the
+-- 'Just' ones: a worker still reporting 'WORK REMAINS' when the budget is
+-- spent. Before the budget existed that was the trip 'loopUntil' aborted on,
+-- stranding every edit the worker had made; now it is the account the review
+-- panel reads. The marker is still present and 'decideContinue' still reads
+-- it — what changed is that the budget overrides it, so the loop yields
+-- rather than asking for a trip it does not have.
+decideTripTests :: TestTree
+decideTripTests =
+  testGroup
+    "decideTrip"
+    [ testGroup
+        "continues (Left)"
+        [ testCase "Nothing — no ceiling, marker present" $
+            decideTrip Nothing "summary\nWORK REMAINS"
+              @?= Left (Nothing, "summary\nWORK REMAINS")
+        , testCase "Just n with budget to spare" $
+            decideTrip (Just 3) "summary\nWORK REMAINS"
+              @?= Left (Just 2, "summary\nWORK REMAINS")
+        , testCase "Just n decorated marker, budget to spare" $
+            decideTrip (Just 2) "summary\n`WORK REMAINS`"
+              @?= Left (Just 1, "summary\n`WORK REMAINS`")
+        ]
+    , testGroup
+        "yields (Right)"
+        [ -- The case that used to abort: the marker is there, but there is no
+          -- trip left to take. The summary survives, so the panel sees the work.
+          testCase "Just 1 — marker with the budget spent" $
+            decideTrip (Just 1) "summary\nWORK REMAINS"
+              @?= Right "summary\nWORK REMAINS"
+        , -- Nothing never yields on the marker — it ends only on WORK COMPLETE.
+          testCase "Nothing — WORK COMPLETE" $
+            decideTrip Nothing "summary\nWORK COMPLETE"
+              @?= Right "summary\nWORK COMPLETE"
+        , -- A worker that finished, whatever the budget. Same as 'decideContinue'.
+          testCase "Just n — WORK COMPLETE with budget to spare" $
+            decideTrip (Just 3) "summary\nWORK COMPLETE"
+              @?= Right "summary\nWORK COMPLETE"
+        , -- A confused worker (no marker) ends on trip one regardless of budget.
+          testCase "Nothing — no marker" $
+            decideTrip Nothing "no work remains"
+              @?= Right "no work remains"
         ]
     ]
 

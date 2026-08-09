@@ -199,14 +199,17 @@ Codex and Claude rendered trees differ:
 - that is expected where native concepts differ;
 - agents can degrade into skills unless `degradation = "skip"` prevents it.
 
-`ship-feature`/`ship-docs` aborts with the worker still ending on `WORK REMAINS`:
+`ship-feature`/`ship-docs` runs the worker until it reports `WORK COMPLETE`:
 
-- `orchestrate`'s `loopUntil workerFuel` (currently 8) aborts once the fuel
-  runs out rather than yielding partial work — a worker that never reports
-  `WORK COMPLETE` runs out the clock rather than stalling silently;
-- the work done so far is not lost: with `--sandbox` it is on the run's
-  `agent-functor/run-…` worktree branch, and without it, directly in the
-  working tree — `git status`/`git log` there to see what landed;
+- `orchestrate`'s `workerFuel` is `Nothing` by default — no ceiling — so the
+  worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just n` to
+  cap at n trips, after which the last summary yields to the review panel
+  rather than aborting;
+- the run can still abort for reasons the fuel does not cover — a rate-limited
+  backend (429) or a backend error — and the work done so far is not lost then
+  either: with `--sandbox` it is on the run's `agent-functor/run-…` worktree
+  branch, and without it, directly in the working tree — `git status`/`git log`
+  there to see what landed;
 - `resume`/`fork` can continue a stopped run without **re-executing** the
   leaves the store already recorded — "replaying" is `agent-functor`'s own
   word for exactly that serve-from-record behaviour (see

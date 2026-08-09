@@ -68,7 +68,9 @@ permission flow.
   `simple-english` — because the code lenses have no useful purchase on a prose
   plan;
 - `orchestrate`: run a worker until its last non-empty line is not
-  `WORK REMAINS`, capped by `workerFuel`;
+  `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
+  `Just n` to cap at n trips after which the last summary yields to the
+  review panel rather than aborting the run;
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
   `docsRule`, or `paradoxRule`) plus a closing clause. The clause is what
   distinguishes a fixer that runs once (`closeWithChanges`) from one running
@@ -120,10 +122,11 @@ change, and at another checkout instead of this one. Four things distinguish it.
   every later verdict red. Exhaustion aborts, so a tree still failing after
   `repairFuel` trips fails the run instead of reporting success over a red build.
 
-Worst case is 32 leaf executions: 14 lenses, one synthesis, up to `workerFuel`
-fixer trips, and up to `repairFuel` trips of build, tests and repair. `cost`
-multiplies through both loops rather than flattening them, so that ceiling is
-the real one.
+`workerFuel` (the fixer-loop ceiling) is `Nothing` by default — unbounded.
+`repairFuel` (currently 3) bounds the gate. `cost` multiplies through both
+loops rather than flattening them, so with the default unbounded fixer loop
+the reported worst case is very large; set `workerFuel = Just n` for a finite
+ceiling (at `Just 8`, the worst case is 32 leaf executions).
 
 Nothing is committed. The product of a run is a dirty tree and a dated report,
 for a person to read. That is why the command drives it with `sandbox=false`:
