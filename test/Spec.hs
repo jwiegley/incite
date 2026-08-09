@@ -2197,8 +2197,12 @@ rendererNameTests =
           any (T.isInfixOf "services.agent-pm" . snd) texts
         report
           [ T.pack path <> " names the renderer `agent-pm`, after \"" <> context <> "\""
+          -- 'T.breakOnAll' rather than @init . T.splitOn@: it yields one prefix
+          -- per occurrence by construction, where the split needed an @init@ to
+          -- drop the trailing non-occurrence — a partial function standing on a
+          -- proof ('T.splitOn' never returns @[]@) that lived in a comment.
           | (path, txt) <- texts
-          , before <- init (T.splitOn "agent-pm" txt)
+          , (before, _) <- T.breakOnAll "agent-pm" txt
           , not (any (`T.isSuffixOf` before) ["services.", "programs."])
           , let context = T.takeEnd 56 (T.unwords (T.words before))
           ]
