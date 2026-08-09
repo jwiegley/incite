@@ -1651,18 +1651,51 @@ packagingTests =
       -- under @cabal test@, and failed the nix build with
       -- @README.md: openFile: does not exist@ — the exact failure the golden
       -- cover above exists to prevent, one directory over.
-      -- Quantified over the @.md@ half only: the module haddocks it also reads
-      -- are library sources, which an sdist carries because @hs-source-dirs@
-      -- names them and at the same paths. A markdown file has no such carrier.
+      -- Quantified over the @.md@ half of 'rendererProseFiles': the module
+      -- haddocks it also reads are library sources, which an sdist carries
+      -- because @hs-source-dirs@ names them and at the same paths. A markdown
+      -- file has no such carrier.
+      --
+      -- __And over 'documentsRead' beside it__, because that roster is the gap
+      -- this case had: it was quantified over one fence's file list, so a case
+      -- added later reading anything else — a command file, @flake.nix@ — was
+      -- outside it, and reproduced the very failure the comment above describes.
       testCase "extra-source-files carries every document this suite reads" $ do
         cabalFile <- TIO.readFile "incite-workflows.cabal"
-        paths <- filter (".md" `isSuffixOf`) <$> rendererProseFiles
-        let entries = extraSourceFiles cabalFile
+        prose <- filter (".md" `isSuffixOf`) <$> rendererProseFiles
+        let paths = nub (prose <> documentsRead)
+            entries = extraSourceFiles cabalFile
         assertBool "no documents read" (not (null paths))
         report
           [ "read at run time but not packaged: " <> T.pack p
           | p <- paths
           , not (any (`covers` T.pack p) entries)
+          ]
+    , -- The same roster against the OTHER source list, because there are two.
+      -- @extra-source-files@ is what an sdist carries; @flake.nix@'s @testSrc@
+      -- fileset is what the nix build copies, and it is a separate hand-kept
+      -- list the case above cannot see. Both readers added with this fence were
+      -- missing from it: the suite went green under @cabal test@ with both
+      -- cabal entries in place and then died under @nix flake check@ with
+      -- @openFile: does not exist@ — the exact failure the case above exists to
+      -- prevent, one list over.
+      testCase "flake.nix's test fileset copies every document this suite reads" $ do
+        nix <- TIO.readFile "flake.nix"
+        prose <- filter (".md" `isSuffixOf`) <$> rendererProseFiles
+        -- Both blocks, because @testSrc@ copies @librarySrc@ into itself. Read
+        -- by marker rather than by "every ./ line in the file": the checks that
+        -- render prompts declare filesets of their own, and counting those
+        -- would let an entry in an unrelated derivation vouch for a file this
+        -- suite reads.
+        let entries = filesetOf "librarySrc =" nix <> filesetOf "testSrc =" nix
+            covered p =
+              let q = "./" <> T.pack p
+               in any (\e -> e == q || (e <> "/") `T.isPrefixOf` q) entries
+        assertBool "no fileset entries read from flake.nix" (not (null entries))
+        report
+          [ "read at run time but not in flake.nix's test fileset: " <> T.pack p
+          | p <- nub (prose <> documentsRead)
+          , not (covered p)
           ]
     , -- What keeps the case above honest in the other direction. Packaging a
       -- golden nothing reads is a file that drifts from the code it was
@@ -2313,6 +2346,28 @@ factsFileTests =
 -- documentation drift — @nix flake check@ is already the check for it, and
 -- reading it here would rebuild this suite on every comment edit to a file
 -- nothing else in the derivation depends on.
+-- | Every file this suite opens at run time that 'rendererProseFiles' does not
+-- already reach, and that an sdist has to be told to carry.
+--
+-- Built from 'reviewLiteProse' rather than restating its paths, so a file
+-- joining that roster is packaged by the same edit that makes the suite read
+-- it. Goldens have their own roster ('goldensRead'), and
+-- @incite-workflows.cabal@ needs no entry — a package always ships its own
+-- description.
+documentsRead :: [FilePath]
+documentsRead = "flake.nix" : map fst (reviewLiteProse [])
+
+-- | The @./path@ entries of one @lib.fileset.unions@ block in @flake.nix@,
+-- named by the binding it belongs to: from the marker to the @];@ that closes
+-- the list.
+filesetOf :: Text -> Text -> [Text]
+filesetOf marker nix =
+  [ e
+  | l <- takeWhile (not . T.isInfixOf "];") (drop 1 (dropWhile (not . T.isInfixOf marker) (T.lines nix)))
+  , let e = T.strip l
+  , "./" `T.isPrefixOf` e
+  ]
+
 rendererProseFiles :: IO [FilePath]
 rendererProseFiles = do
   docs <- listDirectory "docs"
