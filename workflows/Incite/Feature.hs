@@ -58,7 +58,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
+import Agent.Backend (claudeAgent, codex, defaultModel, withBackend)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', second'', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
@@ -76,7 +76,7 @@ import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief, i, iii, promptText, __i)
 import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 
-import Incite.Backend (backends, fable5, reviewer)
+import Incite.Backend (backends, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
   , docsStrategyOfPlan
@@ -913,7 +913,7 @@ explorePlan = explore >>> plan
       exploreFlows
         [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
         , reviewer (withBackend codex defaultModel) "skeptic" skeptic
-        , reviewer (withBackend opencode defaultModel) "contemplative" contemplative
+        , reviewer opencodeScope "contemplative" contemplative
         , reviewer (withBackend claudeAgent fable5) "architect" architect
         ]
         -- Narrowing, not ranking by importance: what breaks, then the shape it

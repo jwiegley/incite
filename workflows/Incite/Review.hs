@@ -67,14 +67,14 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
+import Agent.Backend (claudeAgent, codex, defaultModel, withBackend)
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, promptText, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
-import Incite.Backend (backends, claudeAgentBackend, fable5, reviewer)
+import Incite.Backend (backends, claudeAgentBackend, fable5, opencodeScope, reviewer)
 import Incite.Prompts
 
 -- | The cheap tier, fired by @wiggum@ after every commit: five reviewers, one
@@ -109,7 +109,7 @@ reviewLite =
       , reviewer (withBackend claudeAgent defaultModel) "fess" fess
       , reviewer (withBackend codex defaultModel) "complexity" reviewComplexity
       , reviewer (withBackend codex defaultModel) "ponytail" ponytailReviewRubric
-      , reviewer (withBackend opencode defaultModel) "qa" qaOfCommit
+      , reviewer opencodeScope "qa" qaOfCommit
       ]
       -- Narrowing, as everywhere else: what is wrong, what was claimed, how it
       -- fails, what is braided, what should not exist at all.
