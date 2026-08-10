@@ -9,10 +9,12 @@
 -- "Incite.Feature" and "Incite.Review" from importing each other.
 module Incite.Backend
   ( fable5
+  , gpt55
   , backends
   , backendsFor
   , claudeAgentBackend
   , codexBackend
+  , codexScope
   , opencodeBackend
   , opencodeBackendFor
   , opencodeScope
@@ -26,12 +28,13 @@ import qualified Data.Text as T
 import System.Environment (lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
 import Agent.Backend
-  ( BackendTag (ClaudeAgent)
+  ( BackendTag (ClaudeAgent, Codex)
   , Model
   , ModelSpec (Named)
   , claudeAgent
   , claudeModel
   , codex
+  , codexModel
   , defaultModel
   , opencode
   , withBackend
@@ -46,6 +49,28 @@ import Agent.Prompt (Prompt, brief)
 -- loudly rather than guessing if the key is ambiguous.
 fable5 :: Model 'ClaudeAgent 'Named
 fable5 = claudeModel "fable"
+
+-- | The model every codex leaf in this repository runs on, __named rather than
+-- inherited__.
+--
+-- Leaving this as 'defaultModel' means \"whatever @~\/.codex\/config.toml@
+-- happens to say\", and that is not a free choice: @codex-acp@ (0.13.0 and
+-- 0.16.0, its newest) cannot drive a model it has no built-in metadata for, and
+-- it cannot fetch metadata at all because one unknown reasoning-effort level
+-- (@max@) fails its decode of the whole models response. A global default of
+-- @gpt-5.6-sol@ therefore fails __every__ codex turn with @Internal error@ —
+-- see @Agent.Backend.codex@ for the full diagnosis.
+--
+-- That took out three of @review-lite@\'s five lenses at once (both codex
+-- reviewers, plus @qa@, which is codex under @BLOCK_OPENCODE@) while the tier
+-- went on describing itself as five independent reviewers. A review panel must
+-- not be hostage to an interactive tool's settings file, so it names its model
+-- here — exactly as 'fable5' does for claude-agent.
+--
+-- @gpt-5.5@ is verified to complete a turn through @codex-acp@; @gpt-5.6-sol@ is
+-- verified not to. Revisit when the adapter vendors a newer @codex-core@.
+gpt55 :: Model 'Codex 'Named
+gpt55 = codexModel "gpt-5.5"
 
 -- | Every backend this repo drives, as __erased scope functions__. The
 -- @Backend b@ \/ @Model b m@ pair is type-indexed, so the tokens cannot sit in a
@@ -98,7 +123,20 @@ claudeAgentBackend = ("claude-agent", withBackend claudeAgent fable5)
 -- binding is what makes the duplicate 'backendsFor' drops a fact of the
 -- definition rather than of a name matching by eye.
 codexBackend :: (LeafName, Flow Text Text -> Flow Text Text)
-codexBackend = ("codex", withBackend codex defaultModel)
+codexBackend = ("codex", withBackend codex gpt55)
+
+-- | 'codexBackend'\'s scope alone, for the leaves pinned to codex by hand rather
+-- than through the roster. The counterpart of 'opencodeScope', and it exists for
+-- the same reason: __one switch moves every codex leaf in the repository__.
+--
+-- Six call sites wrote @'withBackend' codex 'defaultModel'@ out by hand, so the
+-- model question was answered independently in seven places and the answer in
+-- every one of them was \"ask the settings file\". When that file named a model
+-- @codex-acp@ cannot drive, all seven failed together and nothing named the
+-- shared cause. Route through this and the pin in 'gpt55' is the only thing
+-- there is to change.
+codexScope :: Flow Text Text -> Flow Text Text
+codexScope = snd codexBackend
 
 -- | The opencode entry — __or codex, where this install cannot reach
 -- opencode__. See 'blockOpencode' for the switch.

@@ -76,7 +76,7 @@ import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief, i, iii, promptText, __i)
 import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 
-import Incite.Backend (backends, fable5, opencodeScope, reviewer)
+import Incite.Backend (backends, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
   , docsStrategyOfPlan
@@ -912,7 +912,7 @@ explorePlan = explore >>> plan
     explore =
       exploreFlows
         [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
-        , reviewer (withBackend codex defaultModel) "skeptic" skeptic
+        , reviewer codexScope "skeptic" skeptic
         , reviewer opencodeScope "contemplative" contemplative
         , reviewer (withBackend claudeAgent fable5) "architect" architect
         ]

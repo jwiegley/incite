@@ -74,7 +74,7 @@ import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, promptText, __i)
 import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 
-import Incite.Backend (backends, claudeAgentBackend, fable5, opencodeScope, reviewer)
+import Incite.Backend (backends, claudeAgentBackend, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Prompts
 
 -- | The cheap tier, fired by @wiggum@ after every commit: five reviewers, one
@@ -107,8 +107,8 @@ reviewLite =
     $ exploreFlows
       [ reviewer (withBackend claudeAgent fable5) "correctness" reviewCorrectness
       , reviewer (withBackend claudeAgent defaultModel) "fess" fess
-      , reviewer (withBackend codex defaultModel) "complexity" reviewComplexity
-      , reviewer (withBackend codex defaultModel) "ponytail" ponytailReviewRubric
+      , reviewer codexScope "complexity" reviewComplexity
+      , reviewer codexScope "ponytail" ponytailReviewRubric
       , reviewer opencodeScope "qa" qaOfCommit
       ]
       -- Narrowing, as everywhere else: what is wrong, what was claimed, how it
@@ -1022,8 +1022,8 @@ retroFlow :: Flow Text Text
 retroFlow =
   exploreFlows
     [ reviewer (withBackend claudeAgent fable5) "sentiment" retroSentiment
-    , reviewer (withBackend codex defaultModel) "went-well" retroWentWell
-    , reviewer (withBackend codex defaultModel) "went-wrong" retroWentWrong
+    , reviewer codexScope "went-well" retroWentWell
+    , reviewer codexScope "went-wrong" retroWentWrong
     ]
     unionFindings
     >>> withMode Plan (refineWith "retro" (brief retroSynthesis) id)
@@ -1044,7 +1044,7 @@ plannerAudit =
       directory. Read them, and the combinators they call, before diagnosing
       anything.
     |]
-    $ withBackend codex defaultModel
+    $ codexScope
     $ withMode Plan (refineWith "lookahead" (brief lookaheadPlanningSpecialist) id)
 
 -- | Check this repo's own prompts against ASD-STE100 in the skill's CHECK mode:

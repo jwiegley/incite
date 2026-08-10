@@ -2287,7 +2287,10 @@ scopeTests =
       testCase "plan-feature runs each leaf on the agent its module argues for" $
         scopedLeaves (wfFlow planFeature)
           @?= [ ("intrepid", "claude-agent")
-              , ("skeptic", "codex")
+              , -- Pinned, not inherited: an unpinned codex leaf runs on whatever
+                -- ~/.codex/config.toml names, and a model codex-acp cannot drive
+                -- fails every codex turn at once. See 'Incite.Backend.gpt55'.
+                ("skeptic", "codex/gpt-5.5")
               , ("contemplative", leafNameText (fst opencodeBackend))
               , ("architect", "claude-agent/fable")
               , ("plan", "claude-agent/fable")
@@ -2320,6 +2323,27 @@ scopeTests =
               length stances @?= length stanceNames
               length (nub stances)
                 @?= (if blockOpencode then length stanceNames - 1 else length stanceNames)
+    , -- THE UNPINNED BACKEND. A codex leaf that names no model runs on whatever
+      -- @~\/.codex\/config.toml@ happens to say, and @codex-acp@ cannot drive a
+      -- model it has no built-in metadata for (see 'Incite.Backend.gpt55'). One
+      -- line in an interactive tool's settings file therefore failed every codex
+      -- leaf in this repository at once — and @review-lite@, which puts three of
+      -- its five lenses on codex under @BLOCK_OPENCODE@, went on calling itself
+      -- five independent reviewers while three of them returned nothing.
+      --
+      -- Quantified over the WHOLE inventory rather than the leaves that happened
+      -- to be codex when this was written: the defect was six call sites each
+      -- answering the model question for itself, so a law that only knows about
+      -- today's six would miss the seventh.
+      --
+      -- Bare @"codex"@ is the unpinned spelling; @"codex/gpt-5.5"@ is a pin.
+      testCase "no shipped leaf runs on codex without naming a model" $
+        [ (wfName wf, leaf)
+        | wf <- mirrorWorkflows
+        , (leaf, agent) <- scopedLeaves (wfFlow wf)
+        , agent == "codex"
+        ]
+          @?= []
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at
@@ -2630,7 +2654,10 @@ backendTests =
               (leafNameText n, map snd (scopedLeaves (snd (reviewer scope "probe" anyPrompt))))
          in do
               resolved (opencodeBackendFor False) @?= ("opencode", ["opencode"])
-              resolved (opencodeBackendFor True) @?= ("codex", ["codex"])
+              -- The substituted scope carries codex's model pin with it — a
+              -- blocked opencode leaf must land on the same named model as any
+              -- other codex leaf, not on the settings file's default.
+              resolved (opencodeBackendFor True) @?= ("codex", ["codex/gpt-5.5"])
     , -- The fence the substitution leans on, stated where the substitution is.
       -- "Incite.Review".'admits' refuses the fess rubric to codex by reading a
       -- backend's NAME, so the name and the scope have to move together: swap
