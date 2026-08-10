@@ -2344,6 +2344,19 @@ scopeTests =
         , agent == "codex"
         ]
           @?= []
+    , -- The leaf that writes the code, and the only pinned leaf in
+      -- 'shipFeature'. Everything else there is deliberately on the run's own
+      -- backend (the case below states that for the lens chains), so this one
+      -- has to be asserted by name or the pin is indistinguishable from the
+      -- default that happens to agree with it today.
+      --
+      -- @claude-agent@ with no @\/model@ suffix IS the pin: it names
+      -- claude-agent's own default, which is Claude Opus. @claude-agent\/fable@
+      -- here would mean implementation had been quietly moved onto the model the
+      -- review lenses use, and 'runDefault' would mean the pin was dropped and a
+      -- @--backend@ can move it again.
+      testCase "ship-feature implements on claude-agent's default model, pinned" $
+        lookup "implement" (scopedLeaves (wfFlow shipFeature)) @?= Just "claude-agent"
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at

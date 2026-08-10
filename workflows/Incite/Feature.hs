@@ -150,7 +150,26 @@ shipFeature =
     -- (HOW MUCH) and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that
     -- writes code unsupervised, and the reason the orchestrator needs no
     -- cadence of its own.
-    implement =
+    --
+    -- __Pinned, and the only leaf in this workflow that is.__ The lens chains
+    -- around it are deliberately left on the run's own backend, because they are
+    -- several readings of one text and their argument is that they stay
+    -- comparable. This leaf is different in kind: it is the one that writes code
+    -- unsupervised, under an orchestrator that will call it again, so its model
+    -- is a decision rather than a default. Left unpinned it inherits the run's —
+    -- a @run --backend codex@, or an MCP caller passing @backend@, silently
+    -- moves the leaf that does the work, and no leaf name, plan skeleton or cost
+    -- estimate moves with it.
+    --
+    -- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
+    -- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where
+    -- a fast reader over a fixed text is the point. Implementation is not that.
+    implement = withBackend claudeAgent defaultModel implementLeaf
+
+    -- Separated from its scope so the brief's indentation is untouched by it:
+    -- the body is a `__i` quasi-quote, and re-indenting a quasi-quote to nest it
+    -- one level deeper edits the prompt.
+    implementLeaf =
       refineWith
         "implement"
         ( brief
