@@ -2290,7 +2290,7 @@ scopeTests =
               , -- Pinned, not inherited: an unpinned codex leaf runs on whatever
                 -- ~/.codex/config.toml names, and a model codex-acp cannot drive
                 -- fails every codex turn at once. See 'Incite.Backend.gpt55'.
-                ("skeptic", "codex/gpt-5.5")
+                ("skeptic", "codex/gpt-5.5/xhigh")
               , ("contemplative", leafNameText (fst opencodeBackend))
               , ("architect", "claude-agent/fable")
               , ("plan", "claude-agent/fable")
@@ -2336,7 +2336,7 @@ scopeTests =
       -- answering the model question for itself, so a law that only knows about
       -- today's six would miss the seventh.
       --
-      -- Bare @"codex"@ is the unpinned spelling; @"codex/gpt-5.5"@ is a pin.
+      -- Bare @"codex"@ is the unpinned spelling; @"codex/gpt-5.5/xhigh"@ is a pin.
       testCase "no shipped leaf runs on codex without naming a model" $
         [ (wfName wf, leaf)
         | wf <- mirrorWorkflows
@@ -2657,7 +2657,7 @@ backendTests =
               -- The substituted scope carries codex's model pin with it — a
               -- blocked opencode leaf must land on the same named model as any
               -- other codex leaf, not on the settings file's default.
-              resolved (opencodeBackendFor True) @?= ("codex", ["codex/gpt-5.5"])
+              resolved (opencodeBackendFor True) @?= ("codex", ["codex/gpt-5.5/xhigh"])
     , -- The fence the substitution leans on, stated where the substitution is.
       -- "Incite.Review".'admits' refuses the fess rubric to codex by reading a
       -- backend's NAME, so the name and the scope have to move together: swap

@@ -67,7 +67,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Backend (claudeAgent, codex, defaultModel, withBackend)
+import Agent.Backend (claudeAgent, defaultModel, withBackend)
 import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
 import Agent.Op (LeafName, leafNameText)

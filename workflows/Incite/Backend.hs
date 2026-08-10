@@ -68,9 +68,24 @@ fable5 = claudeModel "fable"
 -- here — exactly as 'fable5' does for claude-agent.
 --
 -- @gpt-5.5@ is verified to complete a turn through @codex-acp@; @gpt-5.6-sol@ is
--- verified not to. Revisit when the adapter vendors a newer @codex-core@.
+-- verified not to — and note that @codex-acp@ __advertises @gpt-5.6-sol@__, so
+-- nothing but running a turn tells the two apart. Revisit when the adapter
+-- vendors a newer @codex-core@.
+--
+-- __The effort suffix is part of the id, not decoration.__ This backend splits
+-- one model into one entry per reasoning level — @gpt-5.5\/low@,
+-- @gpt-5.5\/medium@, @gpt-5.5\/high@, @gpt-5.5\/xhigh@ — so the bare key
+-- @gpt-5.5@ is a substring of four of them and 'Agent.Op.matchModelKey' refuses
+-- an ambiguous key rather than picking one. Preflight catches that before a run
+-- spends anything, which is the whole point of it; read the ids off
+-- @agent-functor doctor@.
+--
+-- @xhigh@ because these are __reviewers__: a lens that misses a defect costs
+-- more than the tokens it saved, and the claude-agent side of the same panels is
+-- pinned to 'fable5' for the same reason. It is the level the codex leaves are
+-- costed at.
 gpt55 :: Model 'Codex 'Named
-gpt55 = codexModel "gpt-5.5"
+gpt55 = codexModel "gpt-5.5/xhigh"
 
 -- | Every backend this repo drives, as __erased scope functions__. The
 -- @Backend b@ \/ @Model b m@ pair is type-indexed, so the tokens cannot sit in a

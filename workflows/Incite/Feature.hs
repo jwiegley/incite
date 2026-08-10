@@ -58,7 +58,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Backend (claudeAgent, codex, defaultModel, withBackend)
+import Agent.Backend (claudeAgent, defaultModel, withBackend)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', second'', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
