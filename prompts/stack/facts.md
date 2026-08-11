@@ -40,57 +40,30 @@ For the worktree condition, name it exactly:
 A run that reads no branches reports no work, and a finished stack reports no
 work too. That line is what tells the two apart.
 
-## Read the configuration out of the repository
+## What this repository is, before you plan anything
 
-Every value below is a property of the target repository, and none of it is
-assumed here. Read each one, then write all of them into `.stack-plan.md` under
-a `## repository facts` heading before you touch git.
-
-**Discovery happens once.** The stage that writes the plan to disk performs it.
-Every later worker reads `.stack-plan.md` instead of running these commands
-again — the block below tells you what is recorded there and where it came from,
-not that you should re-derive it.
+Three values decide how the diff is cut, and none of them is assumed here. Read
+each one now and record it in `.stack-plan.md` under a `## repository facts`
+heading.
 
 - **Trunk.** `gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`.
-- **The local gate.** The command that proves a branch builds. Where the
+  Every diff below is taken against it and no branch ever modifies it.
+- **The local gate.** The command that proves one branch builds. Where the
   repository has a `flake.nix`, that command is `nix flake check`. Where it does
   not, read the CI workflow files and take the command they run. Record the fast
-  form as well: `nix flake check --no-build --no-update-lock-file` evaluates
+  form beside it: `nix flake check --no-build --no-update-lock-file` evaluates
   every output without building one, and it catches the failure that dominates
   during slicing, which is a reference to a symbol introduced further up.
-- **What the local gate cannot see.** Run `nix flake show` once, and read the CI
-  workflow files. Record which checks CI runs that the local gate does not.
-  A local pass is a filter against known-bad promotions. It is not a prediction
-  of success, and no branch is called green on the strength of one.
-- **Whether draft pull requests trigger CI.** Read the `on:` block of every
-  workflow file. A workflow that filters on `types:` without `ready_for_review`
-  does not run on a draft. Record the answer, because the whole plan below
-  depends on it: where drafts are free, review costs nothing and only promotion
-  spends.
-- **A binary cache.** Look in `flake.nix` under `nixConfig.extra-substituters`,
-  in `/etc/nix/nix.conf`, and in the CI configuration. Where a Cachix or attic
-  instance exists and you hold push credentials, run the local gate under
-  `cachix watch-exec <cache>` so local verification populates it and CI resolves
-  the same derivations as cache hits. Where none exists, say so plainly. On an
-  overtaxed runner that one fact is worth more than every other saving here.
-- **The review bot and its trigger mode.** Read one existing pull request's
-  comments to learn the bot account name:
-  `gh api "repos/{owner}/{repo}/pulls/<n>/comments" --jq '.[].user.login' | sort -u`.
-  Assume the bot reviews every update until you confirm otherwise, and plan
-  pushes on that assumption.
-- **Generated paths.** List every path whose content is produced by a tool
-  rather than written by hand: lock files, generated sources, formatter output.
-  Each one goes in a mechanical pull request of its own and never rides along
-  with a semantic change.
-- **The concurrent job budget.** Six is a sane default, four is safer, and the
-  number is a cap on CI jobs belonging to this stack, not on pull requests. One
-  pull request can be a ten-job matrix.
+- **Generated paths.** Every path whose content is produced by a tool rather
+  than written by hand: lock files, generated sources, formatter output. Each
+  one goes in a mechanical branch of its own and never rides along with a
+  semantic change, so the cut depends on knowing them.
 
-  Record it in **two** places: in `.stack-plan.md` for a person, and as the bare
-  number alone on one line in a file named `.stack-budget` at the repository
-  root. The harness runs the budget gate itself and reads that file. A number
-  written only into the plan is a number the gate never sees, and the gate then
-  enforces its own default rather than the budget you discovered.
+Everything else this run needs about the repository — what CI runs that the
+local gate cannot, whether drafts trigger CI, the binary cache, the review bot,
+the job budget — is discovered once by the stage that writes the tooling to
+disk, and recorded there. Read `.stack-plan.md` for it rather than re-deriving
+it here.
 
 ## Operating rules
 

@@ -13,7 +13,7 @@ summary, end `WORK BLOCKED` yourself, and stop.
 
 A harness outside this session ran `./ci-budget.sh --wait` immediately before
 this turn and read its exit code. You are here because it allowed a promotion.
-It enforces the cap and the yield rule for you, out of `.stack-budget`, so you
+It enforces the cap and the yield rule for you, out of `.stack-config`, so you
 do not need to reason about either.
 
 What it cannot do is cover a turn it did not run in. Runs start and finish

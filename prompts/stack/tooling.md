@@ -1,6 +1,35 @@
 Write the plan and its instruments to disk. This leaf runs once, before any
 branch exists, and everything after it reads what you write here.
 
+## Discover what the rest of the run needs, and record it
+
+The planning stage already recorded the trunk, the local gate and the generated
+paths. These are the values every stage after you depends on, and this is the
+only place they are read. Write each one into `.stack-plan.md` under the
+existing `## repository facts` heading.
+
+- **What the local gate cannot see.** Run `nix flake show` once, and read the CI
+  workflow files. Record which checks CI runs that the local gate does not. A
+  local pass is a filter against known-bad promotions. It is not a prediction of
+  success, and no branch is called green on the strength of one.
+- **Whether draft pull requests trigger CI.** Read the `on:` block of every
+  workflow file. A workflow that filters on `types:` without `ready_for_review`
+  does not run on a draft. The whole cost model depends on this: where drafts
+  are free, review costs nothing and only promotion spends.
+- **A binary cache.** Look in `flake.nix` under `nixConfig.extra-substituters`,
+  in `/etc/nix/nix.conf`, and in the CI configuration. Where a Cachix or attic
+  instance exists and you hold push credentials, run the local gate under
+  `cachix watch-exec <cache>` so local verification populates it and CI resolves
+  the same derivations as cache hits. Where none exists, say so plainly. On an
+  overtaxed runner that one fact is worth more than every other saving here.
+- **The review bot and its trigger mode.** Read one existing pull request's
+  comments to learn the bot account name:
+  `gh api "repos/{owner}/{repo}/pulls/<n>/comments" --jq '.[].user.login' | sort -u`.
+  Assume the bot reviews every update until you confirm otherwise.
+- **The concurrent job budget.** Six is a sane default, four is safer, and the
+  number is a cap on CI jobs belonging to this stack, not on pull requests. One
+  pull request can be a ten-job matrix.
+
 ## The two ledgers the plan lives in
 
 Write `.stack-plan.md` at the repository root. It is the source of truth for the
@@ -20,7 +49,7 @@ to the repository:
 ```
 .stack-plan.md
 .stack-branches
-.stack-budget
+.stack-config
 .stack-verify
 .stack-bugbot
 verify-stack.sh
@@ -28,9 +57,24 @@ stack-status.sh
 ci-budget.sh
 ```
 
-Write `.stack-budget` too: the concurrent job budget you discovered, as a bare
-number alone on one line. The harness runs `ci-budget.sh` itself and that file
-is how the number you found reaches it.
+## `.stack-config`, which is how the scripts learn this repository
+
+Write it next, as shell assignments, one per line, filled in from what you
+discovered. All three scripts read it, and two of them are run by a harness
+outside this session, so this file is the only way a value you found reaches
+them. Never hand-edit the scripts themselves to carry a value: a script edited
+in place is a value with two homes, and the harness reads the one you did not
+change.
+
+```bash
+TRUNK=main                 # the default branch, from discovery
+BOT='cursor[bot]'          # the review bot account, from discovery
+CI_JOB_BUDGET=6            # concurrent CI jobs this stack may hold
+GATE_CMD='nix flake check --no-update-lock-file --keep-going --print-build-logs'
+```
+
+`GATE_CMD` is the local gate as one plain command line, run from inside a
+worktree. Leave it out entirely and the default above applies.
 
 ## Three scripts, written exactly as given
 
@@ -63,8 +107,10 @@ ROOT="$(git rev-parse --show-toplevel)"
 WT_ROOT="${WT_ROOT:-$ROOT/../.stack-worktrees-$$}"
 LOG_DIR="${LOG_DIR:-/tmp/stack-verify-$$}"
 LEDGER="${LEDGER:-$ROOT/.stack-verify}"
+[[ -f "$ROOT/.stack-config" ]] && . "$ROOT/.stack-config"
 NPROC="$(nproc)"
-JOBS="${JOBS:-4}"                                    # concurrent flake checks
+JOBS="${JOBS:-4}"                                    # concurrent gate runs
+GATE_CMD="${GATE_CMD:-nix flake check --no-update-lock-file --keep-going --print-build-logs}"
 CORES="${CORES:-$(( NPROC/JOBS > 0 ? NPROC/JOBS : 1 ))}"
 MAX_JOBS="${MAX_JOBS:-2}"
 
@@ -101,10 +147,10 @@ check() {
   # --detach: a branch can't be checked out in two worktrees, and we only read.
   git worktree add --detach --quiet "$wt" "$branch"
   local result=FAIL
-  if (cd "$wt" && nix flake check \
-        --no-update-lock-file \
-        --max-jobs "$MAX_JOBS" --cores "$CORES" \
-        --keep-going --print-build-logs) >"$log" 2>&1; then
+  # Unquoted on purpose: GATE_CMD is a command LINE from `.stack-config`, and
+  # word splitting is what turns it into argv. It is this repository's gate, not
+  # a hardcoded nix invocation, so a non-flake project needs no script edit.
+  if (cd "$wt" && $GATE_CMD --max-jobs "$MAX_JOBS" --cores "$CORES") >"$log" 2>&1; then
     result=PASS
   fi
   # Ledger: branch, SHA verified, result, log. The SHA is what lets the status
@@ -121,7 +167,7 @@ check() {
   [[ $result == PASS ]]
 }
 export -f check
-export WT_ROOT LOG_DIR MAX_JOBS CORES LEDGER
+export WT_ROOT LOG_DIR MAX_JOBS CORES LEDGER GATE_CMD
 
 echo "stack: ${BRANCHES[*]}"
 echo "jobs=$JOBS cores=$CORES max-jobs=$MAX_JOBS logs=$LOG_DIR"
@@ -152,9 +198,9 @@ Where `nix flake check` fails on a worktree's `.git` file, fall back to
 `nix flake check path:.` from inside the worktree. Support for worktrees in the
 git fetcher has been uneven across nix versions.
 
-Replace the `nix flake check` invocation with whatever local gate you recorded
-in `.stack-plan.md`, and leave the rest of the script alone. The worktree fan-out,
-the serial warm-up and the ledger are what the harness depends on.
+The gate itself comes from `GATE_CMD` in `.stack-config`, so a project that is
+not a flake needs no edit here. Leave the rest of the script alone: the worktree
+fan-out, the serial warm-up and the ledger are what the harness depends on.
 
 ### `ci-budget.sh`
 
@@ -171,11 +217,11 @@ set -uo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 BRANCHES_FILE="${BRANCHES_FILE:-$ROOT/.stack-branches}"
-# Max concurrent CI *jobs* belonging to this stack. `.stack-budget` is what the
-# discovery step recorded for THIS repository; 6 is the fallback when nothing
-# discovered one. Without that file the gate silently enforces a number nobody
-# chose.
-BUDGET="${CI_JOB_BUDGET:-$(cat "$ROOT/.stack-budget" 2>/dev/null || echo 6)}"
+# `.stack-config` is what discovery recorded for THIS repository. Without it the
+# gate silently enforces a number nobody chose, so it is read before the default
+# applies. An environment variable still wins, for a one-off override.
+[[ -f "$ROOT/.stack-config" ]] && . "$ROOT/.stack-config"
+BUDGET="${CI_JOB_BUDGET:-6}"
 [[ "$BUDGET" =~ ^[0-9]+$ ]] || BUDGET=6
 POLL="${POLL:-120}"              # seconds between --wait polls
 MAX_WAIT="${MAX_WAIT:-1800}"     # stop waiting after this; caller decides what next
@@ -252,9 +298,10 @@ ROOT="$(git rev-parse --show-toplevel)"
 BRANCHES_FILE="${BRANCHES_FILE:-$ROOT/.stack-branches}"
 LEDGER="${LEDGER:-$ROOT/.stack-verify}"
 BUGBOT_LEDGER="${BUGBOT_LEDGER:-$ROOT/.stack-bugbot}"
+# TRUNK and BOT come from `.stack-config`, which discovery wrote. The defaults
+# below apply only when it is absent.
+[[ -f "$ROOT/.stack-config" ]] && . "$ROOT/.stack-config"
 TRUNK="${TRUNK:-main}"
-# Review-bot account. Discover once with:
-#   gh api "repos/{owner}/{repo}/pulls/<n>/comments" --jq '.[].user.login' | sort -u
 BOT="${BOT:-cursor[bot]}"
 
 mapfile -t BRANCHES < <(grep -v '^\s*\(#\|$\)' "$BRANCHES_FILE")
@@ -416,9 +463,6 @@ CI      n/a       draft, so no CI by design -- expected, not a problem
 CI      none      ready but no checks reported yet -- NOT the same as passing
 LEGEND
 ```
-
-Set `TRUNK` and `BOT` at the top to the values you recorded, rather than leaving
-the defaults.
 
 ## How the table is read
 
