@@ -40,9 +40,12 @@ module Incite.Feature
   , closeWithChanges
   , fixerContinuation
   , orchestrate
+  , orchestrateWith
   , workerFuel
   , repairFuel
+  , checkLoop
   , greenGate
+  , repairLeaf
   , grindChecks
   , grindGrant
   , paradoxRule
@@ -565,9 +568,23 @@ paradoxRule =
 -- ever sees its own text — the briefs' \"your own summary as input\" contract
 -- is unchanged, and the accounting is plumbing beside it, not inside it.
 orchestrate :: Flow Text Text -> Flow Text Text
-orchestrate worker =
-  dimap' (\summary -> (workerFuel, summary)) id
-    ( loopUntil (maybe (maxBound `div` 2) id workerFuel)
+orchestrate = orchestrateWith workerFuel
+
+-- | 'orchestrate' with the ceiling as an argument, and the binding 'orchestrate'
+-- is defined by — so a capped loop cannot drift from the default one in shape,
+-- in what the worker sees, or in what exhaustion does.
+--
+-- __A parameter because a workflow's fuel is a property of the workflow.__
+-- 'workerFuel' is 'Nothing' for the two that finish when their worker says so.
+-- 'stackFuel' is finite for the one that runs four of these loops in one chain:
+-- @Agent.Cost.worstCaseCost@ sums a sequence and multiplies through a loop, and
+-- four unbounded loops in a row sum past 'maxBound' and report a NEGATIVE worst
+-- case. A cost estimate that goes backwards is worse than a large one, because
+-- it is the number an operator reads before deciding to spend anything.
+orchestrateWith :: Maybe Int -> Flow Text Text -> Flow Text Text
+orchestrateWith fuel worker =
+  dimap' (\summary -> (fuel, summary)) id
+    ( loopUntil (maybe (maxBound `div` 2) id fuel)
         ( second'' worker >>> dimap' id (uncurry decideTrip) Id )
     )
 
@@ -829,20 +846,20 @@ grindParadox =
   where
     withFacts steerText = promptText paradoxFacts <> "\n\n" <> steerText
 
--- | The ceiling on how many times the gate may hand a still-red tree to a
--- repair leaf. Fuel, not a schedule — a finite 'Int' where 'workerFuel' is a
--- 'Maybe', and much smaller: a failing check after three repairs is an
--- integration problem a person should look at, not one more turn.
-repairFuel :: Int
-repairFuel = 3
-
--- | Run @checks@ __ourselves__ until they pass, repairing between trips, and
--- keep the account that came in.
+-- | Run @checks@ __ourselves__ until they pass, doing @repair@ between trips,
+-- and keep the account that came in under a @## heading@ of its own.
 --
--- __The account survives the gate.__ What reaches this stage is the fixer's own
--- summary of what it closed and rejected, and it is the most useful thing in the
--- run's final artifact. 'keeping' puts it above the check lines rather than
--- letting 'verify' overwrite it with a log.
+-- Two gates are built from this and they differ in exactly one argument, which
+-- is the whole reason it is a binding: 'greenGate' repairs a red tree with a
+-- leaf, and 'budgetGate' has nothing to repair and passes 'Id'
+-- (@'left'' 'Id' = 'Id'@, so that loop carries no extra node at all). Everything
+-- else below is subtle enough that a second copy of it would be a second place
+-- to get it wrong.
+--
+-- __The account survives the gate.__ What reaches this stage is the previous
+-- leaf's own summary, and it is the most useful thing in the run's final
+-- artifact. 'keeping' puts it above the check lines rather than letting 'verify'
+-- overwrite it with a log.
 --
 -- __The @const mempty@ is the unit the homomorphism demands, not a scrubber
 -- bolted on.__ @Agent.Flow.Combinators.execStep@ APPENDS its status line to the
@@ -854,50 +871,63 @@ repairFuel = 3
 --
 -- __Exhaustion aborts, by upstream design.__ 'loopUntil' offers no
 -- yield-what-you-have policy (at its type the loop holds only an @a@ and must
--- produce a @b@), so a tree still red after 'repairFuel' trips fails the run
+-- produce a @b@), so a tree still red after the fuel runs out fails the run
 -- rather than falling through into 'keeping' and reporting success over a
--- failing build. That is the behaviour this gate wants, and it is upstream's
--- rather than ours — see 'orchestrate', which points the same default the other
--- way on purpose.
-greenGate :: Prompt -> [(LeafName, NonEmpty Text)] -> Flow Text Text
-greenGate artifactRule checks = keeping accountThenLog gateLoop
+-- failing check. That is the behaviour both gates want — see 'orchestrate',
+-- which points the same default the other way on purpose.
+checkLoop :: Text -> Int -> Flow Text Text -> [(LeafName, NonEmpty Text)] -> Flow Text Text
+checkLoop heading fuel repair checks = keeping accountThenLog gateLoop
   where
-    accountThenLog account gateLog = account <> "\n\n## gate\n" <> gateLog
+    accountThenLog account gateLog = account <> "\n\n## " <> heading <> "\n" <> gateLog
     gateLoop =
       loopUntil
-        repairFuel
+        fuel
         ( dimap' (const mempty) id (verify [(n, NE.toList cmd) | (n, cmd) <- checks])
             >>> dimap' id decideRed Id
-            >>> left'' repairLeaf
+            >>> left'' repair
         )
-    -- The one leaf that acts on a red gate. Under the artifact rule, because
-    -- the cheapest way to turn a failing check green is to weaken the assertion
-    -- that fails — and that move satisfies the gate, passes everything
-    -- downstream of it (there is nothing), and is exactly what the disciplines
-    -- spliced into the rule forbid.
-    repairLeaf =
-      refineWith
-        "repair"
-        ( brief
-            [__i|
-              #{artifactRule}
 
-              The checks below were run by the harness, not by an agent, and the
-              exit codes are real. Fix every failing one.
+-- | The ceiling on how many times the gate may hand a still-red tree to a
+-- repair leaf. Fuel, not a schedule — a finite 'Int' where 'workerFuel' is a
+-- 'Maybe', and much smaller: a failing check after three repairs is an
+-- integration problem a person should look at, not one more turn.
+repairFuel :: Int
+repairFuel = 3
 
-              Three rules, and they are the whole point of a gate:
+-- | 'checkLoop' with the leaf that acts on a red gate: run @checks@ ourselves
+-- until they pass, repairing between trips.
+greenGate :: Prompt -> [(LeafName, NonEmpty Text)] -> Flow Text Text
+greenGate artifactRule = checkLoop "gate" repairFuel (repairLeaf artifactRule)
 
-              - Never weaken an assertion, delete a test, or narrow a filter to
-                make a check pass. A check that fails is telling you something.
-              - Never hand-edit recorded output. Fix what generates it, then
-                regenerate, then read the diff.
-              - Where two individually-correct fixes conflict, repair the
-                conflict rather than reverting either one, and say which two.
+-- | The one leaf that acts on a red gate. Under the artifact rule, because the
+-- cheapest way to turn a failing check green is to weaken the assertion that
+-- fails — and that move satisfies the gate, passes everything downstream of it
+-- (there is nothing), and is exactly what the disciplines spliced into the rule
+-- forbid.
+repairLeaf :: Prompt -> Flow Text Text
+repairLeaf artifactRule =
+  refineWith
+    "repair"
+    ( brief
+        [__i|
+          #{artifactRule}
 
-              The check log follows:
-            |]
-        )
-        id
+          The checks below were run by the harness, not by an agent, and the
+          exit codes are real. Fix every failing one.
+
+          Three rules, and they are the whole point of a gate:
+
+          - Never weaken an assertion, delete a test, or narrow a filter to
+            make a check pass. A check that fails is telling you something.
+          - Never hand-edit recorded output. Fix what generates it, then
+            regenerate, then read the diff.
+          - Where two individually-correct fixes conflict, repair the
+            conflict rather than reverting either one, and say which two.
+
+          The check log follows:
+        |]
+    )
+    id
 
 -- | The shared analysis prefix: explore (three stances) then plan.
 explorePlan :: Flow Text Text
