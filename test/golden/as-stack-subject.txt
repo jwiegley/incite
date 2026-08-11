@@ -1,0 +1,13 @@
+Review the stack of branches in the current working directory, one branch at a time. `.stack-branches` lists them bottom first, and a branch's own change is `git diff <parent>...<branch>` where the parent is the line above it in that file — never a diff against the trunk, which shows you every branch below it as well.
+
+Read the branches before reporting anything, and name the branch in every finding. A finding belongs to the branch that INTRODUCED the code, never to the top of the stack: a fix applied at the top is a merge conflict later.
+
+Two things are findings here that are not findings in a single diff, and one thing is not.
+
+* A branch that does not build on its own is a defect even when the whole stack builds, because each branch is reviewed and merged alone.
+* A branch a reviewer cannot judge without reading the rest of the stack is a defect, whatever its size.
+* Code that nothing calls yet is CORRECT here. Read `.stack-plan.md` first: where it names the later branch that calls the code, say nothing. Report the plan, not the code, where it names none.
+
+The account below is the closing summary of the stage that built the stack. It is a claim to check against the branches, not the branches themselves.
+
+<<SUMMARY>>

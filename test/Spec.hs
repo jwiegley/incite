@@ -32,6 +32,7 @@ import Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
+  , asStackSubject
   , codeRule
   , continueMarker
   , decideContinue
@@ -403,6 +404,7 @@ reframings =
   [ ("asReviewSubject", asReviewSubject, "test/golden/as-review-subject.txt")
   , ("asRetroSubject", asRetroSubject, "test/golden/as-retro-subject.txt")
   , ("asDocsSubject", asDocsSubject, "test/golden/as-docs-subject.txt")
+  , ("asStackSubject", asStackSubject, "test/golden/as-stack-subject.txt")
   ]
 
 -- | Three cases per reframing, and which mutation each one kills is worth
@@ -707,8 +709,8 @@ orientTests =
               (null (preambleViolations ps))
     , -- The guard on the assertion above: it defends the hand-listed rows
       -- below, which do go stale, not the quantification, which does not.
-      testCase "Orientation enumerates 3 constructors" $
-        length ([minBound .. maxBound] :: [Orientation]) @?= 3
+      testCase "Orientation enumerates 4 constructors" $
+        length ([minBound .. maxBound] :: [Orientation]) @?= 4
     , -- The join as an OBSERVABLE property of the rendered text, not as a
       -- restatement of 'orient'. Asserting @orient o s == preambleOf o <> …@
       -- would be the definition written twice and could never fail; this reads

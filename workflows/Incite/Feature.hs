@@ -30,6 +30,7 @@ module Incite.Feature
   , asReviewSubject
   , asRetroSubject
   , asDocsSubject
+  , asStackSubject
   , document
   , retrospective
   , keeping
@@ -605,6 +606,9 @@ data Orientation
   | -- | The documents in the tree, read against the code they describe. The
     -- docs panel's stage.
     AtDocs
+  | -- | The branches of a Graphite stack, each read against its own parent.
+    -- 'stackPRs'\'s review stage.
+    AtStack
   deriving (Eq, Show, Bounded, Enum)
 
 -- | The preamble that points a stage at an 'Orientation'\'s evidence.
@@ -639,6 +643,18 @@ Where a column asks you to quote, quote the record: a commit message, a finding,
 Read the documents themselves before reporting anything. An account of them follows and it is a claim to check, not a substitute for the files — where it and a document disagree, the document is what ships.
 
 Cite the document and the code on both sides of every finding. A statement about prose that you cannot point at a file and a line for is a preference, and a preference is not a finding here.|]
+  AtStack ->
+    [i|Review the stack of branches in the current working directory, one branch at a time. `.stack-branches` lists them bottom first, and a branch's own change is `git diff <parent>...<branch>` where the parent is the line above it in that file — never a diff against the trunk, which shows you every branch below it as well.
+
+Read the branches before reporting anything, and name the branch in every finding. A finding belongs to the branch that INTRODUCED the code, never to the top of the stack: a fix applied at the top is a merge conflict later.
+
+Two things are findings here that are not findings in a single diff, and one thing is not.
+
+* A branch that does not build on its own is a defect even when the whole stack builds, because each branch is reviewed and merged alone.
+* A branch a reviewer cannot judge without reading the rest of the stack is a defect, whatever its size.
+* Code that nothing calls yet is CORRECT here. Read `.stack-plan.md` first: where it names the later branch that calls the code, say nothing. Report the plan, not the code, where it names none.
+
+The account below is the closing summary of the stage that built the stack. It is a claim to check against the branches, not the branches themselves.|]
 
 -- | Point a stage at an orientation's evidence and hand it the account beneath.
 --
@@ -690,6 +706,19 @@ asRetroSubject = orient AtRecord
 -- before anything depended on them.
 asDocsSubject :: Text -> Text
 asDocsSubject = orient AtDocs
+
+-- | 'orient' at 'AtStack', for 'stackPRs'\'s review stage.
+--
+-- __One panel over the whole stack, not one panel per branch.__ A branch count
+-- is a runtime fact and @panelAcross@ is a static cross-product, so a panel per
+-- branch would need a fan-out over a number nothing knows when the 'Flow' is
+-- built — the same bound "Incite.Review".@spread@ exists to avoid, and the
+-- reason @grind-paradox@ audits a whole tree with one panel rather than one per
+-- module. What the preamble buys instead is attribution: the lenses read the
+-- branches one at a time and every finding names the branch that introduced the
+-- code, which is the branch a fix has to land on.
+asStackSubject :: Text -> Text
+asStackSubject = orient AtStack
 
 -- | What the artifact is, and which side gives when the artifact and the record
 -- it answers to disagree. One clause per acting workflow, and the argument
