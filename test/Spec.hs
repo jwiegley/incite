@@ -50,6 +50,7 @@ import Incite.Feature
   , retrospective
   , shipDocs
   , shipFeature
+  , stackPRs
   )
 import Incite.Prompts
   ( codeReview
@@ -1811,7 +1812,7 @@ packagingTests =
           @?= [True, False, False, True, False, False, True, False]
     ]
 
--- | The ten workflows "Main".workflows holds, rebuilt from library exports.
+-- | The twelve workflows "Main".workflows holds, rebuilt from library exports.
 -- This suite cannot import "Main" — it is the executable, not a library module
 -- — so this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
 -- binding, in the same order. A rename or reorder on either side is exactly
@@ -1821,6 +1822,7 @@ mirrorWorkflows =
   [ planFeature
   , shipFeature
   , shipDocs
+  , stackPRs
   , grindParadox
   , fessAudit
   , retro
@@ -1886,7 +1888,7 @@ docsInventoryTests =
     [ -- Direct list equality, not sorted-set equality. The table is meant to
       -- mirror 'mirrorWorkflows'\'s order (it is 'workflows/Main.hs'\'s order),
       -- and a bare set comparison cannot see a reorder: two tables naming the
-      -- same ten workflows in different sequences would both read as the same
+      -- same twelve workflows in different sequences would both read as the same
       -- set and this would stay green. Order is exactly what makes the claim on
       -- 'mirrorWorkflows' — "a rename or reorder on either side is exactly what
       -- this test exists to catch" — true.

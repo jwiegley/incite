@@ -27,6 +27,7 @@ text.
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
+| `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
@@ -107,13 +108,94 @@ permission flow.
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
   `Just n` to cap at n trips after which the last summary yields to the
-  review panel rather than aborting the run;
+  review panel rather than aborting the run. `orchestrateWith` takes that
+  ceiling as an argument and is what `orchestrate` is defined by, so a capped
+  loop cannot drift from the default one; `stack-prs` passes `stackFuel`;
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
-  `docsRule`, or `paradoxRule`) plus a closing clause. The clause is what
-  distinguishes a fixer that runs once (`closeWithChanges`) from one running
-  under `orchestrate` (`fixerContinuation`, which splices `continueMarker`);
-  with no clause the leaf is byte-for-byte what it was before the argument
-  existed, and `test/Spec.hs` pins that against a golden recorded beforehand.
+  `docsRule`, `paradoxRule`, or `stackRule`) plus a closing clause. The clause
+  is what distinguishes a fixer that runs once (`closeWithChanges`) from one
+  running under `orchestrate` (`fixerContinuation`, which splices
+  `continueMarker`); with no clause the leaf is byte-for-byte what it was
+  before the argument existed, and `test/Spec.hs` pins that against a golden
+  recorded beforehand.
+
+## Stacking a change
+
+`stack-prs` is the acting shape pointed at one change that is too large to
+review at once. It cuts that change into an ordered chain of Graphite branches,
+each of which builds on its own and reads as one logical step. It reuses
+`explorePlan`, `orchestrateWith`, `remediate`, `greenGate` and `reviewHeavyFlow`
+rather than copying them. Six things distinguish it.
+
+- **Two gates run our own exec, and that is why it is a flow.** `stackChecks`
+  runs `./verify-stack.sh` and `budgetCheck` runs `./ci-budget.sh --wait`, both
+  through `verify`, so the exit codes are real. The second one is the point: an
+  agent asked to check the CI budget before promoting is an agent that reports
+  having checked it, and `budgetGate` sits inside the promotion loop so the
+  answer is re-read before every trip. That script fails closed — a queued run
+  belonging to anybody else holds it unconditionally, and a job count it cannot
+  read counts as a full budget.
+- **Where the gates sit is the argument.** The first `greenGate` stands between
+  the cutting loop and the panel, because 21 reviewers reading branches that do
+  not build is the most expensive way to learn they do not build. The second
+  stands between the review rounds and promotion, which is the last moment a
+  local failure is still cheap.
+- **A local pass is a filter, never a prediction.** CI runs checks no local gate
+  can, so the promotion brief treats its first branch as a measurement of how
+  many jobs one pull request spawns, and records the CI-only checks it finds in
+  `.stack-plan.md`. Nothing here calls a branch green on `stackChecks` alone.
+- **The plan lenses are `slice` then `simple-english`.** `editPlan`'s six are
+  written for steps that will be carried out, and a slice plan's entries are
+  branches. The cut is decided first and the wording second, because the other
+  order spends the rewrite on entries the slice lens then merges away.
+- **The facts are discovered, not stated.** `prompts/stack/facts.md` is
+  `paradox-facts.md`'s counterpart and deliberately not its twin: there is one
+  Paradox checkout, and a stack can be cut in any repository. It names what to
+  read for the trunk, the local gate, the CI trigger rules and the review bot,
+  and says to write the answers into `.stack-plan.md`. It keeps the probe, for
+  the same reason: a run that reads no branches reports no work, and so does a
+  finished stack.
+- **`stackFuel` is `Just 12`, where `workerFuel` is `Nothing`.** Four
+  orchestrated loops run in sequence here, and `worstCaseCost` sums a sequence,
+  so four unbounded loops overflow `maxBound` and report a negative worst case.
+  Capped, the reported worst case is the figure in the fenced table below.
+  Exhaustion yields rather than aborts, so a stack that wants more trips still
+  reaches the next stage with every branch it cut.
+
+It promotes and it never merges. `prompts/stack/rule.md` forbids merging at
+every acting leaf, and it is spliced under `codeRule` rather than replacing it.
+A merged stack destroys the review opportunity the whole run exists to create,
+so a complete unmerged stack is the finished product.
+
+**Run it with the sandbox off.** This is the one workflow where `--sandbox` is
+actively wrong, and the reason is Graphite rather than nix. The sandbox is a
+linked `git worktree`, Graphite keeps its metadata in the shared `.git`, and the
+workflow's own operating rules forbid running `gt` inside a worktree. A
+sandboxed run therefore either corrupts that metadata or cuts branches the
+working tree cannot see. `hasWorldActing` is true here (the two gates are `Exec`
+leaves), so `--sandbox` engages if asked for — nothing refuses it for you. The
+probe in `prompts/stack/facts.md` is what catches it: `--show-toplevel` returns
+the worktree root and reveals nothing, so the probe compares `--git-dir` against
+`--git-common-dir` and refuses when they differ. `grind-paradox` has the same
+in-place requirement for a different reason, and its driver passes
+`sandbox=false`.
+
+**Every acting leaf is pinned, through `stackPin`.** The workers, `remediate`
+and `repair` all go through it. The last two are unpinned where `ship-feature`
+and `grind-paradox` use them, which is right there — a repair over one tree is a
+reading. Here they edit at the branch that introduced the code and run
+`gt restack`, so they rewrite history exactly as the workers do, and a pin on
+the workers alone would have left the two leaves that rewrite the most running
+on whatever backend the caller passed.
+
+**The worst case is fenced, not quoted.** `test/Spec.hs` reads the figure below
+out of this file and compares it against `worstCaseCost . toSkeleton . wfFlow`,
+the same way the review-tier table is fenced — a fuel or panel change that moves
+the number fails the suite rather than stranding the prose.
+
+| Workflow | Worst-case leaves |
+|---|---:|
+| `stack-prs` | 133 |
 
 ## Grinding a whole tree
 
