@@ -64,7 +64,9 @@ import Incite.Feature
   , stackWorker
   )
 import Incite.Prompts
-  ( alexeyReview
+  ( alexeyPrinciples
+  , alexeyReview
+  , alexeyStance
   , codeReview
   , codeReviewerSecurity
   , docsCompleteness
@@ -1876,6 +1878,30 @@ reorientationTests =
                   [ "the haskell lens no longer carries " <> tshow rule
                   | rule <- ["No primitive in a top-level signature", "RecordWildCards", "DataKinds"]
                   , not (says haskellOfHouse rule)
+                  ]
+                ]
+          ]
+    , -- 'disciplineOfPanel' is a three-file splice, and only ONE of the three is
+      -- its base — so every case above sees the skill and none of them can see
+      -- whether the references arrived. That is the failure this lens exists to
+      -- avoid: the skill's own first instruction is to read both before
+      -- reviewing, and a lens carrying the instruction without the text is one
+      -- whose reader invents what they said.
+      testCase "disciplineOfPanel carries both references the skill demands" $
+        report
+          [ complaint
+          | complaint <-
+              concat
+                [ [ "the discipline lens no longer carries " <> label
+                  | (label, reference) <-
+                      [("engineering-principles", alexeyPrinciples), ("stance", alexeyStance)]
+                  , not (says disciplineOfPanel (promptText reference))
+                  ]
+                , -- And the adjustment has to SAY they are here. Splicing them
+                  -- silently leaves the skill telling its reader to open a
+                  -- directory that does not exist.
+                  [ "the adjustment no longer says where the references went"
+                  | not (says disciplineOfPanel "Both are spliced above")
                   ]
                 ]
           ]
