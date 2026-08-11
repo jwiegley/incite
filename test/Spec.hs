@@ -50,7 +50,18 @@ import Incite.Feature
   , retrospective
   , shipDocs
   , shipFeature
+  , budgetCheck
+  , budgetFuel
+  , stackChecks
+  , stackContinuation
+  , stackFuel
+  , blockedMarker
+  , stackPin
+  , stackGrant
   , stackPRs
+  , stackPlanLenses
+  , stackRule
+  , stackWorker
   )
 import Incite.Prompts
   ( codeReview
@@ -60,6 +71,12 @@ import Incite.Prompts
   , fess
   , fixAll
   , paradoxFacts
+  , stackDisciplines
+  , stackFacts
+  , stackPromote
+  , stackSlice
+  , stackTooling
+  , stackTriage
   , grindCodegenGaps
   , grindDry
   , grindEmittedCode
@@ -138,6 +155,7 @@ tests =
     , lensesOfTests
     , codexFessTests
     , grindPanelTests
+    , stackTests
     , reorientationTests
     , promptLintTests
     , packagingTests
@@ -1451,6 +1469,238 @@ grindPanelTests =
           [ "grindGrant permits " <> tshow line
           | line <- ["rm -rf /", "git push origin master", "curl example.com"]
           , permitExec grindGrant line
+          ]
+    ]
+
+-- | The acting leaves of 'stackPRs', in the order the workflow runs them.
+--
+-- Written out because the claim is the ORDER and not the membership: every gate
+-- here is worth nothing in the wrong place. A @verify-stack@ that moved below
+-- the panel means 21 reviewers read branches that do not build; one that moved
+-- below the promotion gate means a shared CI slot is spent on a branch a local
+-- check already knew would fail; a @ci-budget@ that moved outside the promotion
+-- loop means the budget is read once and reused against a queue that has since
+-- changed. None of those moves any leaf NAME, any node count or any cost, so
+-- this list is the only instrument that can see one.
+stackActing :: [Text]
+stackActing =
+  [ "bootstrap"
+  , "cut"
+  , "verify-stack"
+  , "repair"
+  , "remediate"
+  , "triage"
+  , "verify-stack"
+  , "repair"
+  , "ci-budget"
+  , "promote"
+  ]
+
+-- | The four leaves 'Incite.Feature.stackWorker' builds, each with the body and
+-- the closing clause the workflow hands it.
+--
+-- A hand-kept mirror, like 'mirrorWorkflows', and the case above is what keeps
+-- it honest: those four names are asserted against the shipped flow, so a worker
+-- renamed on one side and not the other fails there.
+stackWorkers :: [(LeafName, Prompt, Prompt)]
+stackWorkers =
+  [ ("bootstrap", stackTooling, mempty)
+  , ("cut", stackSlice, stackContinuation)
+  , ("triage", stackTriage, stackContinuation)
+  , ("promote", stackPromote, stackContinuation)
+  ]
+
+-- | Fences the workflow whose gates are __ours__.
+--
+-- Every other acting workflow here trusts an agent with everything except its
+-- build. This one also decides, with a real exit code, whether a CI run may be
+-- started at all — and that decision lands on whoever else is queued for the
+-- same runners. So the structure carrying it is asserted rather than described.
+stackTests :: TestTree
+stackTests =
+  testGroup
+    "stack-prs"
+    [ testCase "acts in the order its gates are worth anything in" $
+        filter (`elem` stackActing) (leafNames (wfFlow stackPRs)) @?= stackActing
+    , -- The safety property the whole workflow exists to hold, stated on its
+      -- own rather than left as a corollary of the order above. A budget check
+      -- reached AFTER the first promotion is a check on a slot already spent.
+      testCase "no promotion leaf is reachable before a budget check" $
+        assertBool
+          "a promote leaf precedes every ci-budget leaf"
+          ("ci-budget" `elem` takeWhile (/= "promote") (leafNames (wfFlow stackPRs)))
+    , -- 'Incite.Feature.stackFuel' is finite because four unbounded loops in
+      -- one sequence sum past 'maxBound' and report a NEGATIVE worst case —
+      -- which is what @agent-functor cost@ printed for the four loops this
+      -- workflow runs in sequence, and it is what an operator reads before
+      -- deciding to spend anything. Nothing else here would notice: the flow
+      -- builds, plans and runs identically either way.
+      --
+      -- Both fuels are asserted finite HERE rather than left as literals only a
+      -- reader checks: 'stackFuel' being 'Nothing' is the overflow, and
+      -- 'budgetFuel' being unbounded is a promotion gate that waits forever
+      -- instead of handing a stuck queue to a person.
+      testCase "both fuels are finite, which is what keeps the cost a number" $ do
+        assertBool "stackFuel is unbounded" (stackFuel /= Nothing)
+        assertBool "budgetFuel is not positive" (budgetFuel > 0)
+        case worstCaseCost (toSkeleton (wfFlow stackPRs)) of
+          Finite n -> assertBool ("worst case is " <> show n) (n > 0)
+          other -> assertFailure ("worst case is " <> T.unpack (renderCost other))
+    , -- The figure in the prose, against the arithmetic. Same fence as the
+      -- review-tier table, and it exists because the Stacking section quoted a
+      -- bare number that no check could see going stale: a fuel change, a panel
+      -- change or one more stage moves it silently.
+      testCase "the Stacking worst-case table matches worstCaseCost" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let rows = tableRows (sectionBody "Stacking a change" doc)
+        assertBool "no worst-case row read from the Stacking section" (not (null rows))
+        report
+          [ complaint
+          | (name, cells) <- rows
+          , complaint <- case (name == wfName stackPRs, cells) of
+              (False, _) -> [name <> ": the Stacking table names a workflow this is not about"]
+              (True, raw : _) -> case reads (T.unpack (T.strip raw)) of
+                [(n, "")] ->
+                  let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
+                   in [ name <> ": docs/workflows.md says " <> tshow n
+                          <> ", the flow's worst case is " <> renderCost actual
+                      | actual /= Finite n
+                      ]
+                _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
+              (True, []) -> [name <> ": the row carries no count"]
+          ]
+    , -- Every acting leaf under one pin, read off the SHIPPED flow rather than
+      -- off the source. 'remediate' and 'repair' are unpinned in the two
+      -- workflows that share them, so nothing but this says they are pinned
+      -- here — and a backend scope moves no leaf name, node count or cost.
+      testCase "every acting leaf of stack-prs runs on claude-agent" $ do
+        -- The two Exec leaves are the harness's own commands, so no backend
+        -- runs them and a pin would mean nothing. Their names are derived from
+        -- the check lists rather than typed here, so a renamed check cannot
+        -- quietly re-enter the set this quantifies over.
+        let harnessRun = [leafNameText n | (n, _) <- budgetCheck : stackChecks]
+            agentActing = [n | n <- stackActing, n `notElem` harnessRun]
+        assertBool "no agent-run acting leaves to check" (not (null agentActing))
+        report
+          [ "unpinned acting leaf: " <> n <> " runs on " <> agent
+          | (n, agent) <- scopedLeaves (wfFlow stackPRs)
+          , n `elem` agentActing
+          , backendOf agent /= "claude-agent"
+          ]
+    , -- The third ending, and the reason it is a token rather than prose: the
+      -- stage after a blocked worker reads its last line, and a block reported
+      -- as completion is how a run spends CI on work a person owed a decision
+      -- on. 'decideContinue' must end the loop on it (it is not the continue
+      -- marker), and the promotion brief must refuse on it.
+      testCase "the blocked ending is terminal, distinct, and refused downstream" $ do
+        decideContinue ("work\n" <> blockedMarker) @?= Right ("work\n" <> blockedMarker)
+        assertBool "the blocked marker is the continue marker" (blockedMarker /= continueMarker)
+        assertBool
+          "the continuation clause does not name the blocked marker"
+          (says stackContinuation blockedMarker)
+        assertBool
+          "the promotion brief does not refuse a blocked hand-off"
+          (says stackPromote blockedMarker)
+    , -- The grant against the checks it is derived from, through the runtime's
+      -- own matcher — 'grindGrant'\'s case, and one sharper. An ungranted check
+      -- is denied inside the run, so a denied @ci-budget@ leaves a promotion
+      -- loop that never asks whether it may promote, while the artifact still
+      -- carries a budget section.
+      testCase "stackGrant permits both checks as the runtime spells them" $
+        report
+          [ "denied by stackGrant: " <> tshow line
+          | (_, cmd) <- budgetCheck : stackChecks
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec stackGrant line)
+          ]
+    , testCase "stackGrant denies what no check asked for" $
+        report
+          [ "stackGrant permits " <> tshow line
+          | line <- ["rm -rf /", "git push --force origin main", "gh pr merge 1"]
+          , permitExec stackGrant line
+          ]
+    , -- Every acting leaf stands under the facts and the disciplines, and the
+      -- one that can destroy the most is the FIRST — a branch recreated rather
+      -- than split takes a pull request's review history with it, long before
+      -- any fixer runs. A worker written later that skips 'stackWorker' would
+      -- lose both with nothing else going red.
+      testCase "every worker carries the facts, the rule, and its own body" $ do
+        complaints <-
+          mapM
+            ( \(name, body, closing) -> do
+                let named = leafNameText name
+                sent <- flowLeafPrompts (T.unpack named) (stackWorker name body closing) "ARTIFACT"
+                pure $ case sent of
+                  [leafText] ->
+                    [ named <> " drops " <> what
+                    | (what, needle) <-
+                        [ ("the facts", promptText stackFacts)
+                        , ("the code rule", promptText codeRule)
+                        , ("the stack disciplines", promptText stackDisciplines)
+                        , ("its own body", promptText body)
+                        , ("the artifact", "ARTIFACT")
+                        , ("its closing clause", promptText closing)
+                        ]
+                    , not (T.null (T.strip needle))
+                    , not (T.isInfixOf needle leafText)
+                    ]
+                  _ -> [named <> " is not one prompt leaf"]
+            )
+            stackWorkers
+        report (concat complaints)
+    , -- The artifact rule, asserted directly. It reaches every worker through
+      -- 'stackWorker', so the case above covers it there — but 'remediate' and
+      -- the repair leaf take it as an argument, and nothing else would say the
+      -- composition still carries both halves.
+      testCase "stackRule carries the code rule and the stack disciplines" $
+        report
+          [ "stackRule drops " <> what
+          | (what, needle) <-
+              [ ("the code rule", promptText codeRule)
+              , ("the stack disciplines", promptText stackDisciplines)
+              ]
+          , not (says stackRule needle)
+          ]
+    , -- Round trip through the decider rather than a substring check, for
+      -- 'documentTests'\'s reason: the clause shows the marker decorated, and
+      -- what has to hold is that the decorated form a worker copies is one
+      -- 'decideContinue' reads as "call me again". A clause that spelled the
+      -- marker itself would strand every loop in this workflow for its whole
+      -- fuel, with nothing in any output naming the cause.
+      testCase "the continuation clause decorates a marker decideContinue accepts" $ do
+        let decorated = "`" <> continueMarker <> "`"
+        assertBool
+          "the clause does not show the marker in the decoration this asserts"
+          (says stackContinuation decorated)
+        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+    , -- The third ending is the reason this clause is not 'fixerContinuation'.
+      -- A stacking run can be blocked by something no branch edit reaches — a
+      -- design disagreement, an approved branch, a starved runner pool — and a
+      -- worker with nowhere to put that either reports a completion it does not
+      -- have or spins its fuel.
+      testCase "the continuation clause admits the blocked ending" $
+        report
+          [ "stackContinuation does not say " <> tshow needle
+          | needle <-
+              [ "cannot continue without a person"
+              , "for a person"
+              , "Never report a block as completion"
+              ]
+          , not (saysLoosely stackContinuation needle)
+          ]
+    , -- @docs/workflows.md@ says which lenses a stacking run edits through, and
+      -- a lens joining an inline list moves no name, count or skeleton this file
+      -- is checked on. 'Incite.Feature.stackPlanLenses' is the roster it reads —
+      -- the same fence, and the same past failure, as the docs chain's.
+      testCase "the Stacking a change section names every plan lens stack-prs runs" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let body = sectionBody "Stacking a change" doc
+        assertBool "no Stacking a change section found" (not (T.null (T.strip body)))
+        report
+          [ "docs/workflows.md's Stacking a change section does not name " <> n
+          | (name, _) <- stackPlanLenses
+          , let n = leafNameText name
+          , not (T.isInfixOf n body)
           ]
     ]
 
