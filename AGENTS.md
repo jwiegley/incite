@@ -151,11 +151,12 @@ and, to be STE-linted, a line in `flake.nix`'s `stePromptSrc` fileset.
 ## Defined workflows
 
 The `workflows` list in `workflows/Main.hs` is the inventory. The full table —
-what each of the 12 workflows does — lives in one place:
+what each of the 13 workflows does — lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth keeping here rather than only there: four workflows are
-**world-acting** and the rest touch nothing. `ship-feature` and `ship-docs` run
+Two safety facts worth keeping here rather than only there: five workflows are
+**world-acting** and the rest touch nothing. `ship-feature`, `ship-feature-lite`
+and `ship-docs` run
 under `actingGrant` (`execGrant ["nix*"]`), `grind-paradox` under `grindGrant`
 and `stack-prs` under `stackGrant`, the last two derived from their own check
 lists rather than written beside them. Every grant gates only *our* `Exec`
@@ -207,7 +208,7 @@ previously untestable because it was buried in `where` clauses:
   this repo can see (they all run in a git checkout).
 - Backend structure.
 - `docsInventoryTests` — `docs/workflows.md`'s "Exposed inventory" table against
-  the actual twelve-workflow list, and its "Review tiers and leaf counts" table
+  the actual thirteen-workflow list, and its "Review tiers and leaf counts" table
   against `worstCaseCost . toSkeleton . wfFlow` for each named workflow.
 
 The workflows themselves — the `Flow` values and combinators — remain under test

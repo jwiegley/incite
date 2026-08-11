@@ -14,7 +14,7 @@ import Test.Tasty.HUnit
 
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (permitExec)
-import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
@@ -43,6 +43,8 @@ import Incite.Feature
   , isRed
   , document
   , implement
+  , liteFuel
+  , orchestrateWith
   , orient
   , planFeature
   , preambleOf
@@ -51,6 +53,7 @@ import Incite.Feature
   , retrospective
   , shipDocs
   , shipFeature
+  , shipFeatureLite
   , budgetCheck
   , budgetFuel
   , consentCheck
@@ -162,6 +165,7 @@ tests =
     , codexFessTests
     , grindPanelTests
     , stackTests
+    , liteTests
     , reorientationTests
     , promptLintTests
     , packagingTests
@@ -562,12 +566,46 @@ documentTests =
             -- 'Incite.Feature.shipFeatureLite' puts a different panel after it, so
             -- the rule is quantified over both briefs and the sentence had to go.
             --
-            -- Whitespace-normalised, so rewrapping a paragraph is not a failure.
+            -- __A phrase list, and it is worth being exact about what that is.__
+            -- The rule is semantic and this is not: it refutes the spellings a
+            -- worker brief would plausibly reach for, not every sentence that
+            -- names a following stage. What makes it more than a pin on the one
+            -- deleted sentence is that the list IS a list — a rewording is how
+            -- this drift recurs, and a single literal waves every rewording
+            -- through. A phrasing outside it still gets past, which is why the
+            -- rule stays written down in 'Incite.Feature.document'\'s haddock as
+            -- well as here.
+            --
+            -- Quantified over both briefs though only @implement@ has ever
+            -- broken it: @document@'s instance is a standing guarantee rather
+            -- than a regression pin, and a rule that covers only the leaf known
+            -- to have failed it is not a rule.
+            --
+            -- __It reads the RENDERED leaf__, which splices 'ponytailLadder',
+            -- 'wiggum' and (for @implement@) 'agenticCoder'. An upstream brief
+            -- adopting one of these phrasings therefore fails here too. That is
+            -- the right polarity — those bytes are in what the worker is told,
+            -- whoever wrote them — and the complaint names the phrase, which is
+            -- what points a reader at the upstream file rather than at this
+            -- repository's own text.
+            --
+            -- 'proseNormal' rather than a raw substring: rewrapping a paragraph
+            -- or backticking a word is not a failure, the sentence being there
+            -- is.
             testCase "names no stage that follows it" $ do
               [leafText] <- flowLeafPrompts name worker "THE PLAN"
-              assertBool
-                "the brief tells the worker what runs after it"
-                (not (T.isInfixOf "review comes next" (T.unwords (T.words leafText))))
+              report
+                [ T.pack name <> " tells the worker what runs after it: " <> tshow phrase
+                | phrase <-
+                    [ "review comes next"
+                    , "review follows"
+                    , "reviewed next"
+                    , "goes to review"
+                    , "the panel runs"
+                    , "then the reviewers"
+                    ]
+                , T.isInfixOf phrase (proseNormal leafText)
+                ]
           ]
     | (name, worker) <- [("document", document), ("implement", implement)]
     ]
@@ -1597,6 +1635,9 @@ stackTests =
       -- reader checks: 'stackFuel' being 'Nothing' is the overflow, and
       -- 'budgetFuel' being unbounded is a promotion gate that waits forever
       -- instead of handing a stuck queue to a person.
+      --
+      -- 'Incite.Feature.liteFuel' gets the same treatment in 'liteTests', where
+      -- the workflow it belongs to is.
       testCase "both fuels are finite, which is what keeps the cost a number" $ do
         assertBool "stackFuel is unbounded" (stackFuel /= Nothing)
         assertBool "budgetFuel is not positive" (budgetFuel > 0)
@@ -1607,25 +1648,13 @@ stackTests =
       -- review-tier table, and it exists because the Stacking section quoted a
       -- bare number that no check could see going stale: a fuel change, a panel
       -- change or one more stage moves it silently.
-      testCase "the Stacking worst-case table matches worstCaseCost" $ do
-        doc <- TIO.readFile "docs/workflows.md"
-        let rows = tableRows (sectionBody "Stacking a change" doc)
-        assertBool "no worst-case row read from the Stacking section" (not (null rows))
-        report
-          [ complaint
-          | (name, cells) <- rows
-          , complaint <- case (name == wfName stackPRs, cells) of
-              (False, _) -> [name <> ": the Stacking table names a workflow this is not about"]
-              (True, raw : _) -> case reads (T.unpack (T.strip raw)) of
-                [(n, "")] ->
-                  let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
-                   in [ name <> ": docs/workflows.md says " <> tshow n
-                          <> ", the flow's worst case is " <> renderCost actual
-                      | actual /= Finite n
-                      ]
-                _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
-              (True, []) -> [name <> ": the row carries no count"]
-          ]
+      --
+      -- 'worstCaseTable' is the reader, shared with the Small changes section
+      -- rather than copied for it. It replaced the worked example that stood
+      -- here, and only after both of that reader's vacuity modes were provoked
+      -- and seen to fail — see its own haddock.
+      testCase "the Stacking worst-case table matches worstCaseCost" $
+        worstCaseTable "Stacking a change" stackPRs
     , -- Every acting leaf under one pin, read off the SHIPPED flow rather than
       -- off the source. 'remediate' and 'repair' are unpinned in the two
       -- workflows that share them, so nothing but this says they are pinned
@@ -1780,6 +1809,92 @@ stackTests =
           , let n = leafNameText name
           , not (T.isInfixOf n body)
           ]
+    ]
+
+-- | Fences the tier that trades coverage for price, on the two things that
+-- trade buys and the one thing it must not cost.
+--
+-- Everything else about @ship-feature-lite@ is a composition of bindings the
+-- heavy path already fences: 'Incite.Feature.planLeaf',
+-- 'Incite.Feature.implement', 'Incite.Feature.asReviewSubject',
+-- 'Incite.Review.reviewLiteFlow' and 'Incite.Feature.remediate' are one binding
+-- each, so a case here restating their contents would restate a fence rather
+-- than add one. What is new is the cap, what the cap does when it runs out, and
+-- where the chain stops.
+liteTests :: TestTree
+liteTests =
+  testGroup
+    "ship-feature-lite"
+    [ -- The counterpart of @stack-prs@'s "both fuels are finite" case, and for
+      -- the same reason: 'Incite.Feature.liteFuel' being 'Nothing' would make
+      -- this tier's whole premise — a small change, priced before it runs —
+      -- unstatable, and the flow would build, plan and run identically either
+      -- way. The cost is asserted here as well as against the prose, so this
+      -- stays a fence when the docs table is absent or when the reader below
+      -- matches nothing.
+      testCase "the fuel is finite, which is what keeps the cost a number" $ do
+        assertBool "liteFuel is unbounded" (liteFuel /= Nothing)
+        case worstCaseCost (toSkeleton (wfFlow shipFeatureLite)) of
+          Finite n -> assertBool ("worst case is " <> show n) (n > 0)
+          other -> assertFailure ("worst case is " <> T.unpack (renderCost other))
+    , -- __What separates "converged" on trip three from "gave up" on trip
+      -- three.__ Exhaustion yields rather than aborting, by
+      -- 'Incite.Feature.orchestrateWith'\'s design, so a capped run that never
+      -- finished still reaches the panel, the fixer and the close — and reads
+      -- as a complete ship unless the text itself says otherwise.
+      --
+      -- It does say otherwise, and this is what asserts it: the summary yielded
+      -- at trip n is the one that ASKED for trip n+1, so its last line is still
+      -- 'continueMarker' and 'decideContinue' answers 'Left' on it. A converged
+      -- run ends on WORK COMPLETE and answers 'Right'. Nothing else in this
+      -- repository tells the two outcomes apart.
+      --
+      -- Run against a stub worker that never converges, through the real
+      -- 'Incite.Feature.orchestrateWith' rather than 'Incite.Feature.decideTrip'
+      -- alone — the question is what the LOOP yields, not what the decider
+      -- returns.
+      testCase "an exhausted loop yields a summary that still carries the marker" $ do
+        let neverDone = dimap' id (const ("edited three files\n" <> continueMarker)) Id
+        exhausted <- flowOutput "lite" (orchestrateWith (Just 1) neverDone) "THE PLAN"
+        decideContinue exhausted @?= Left exhausted
+        assertBool
+          "the yielded summary does not end on the marker a reader greps for"
+          (T.isSuffixOf continueMarker (T.stripEnd exhausted))
+    , -- The converged half of the same question, so the case above is a
+      -- discrimination rather than a statement that every loop output carries
+      -- the marker.
+      testCase "a converged loop yields a summary that does not" $ do
+        let done = dimap' id (const "edited three files\nWORK COMPLETE") Id
+        converged <- flowOutput "lite" (orchestrateWith (Just 3) done) "THE PLAN"
+        decideContinue converged @?= Right converged
+    , -- __The safety property, stated as an absence.__ 'shipDocs'\'s argument
+      -- verbatim: an unattended run auto-answers a gate and @--sandbox@ isolates
+      -- the working tree but not the network, so a PR leaf here would be an
+      -- irreversible action with nothing in the run able to stop it. An @Ask@ or
+      -- a PR leaf added later moves no cost and no test but this one.
+      testCase "nothing runs after the fixer, and the only question is the steer" $ do
+        let names = leafNames (wfFlow shipFeatureLite)
+            kinds = leafKinds (wfFlow shipFeatureLite)
+            asks = [k | k <- kinds, T.isPrefixOf "ask:" k]
+        assertBool "the flow has no leaves" (not (null names))
+        last names @?= "remediate"
+        -- One question, and it is the steer BEFORE the work — the gate that
+        -- costs nothing to auto-answer, because answering it wrong spends a
+        -- planning turn rather than opening a pull request.
+        map (T.takeWhile (/= ':') . T.drop 4) asks @?= ["steer"]
+        report
+          [ "ship-feature-lite carries a " <> what <> " leaf"
+          | (what, present) <-
+              [ ("human gate", any (T.isPrefixOf "ask:gate:") kinds)
+              , ("pull request", any (T.isInfixOf "submit-pr") names)
+              ]
+          , present
+          ]
+    , -- The figure in the prose, against the arithmetic — 'worstCaseTable'\'s
+      -- second caller, and the reason it is a property rather than a second copy
+      -- of the Stacking example.
+      testCase "the Small changes worst-case table matches worstCaseCost" $
+        worstCaseTable "Small changes" shipFeatureLite
     ]
 
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
@@ -2187,7 +2302,7 @@ packagingTests =
           @?= [True, False, False, True, False, False, True, False]
     ]
 
--- | The twelve workflows "Main".workflows holds, rebuilt from library exports.
+-- | The thirteen workflows "Main".workflows holds, rebuilt from library exports.
 -- This suite cannot import "Main" — it is the executable, not a library module
 -- — so this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
 -- binding, in the same order. A rename or reorder on either side is exactly
@@ -2196,6 +2311,7 @@ mirrorWorkflows :: [Workflow]
 mirrorWorkflows =
   [ planFeature
   , shipFeature
+  , shipFeatureLite
   , shipDocs
   , stackPRs
   , grindParadox
@@ -2229,6 +2345,43 @@ tableRows body =
   , T.isPrefixOf "`" c1
   , let name = T.takeWhile (/= '`') (T.drop 1 c1)
   ]
+
+-- | The worst-case figure a @## @ section's table states, against the
+-- arithmetic over the shipped flow. Quantified over every row of that table, so
+-- a section that grows a second row is covered the day it does.
+--
+-- __A property standing in for two copies of one example.__ Two sections state
+-- a worst case in prose, in tables of the same shape, and a fuel change, a panel
+-- change or one more stage moves the number in either with nothing to notice.
+--
+-- __And it can pass vacuously, which is the whole risk of a Markdown parser as
+-- a fence.__ A renamed heading or a changed table shape makes 'tableRows' match
+-- nothing and every complaint below quantifies over the empty list. The
+-- non-empty guard is what fails instead, and both failure modes were provoked
+-- deliberately — the heading renamed, then a stated number perturbed — before
+-- the worked example this replaced was deleted.
+worstCaseTable :: Text -> Workflow -> Assertion
+worstCaseTable section wf = do
+  doc <- TIO.readFile "docs/workflows.md"
+  let rows = tableRows (sectionBody section doc)
+  assertBool
+    (T.unpack ("no worst-case row read from the " <> section <> " section"))
+    (not (null rows))
+  report
+    [ complaint
+    | (name, cells) <- rows
+    , complaint <- case (name == wfName wf, cells) of
+        (False, _) -> [name <> ": the " <> section <> " table names a workflow this is not about"]
+        (True, raw : _) -> case reads (T.unpack (T.strip raw)) of
+          [(n, "")] ->
+            let actual = worstCaseCost (toSkeleton (wfFlow wf))
+             in [ name <> ": docs/workflows.md says " <> tshow n
+                    <> ", the flow's worst case is " <> renderCost actual
+                | actual /= Finite n
+                ]
+          _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
+        (True, []) -> [name <> ": the row carries no count"]
+    ]
 
 -- | The backticked name in a markdown table row's __first__ cell, for every row
 -- that has one. Later cells (a lens name, a bound flow value) are deliberately
@@ -2282,10 +2435,15 @@ docsInventoryTests =
     [ -- Direct list equality, not sorted-set equality. The table is meant to
       -- mirror 'mirrorWorkflows'\'s order (it is 'workflows/Main.hs'\'s order),
       -- and a bare set comparison cannot see a reorder: two tables naming the
-      -- same twelve workflows in different sequences would both read as the same
+      -- same thirteen workflows in different sequences would both read as the same
       -- set and this would stay green. Order is exactly what makes the claim on
       -- 'mirrorWorkflows' — "a rename or reorder on either side is exactly what
       -- this test exists to catch" — true.
+      --
+      -- Its failure output is a location rather than a count: both ordered lists
+      -- print in full, so a misplaced entry shows which one moved and where to.
+      -- Proved by putting @ship-feature-lite@ last in 'mirrorWorkflows' on
+      -- purpose when it was added, and reading what came back.
       testCase "Exposed inventory names exactly the workflows this binary exposes, in order" $ do
         doc <- TIO.readFile "docs/workflows.md"
         let named = tableFirstColumn (sectionBody "Exposed inventory" doc)
@@ -2755,6 +2913,12 @@ scopeTests =
       -- @--backend@ can move it again.
       testCase "ship-feature implements on claude-agent's default model, pinned" $
         lookup "implement" (scopedLeaves (wfFlow shipFeature)) @?= Just "claude-agent"
+    , -- The same leaf, in the workflow that shares it. 'Incite.Feature.implement'
+      -- is one binding, so this cannot drift from the case above by editing —
+      -- what it catches is the lite tier acquiring a rescoping of its own, which
+      -- a backend scope makes invisible to every other instrument here.
+      testCase "ship-feature-lite implements on the same pinned leaf" $
+        lookup "implement" (scopedLeaves (wfFlow shipFeatureLite)) @?= Just "claude-agent"
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at

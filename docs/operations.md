@@ -206,6 +206,10 @@ Codex and Claude rendered trees differ:
   worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just n` to
   cap at n trips, after which the last summary yields to the review panel
   rather than aborting;
+- `ship-feature-lite` is the capped one: `liteFuel` is `Just 3`. Read its final
+  artifact for the marker rather than assuming it finished — the summary an
+  exhausted loop yields is the one that asked for a fourth trip, so it still
+  ends on `WORK REMAINS` where a converged run ends on `WORK COMPLETE`;
 - the run can still abort for reasons the fuel does not cover — a rate-limited
   backend (429) or a backend error — and the work done so far is not lost then
   either: with `--sandbox` it is on the run's `agent-functor/run-…` worktree

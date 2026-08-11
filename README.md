@@ -535,7 +535,13 @@ another, leaf by leaf. The terms the rest of this section uses:
   different shape of it. The granularity axis, not a third lens.
 - **Orchestrator loop (`loopUntil`)** — one worker leaf (the only leaf that
   edits files) is re-run on its own closing summary until it ends on
-  `WORK COMPLETE` rather than the `continueMarker`; up to 8 trips.
+  `WORK COMPLETE` rather than the `continueMarker`. No trip ceiling by default
+  (`workerFuel` is `Nothing`), and every capped call site names a constant:
+  `stack-prs` runs its four loops under `stackFuel` (12) and
+  `ship-feature-lite` under `liteFuel` (3). A cap yields the last summary to
+  the next stage rather than aborting, so the edits already made are never
+  stranded — and because that summary is the one that asked for another trip,
+  it still ends on `WORK REMAINS`.
 - **Gate** — where a run blocks on a human: `steer` (before the work starts),
   `humanGate` (before the PR). An unattended run auto-answers them.
 - **`execGrant`** — the whitelist of commands a world-acting workflow may run
@@ -544,11 +550,12 @@ another, leaf by leaf. The terms the rest of this section uses:
 
 The inventory in `workflows/Main.hs` — each workflow is defined in
 `Incite.Feature` or `Incite.Review`, and only what that list names is exposed.
-The full table of all 12 workflows and what each does lives in one place:
+The full table of all 13 workflows and what each does lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth repeating here: four workflows are **world-acting** and
-every other one is prompt-only. `ship-feature` and `ship-docs` run under
+Two safety facts worth repeating here: five workflows are **world-acting** and
+every other one is prompt-only. `ship-feature`, `ship-feature-lite` and
+`ship-docs` run under
 `actingGrant` (`execGrant ["nix*"]`); `grind-paradox` and `stack-prs` run under
 grants derived from their own check lists, so a check and its permission cannot
 drift apart. Whichever grant applies, it gates only the commands *we* run — the

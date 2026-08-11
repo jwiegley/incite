@@ -26,6 +26,7 @@ text.
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
+| `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation — and it stops there, with no gate and no PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
@@ -87,8 +88,8 @@ backends instead of three:
   stances already hold `claude-agent` and `claude-agent/fable`, so a collision
   is forced rather than chosen.
 
-`ship-feature` and `ship-docs` use `workflowGReq` with `actingGrant`, currently
-`execGrant ["nix*"]`. `grind-paradox` and `stack-prs` use grants derived from
+`ship-feature`, `ship-feature-lite` and `ship-docs` use `workflowGReq` with
+`actingGrant`, currently `execGrant ["nix*"]`. `grind-paradox` and `stack-prs` use grants derived from
 their own check lists — `grindGrant` from `grindChecks`, `stackGrant` from
 `stackChecks` and `budgetCheck` — so a check added without a permission is a
 build-time fact rather than a run-time denial nobody reads.
@@ -115,7 +116,10 @@ are still mediated by the backend's tool permission flow.
   `Just n` to cap at n trips after which the last summary yields to the
   review panel rather than aborting the run. `orchestrateWith` takes that
   ceiling as an argument and is what `orchestrate` is defined by, so a capped
-  loop cannot drift from the default one; `stack-prs` passes `stackFuel`;
+  loop cannot drift from the default one. Every call site names a constant
+  rather than a literal: `stack-prs` passes `stackFuel` (`Just 12`),
+  `ship-feature-lite` passes `liteFuel` (`Just 3`), and `ship-feature`,
+  `ship-docs` and `grind-paradox` take `workerFuel` (`Nothing`);
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
   `docsRule`, `paradoxRule`, or `stackRule`) plus a closing clause. The clause
   is what distinguishes a fixer that runs once (`closeWithChanges`) from one
@@ -123,6 +127,41 @@ are still mediated by the backend's tool permission flow.
   `continueMarker`); with no clause the leaf is byte-for-byte what it was
   before the argument existed, and `test/Spec.hs` pins that against a golden
   recorded beforehand.
+
+## Small changes
+
+`ship-feature-lite` is the acting shape for a change that does not need the
+heavy tier. It reuses `planLeaf`, `implement`, `actingGrant`, `orchestrateWith`,
+`asReviewSubject` and `remediate` rather than copying them, so it cannot drift
+from `ship-feature` in anything they share. Three things distinguish it.
+
+- **It plans with `planLeaf` alone.** No four exploration stances and no
+  `editPlan` chain. Those buy independence on a change large enough to be
+  planned wrong, and they are ten leaves before a line of code is written. If a
+  lite run plans badly on real work, the fix is to swap `planLeaf` for
+  `explorePlan` — the planner is a named binding at the head of the chain for
+  exactly that reason.
+- **`liteFuel` is `Just 3`, where `workerFuel` is `Nothing`.** A fourth trip
+  means the task was never a small task. Exhaustion yields rather than aborts,
+  so the panel still reads what the three trips landed — and the summary it
+  yields is the one that asked for a fourth trip, so it still ends on
+  `WORK REMAINS`. That is how a capped run that gave up is told apart from one
+  that finished, and `test/Spec.hs` asserts it.
+- **It stops at `remediate`.** No human gate and no PR, which is `ship-docs`'s
+  safety property and the same argument: an unattended run auto-answers a gate
+  (`gateAnswer` defaults to `"yes"`) and `--sandbox` isolates the working tree
+  but not the network, so a PR leaf here would be an irreversible action with
+  nothing in the run able to stop it. The change lands in the tree; opening the
+  pull request stays a human's push. The one question it does ask is the `steer`
+  before the work, where a wrong auto-answer costs a planning turn.
+
+**The worst case is fenced, not quoted**, the same way the Stacking figure and
+the review-tier table are: `test/Spec.hs` reads the number below out of this
+file and compares it against `worstCaseCost . toSkeleton . wfFlow`.
+
+| Workflow | Worst-case leaves |
+|---|---:|
+| `ship-feature-lite` | 11 |
 
 ## Stacking a change
 
