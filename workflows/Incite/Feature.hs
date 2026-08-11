@@ -24,6 +24,8 @@
 -- trip of the promotion loop.
 module Incite.Feature
   ( planFeature
+  , planLeaf
+  , implement
   , shipFeature
   , shipDocs
   , docsPlanLenses
@@ -178,61 +180,73 @@ shipFeature =
       >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
-    -- One worker implements the plan for real, editing this repository in
-    -- place. Its standing brief composes 'agenticCoder' (HOW), 'ponytailLadder'
-    -- (HOW MUCH) and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that
-    -- writes code unsupervised, and the reason the orchestrator needs no
-    -- cadence of its own.
-    --
-    -- __Pinned, and the only leaf in this workflow that is.__ The lens chains
-    -- around it are deliberately left on the run's own backend, because they are
-    -- several readings of one text and their argument is that they stay
-    -- comparable. This leaf is different in kind: it is the one that writes code
-    -- unsupervised, under an orchestrator that will call it again, so its model
-    -- is a decision rather than a default. Left unpinned it inherits the run's —
-    -- a @run --backend codex@, or an MCP caller passing @backend@, silently
-    -- moves the leaf that does the work, and no leaf name, plan skeleton or cost
-    -- estimate moves with it.
-    --
-    -- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
-    -- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where
-    -- a fast reader over a fixed text is the point. Implementation is not that.
-    implement = withBackend claudeAgent defaultModel implementLeaf
-
-    -- Separated from its scope so the brief's indentation is untouched by it:
-    -- the body is a `__i` quasi-quote, and re-indenting a quasi-quote to nest it
-    -- one level deeper edits the prompt.
-    implementLeaf =
-      refineWith
-        "implement"
-        ( brief
-            [__i|
-              #{agenticCoder}
-
-              #{ponytailLadder}
-
-              #{wiggum}
-
-              Implement this plan fully in the current repository — edit the
-              files directly.
-
-              You are running under an orchestrator that will call you again
-              with your own summary as its input, so write the summary for your
-              successor: what you changed, what is left, and what it needs to
-              know to continue.
-
-              End with a status line, alone on the last line:
-
-              - `#{continueMarker}` — the plan is not finished. You will be
-                called again.
-              - `WORK COMPLETE` — every step is done and the build is green.
-                Say what changed; review comes next.
-            |]
-        )
-        id
     -- The panel's lenses are written for a diff, and the artifact here is the
     -- worker's closing summary: 'asReviewSubject' points them at the tree.
     reviewChange = dimap' asReviewSubject id reviewHeavyFlow
+
+-- | The worker that writes code. As a function of its argument: it maps __a
+-- plan__ to __a report of the edits it made under that plan__, and it makes
+-- them in the repository it runs in.
+--
+-- One worker implements the plan for real, editing this repository in place.
+-- Its standing brief composes 'agenticCoder' (HOW), 'ponytailLadder' (HOW MUCH)
+-- and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that writes code
+-- unsupervised, and the reason the orchestrator needs no cadence of its own.
+--
+-- __Pinned, and the only pinned leaf in the workflows that run it.__ The lens
+-- chains around it are deliberately left on the run's own backend, because they
+-- are several readings of one text and their argument is that they stay
+-- comparable. This leaf is different in kind: it is the one that writes code
+-- unsupervised, under an orchestrator that will call it again, so its model is a
+-- decision rather than a default. Left unpinned it inherits the run's — a @run
+-- --backend codex@, or an MCP caller passing @backend@, silently moves the leaf
+-- that does the work, and no leaf name, plan skeleton or cost estimate moves
+-- with it.
+--
+-- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
+-- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where a
+-- fast reader over a fixed text is the point. Implementation is not that.
+--
+-- __Top-level because it has two callers__ — 'shipFeature' and
+-- 'shipFeatureLite' — and because a brief nothing outside its own @where@ block
+-- can read is a brief no test can hold to the house rules. @test\/Spec.hs@
+-- checks its marker contract against 'decideContinue' exactly as it does
+-- 'document'\'s.
+implement :: Flow Text Text
+implement = withBackend claudeAgent defaultModel implementLeaf
+
+-- | Separated from its scope so the brief's indentation is untouched by it: the
+-- body is a @__i@ quasi-quote, and re-indenting a quasi-quote to nest it one
+-- level deeper edits the prompt.
+implementLeaf :: Flow Text Text
+implementLeaf =
+  refineWith
+    "implement"
+    ( brief
+        [__i|
+          #{agenticCoder}
+
+          #{ponytailLadder}
+
+          #{wiggum}
+
+          Implement this plan fully in the current repository — edit the
+          files directly.
+
+          You are running under an orchestrator that will call you again
+          with your own summary as its input, so write the summary for your
+          successor: what you changed, what is left, and what it needs to
+          know to continue.
+
+          End with a status line, alone on the last line:
+
+          - `#{continueMarker}` — the plan is not finished. You will be
+            called again.
+          - `WORK COMPLETE` — every step is done and the build is green.
+            Say what changed.
+        |]
+    )
+    id
 
 -- | Close a run with "Incite.Review".'retroFlow'\'s three columns, appended to
 -- the work rather than replacing it.
@@ -341,11 +355,12 @@ docsPlanLenses =
 -- names a marker its orchestrator does not match strands the loop until the
 -- fuel runs out, and that is not visible from any output.
 --
--- Being top-level, it names __no stage that follows it__ — @implement@ can say
--- \"review comes next\" because it is private to the one @where@ block that
--- puts a review after it, and this is not. A leaf that spells its position is a
--- leaf whose text has to be edited to reuse it, and the edit is prose nothing
--- would flag.
+-- Being top-level, it names __no stage that follows it__. A leaf that spells its
+-- position is a leaf whose text has to be edited to reuse it, and the edit is
+-- prose nothing would flag. 'implement' said \"review comes next\" while it was
+-- private to the one @where@ block that put a review after it; it is top-level
+-- now, with two workflows and two different panels behind it, so the rule
+-- covers it too and @test\/Spec.hs@ quantifies over both briefs.
 document :: Flow Text Text
 document =
   refineWith
@@ -1363,9 +1378,25 @@ stackContinuation =
 blockedMarker :: Text
 blockedMarker = "WORK BLOCKED"
 
+-- | The planner leaf, alone. As a function of its argument: it maps __a task
+-- description__ to __a plan for that task__.
+--
+-- Read-only, pinned to Fable 5: 'planBrief' leans on both.
+--
+-- __Top-level because 'shipFeatureLite' takes the planner without the
+-- stances.__ 'explorePlan' is this leaf behind a four-stance fan-out, and the
+-- fan-out is what a small change does not need. Naming the head of the chain
+-- rather than inlining it is also what makes @planLeaf >>> …@ into
+-- @explorePlan >>> …@ a one-token swap if a lite run plans badly.
+planLeaf :: Flow Text Text
+planLeaf =
+  withMode Plan
+    $ withBackend claudeAgent fable5
+    $ refineWith "plan" (brief planBrief) id
+
 -- | The shared analysis prefix: explore (three stances) then plan.
 explorePlan :: Flow Text Text
-explorePlan = explore >>> plan
+explorePlan = explore >>> planLeaf
   where
     -- Analysis-only and heterogeneous — one agent spec per stance, so the
     -- perspectives are genuinely independent. Four stances over three
@@ -1404,11 +1435,6 @@ explorePlan = explore >>> plan
         -- the design stance because the design stance is told to build on its
         -- map.
         $ hierarchical ["skeptic", "architect", "contemplative", "intrepid"]
-    -- Read-only, pinned to Fable 5: 'planBrief' leans on both.
-    plan =
-      withMode Plan
-        $ withBackend claudeAgent fable5
-        $ refineWith "plan" (brief planBrief) id
 
 -- | The six-lens plan-editing chain for code implementation plans. Order is the
 -- argument: ponytail deletes first so the rest only work on surviving steps;

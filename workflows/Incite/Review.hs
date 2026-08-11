@@ -12,6 +12,7 @@
 -- no tier can edit what it is reading.
 module Incite.Review
   ( reviewLite
+  , reviewLiteFlow
   , reviewHeavy
   , reviewHeavyFlow
   , reviewAudit
@@ -105,7 +106,19 @@ reviewLite =
       claims-versus-diff audit, reshape complexity, ponytail cuts, adversarial
       QA) — one call, cheap enough to run on every commit
     |]
-    $ exploreFlows
+    reviewLiteFlow
+
+-- | 'reviewLite' as a plain 'Flow', so "Incite.Feature" runs the cheap panel
+-- inline after implementation instead of copying it — 'reviewHeavyFlow'\'s
+-- reason, at the other tier.
+--
+-- As a function of its argument: the 'Text' it consumes is __the subject under
+-- review__, and the 'Text' it produces is __the panel's verdict on that
+-- subject__. The five leaves are the lenses whose findings that verdict merges,
+-- and 'hierarchical' is the order they narrow through.
+reviewLiteFlow :: Flow Text Text
+reviewLiteFlow =
+    exploreFlows
       [ reviewer (withBackend claudeAgent fable5) "correctness" reviewCorrectness
       , reviewer (withBackend claudeAgent defaultModel) "fess" fess
       , reviewer codexScope "complexity" reviewComplexity

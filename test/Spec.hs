@@ -42,6 +42,7 @@ import Incite.Feature
   , docsPlanLenses
   , isRed
   , document
+  , implement
   , orient
   , planFeature
   , preambleOf
@@ -516,74 +517,96 @@ reframingTests =
 -- trip of its fuel and then aborts, with no output anywhere naming the cause.
 -- @plan@ cannot see it — it renders leaf names — so this is the check.
 --
--- 'document' is the one that can be read here. @implement@ is bound inside
--- 'Incite.Feature.shipFeature', which is why the second worker brief was
--- written top-level.
+-- __Both workers, not one.__ 'document' was the only one that could be read
+-- here while @implement@ was bound inside 'Incite.Feature.shipFeature'\'s
+-- @where@ block. It is top-level now — two workflows run it — so the same three
+-- cases are quantified over both, and the house rule below applies to it for the
+-- first time.
 documentTests :: TestTree
 documentTests =
   testGroup
-    "document"
-    [ testCase "is one leaf" $ do
-        sent <- flowLeafPrompts "document" document "THE PLAN"
-        length sent @?= 1
-    , -- Round trip through the decider, not a substring check on the marker.
-      -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what has
-      -- to hold is that the decorated form the worker copies is one
-      -- 'decideContinue' reads as "call me again". It fails if the brief wraps
-      -- the marker in something outside the decoration alphabet, or if the
-      -- marker itself grows a character that alphabet does not strip.
-      --
-      -- The bullet's trailing prose is deliberately not fed in: the brief says
-      -- the status line stands alone, so the contract is about the token.
-      testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
-        let decorated = "`" <> continueMarker <> "`"
-        assertBool
-          "the brief does not show the marker in the decoration this asserts"
-          (T.isInfixOf decorated leafText)
-        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
-    , -- The input is the plan, not the findings: @document@ sits where
-      -- @implement@ sits, after @steer@ and inside the loop. Findings are
-      -- 'Incite.Feature.remediate'\'s input, downstream of the panel.
-      testCase "hands the plan to the worker" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
-        assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
-    , -- The same contract on the fixer that runs under an orchestrator, and the
-      -- same failure if it drifts. 'grindParadox' wraps @remediate@ in
-      -- 'Incite.Feature.orchestrate', so this clause is what asks for another
-      -- trip; a marker the decider does not read strands that loop for its whole
-      -- fuel with nothing in any output naming the cause.
-      --
-      -- Round trip through 'decideContinue' rather than a substring check, for
-      -- 'documentTests'\'s reason: what has to hold is that the DECORATED form
-      -- the brief shows is one the decider accepts.
-      testCase "fixerContinuation shows a marker decideContinue accepts" $ do
-        let decorated = "`" <> continueMarker <> "`"
-        assertBool
-          "the fixer clause does not show the marker in the decoration this asserts"
-          (says fixerContinuation decorated)
-        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
-    , -- The other half of the contract: the terminal line, and what it must
-      -- claim. A fixer that says WORK COMPLETE without saying what it closed
-      -- leaves the gate as the only evidence anything happened.
-      testCase "fixerContinuation names the terminal line and what it must carry" $
-        report
-          [ "fixerContinuation does not say " <> tshow needle
-          | needle <- ["WORK COMPLETE", "every finding is fixed or answered"]
-          , not (says fixerContinuation needle)
+    "the worker briefs"
+    $ [ testGroup
+          name
+          [ testCase "is one leaf" $ do
+              sent <- flowLeafPrompts name worker "THE PLAN"
+              length sent @?= 1
+          , -- Round trip through the decider, not a substring check on the marker.
+            -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what
+            -- has to hold is that the decorated form the worker copies is one
+            -- 'decideContinue' reads as "call me again". It fails if the brief
+            -- wraps the marker in something outside the decoration alphabet, or if
+            -- the marker itself grows a character that alphabet does not strip.
+            --
+            -- The bullet's trailing prose is deliberately not fed in: the brief
+            -- says the status line stands alone, so the contract is about the
+            -- token.
+            testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
+              [leafText] <- flowLeafPrompts name worker "THE PLAN"
+              let decorated = "`" <> continueMarker <> "`"
+              assertBool
+                "the brief does not show the marker in the decoration this asserts"
+                (T.isInfixOf decorated leafText)
+              decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+          , -- The input is the plan, not the findings: a worker sits after @steer@
+            -- and inside the loop. Findings are 'Incite.Feature.remediate'\'s
+            -- input, downstream of the panel.
+            testCase "hands the plan to the worker" $ do
+              [leafText] <- flowLeafPrompts name worker "THE PLAN"
+              assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
+          , -- __The house rule 'Incite.Feature.document'\'s haddock states__: a
+            -- top-level worker leaf names no stage that follows it. It held for
+            -- @document@ by construction and was stated as the reason @implement@
+            -- was allowed to say "review comes next" — it was private to the one
+            -- @where@ block that put a review after it. It is not private now, and
+            -- 'Incite.Feature.shipFeatureLite' puts a different panel after it, so
+            -- the rule is quantified over both briefs and the sentence had to go.
+            --
+            -- Whitespace-normalised, so rewrapping a paragraph is not a failure.
+            testCase "names no stage that follows it" $ do
+              [leafText] <- flowLeafPrompts name worker "THE PLAN"
+              assertBool
+                "the brief tells the worker what runs after it"
+                (not (T.isInfixOf "review comes next" (T.unwords (T.words leafText))))
           ]
-    , -- The one rule this brief exists to carry that @implement@ must not.
-      -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
-      -- the sentence being gone is.
-      testCase "forbids editing code to make a sentence true" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
-        assertBool
-          "the brief does not forbid correcting the code instead of the prose"
-          ( T.isInfixOf
-              "never edit code to make a sentence true"
-              (T.unwords (T.words leafText))
-          )
+    | (name, worker) <- [("document", document), ("implement", implement)]
     ]
+      <> [ -- The same contract on the fixer that runs under an orchestrator, and
+           -- the same failure if it drifts. 'grindParadox' wraps @remediate@ in
+           -- 'Incite.Feature.orchestrate', so this clause is what asks for
+           -- another trip; a marker the decider does not read strands that loop
+           -- for its whole fuel with nothing in any output naming the cause.
+           --
+           -- Round trip through 'decideContinue' rather than a substring check,
+           -- for 'documentTests'\'s reason: what has to hold is that the
+           -- DECORATED form the brief shows is one the decider accepts.
+           testCase "fixerContinuation shows a marker decideContinue accepts" $ do
+            let decorated = "`" <> continueMarker <> "`"
+            assertBool
+              "the fixer clause does not show the marker in the decoration this asserts"
+              (says fixerContinuation decorated)
+            decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+         , -- The other half of the contract: the terminal line, and what it must
+           -- claim. A fixer that says WORK COMPLETE without saying what it closed
+           -- leaves the gate as the only evidence anything happened.
+           testCase "fixerContinuation names the terminal line and what it must carry" $
+            report
+              [ "fixerContinuation does not say " <> tshow needle
+              | needle <- ["WORK COMPLETE", "every finding is fixed or answered"]
+              , not (says fixerContinuation needle)
+              ]
+         , -- The one rule the docs brief exists to carry that @implement@ must
+           -- not. Whitespace-normalised, so rewrapping the paragraph is not a
+           -- failure — the sentence being gone is.
+           testCase "document forbids editing code to make a sentence true" $ do
+            [leafText] <- flowLeafPrompts "document" document "THE PLAN"
+            assertBool
+              "the brief does not forbid correcting the code instead of the prose"
+              ( T.isInfixOf
+                  "never edit code to make a sentence true"
+                  (T.unwords (T.words leafText))
+              )
+         ]
 
 -- | The bytes of the fixer brief that this repository owns, recorded off the
 -- shipped flow.
