@@ -88,9 +88,14 @@ backends instead of three:
   is forced rather than chosen.
 
 `ship-feature` and `ship-docs` use `workflowGReq` with `actingGrant`, currently
-`execGrant ["nix*"]`. That grant gates `Agent.Op.Exec` leaves. The agent's own
-tools, such as git or GitHub operations, are still mediated by the backend's tool
-permission flow.
+`execGrant ["nix*"]`. `grind-paradox` and `stack-prs` use grants derived from
+their own check lists — `grindGrant` from `grindChecks`, `stackGrant` from
+`stackChecks` and `budgetCheck` — so a check added without a permission is a
+build-time fact rather than a run-time denial nobody reads.
+
+Every grant gates `Agent.Op.Exec` leaves, which are the commands the harness
+runs itself. The agent's own tools, such as git, Graphite or GitHub operations,
+are still mediated by the backend's tool permission flow.
 
 ## Planning and acting
 

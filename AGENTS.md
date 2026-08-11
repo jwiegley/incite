@@ -151,13 +151,16 @@ and, to be STE-linted, a line in `flake.nix`'s `stePromptSrc` fileset.
 ## Defined workflows
 
 The `workflows` list in `workflows/Main.hs` is the inventory. The full table —
-what each of the 10 workflows does — lives in one place:
+what each of the 12 workflows does — lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth keeping here rather than only there: `ship-feature` and
-`ship-docs` are the only **world-acting** workflows, both running under
-`actingGrant` (`execGrant ["nix*"]`) — every other workflow is prompt-only and
-touches nothing. And always run from the repo root: `promptFile` resolves a
+Two safety facts worth keeping here rather than only there: four workflows are
+**world-acting** and the rest touch nothing. `ship-feature` and `ship-docs` run
+under `actingGrant` (`execGrant ["nix*"]`), `grind-paradox` under `grindGrant`
+and `stack-prs` under `stackGrant`, the last two derived from their own check
+lists rather than written beside them. Every grant gates only *our* `Exec`
+leaves; the agent's own `git`, `gh` and `gt` run as its tools, behind its
+permission modal. And always run from the repo root: `promptFile` resolves a
 path against the package root at compile time and the working directory at
 run time, so the two must be the same directory.
 
@@ -204,7 +207,7 @@ previously untestable because it was buried in `where` clauses:
   this repo can see (they all run in a git checkout).
 - Backend structure.
 - `docsInventoryTests` — `docs/workflows.md`'s "Exposed inventory" table against
-  the actual ten-workflow list, and its "Review tiers and leaf counts" table
+  the actual twelve-workflow list, and its "Review tiers and leaf counts" table
   against `worstCaseCost . toSkeleton . wfFlow` for each named workflow.
 
 The workflows themselves — the `Flow` values and combinators — remain under test
