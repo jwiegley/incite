@@ -1722,6 +1722,27 @@ stackTests =
               ]
           , not (saysLoosely stackContinuation needle)
           ]
+    , -- The file the harness-run scripts learn this repository from. Q2 was
+      -- exactly this drift in the other direction: the brief recorded the job
+      -- budget into `.stack-plan.md`, `ci-budget.sh` read an environment
+      -- variable, and the gate the workflow exists for enforced a default
+      -- nobody chose. Both halves are asserted — the brief says to WRITE it,
+      -- and each script says to READ it — because either half alone is a value
+      -- with one home and no reader.
+      testCase "the config the scripts read is the config the brief writes" $ do
+        assertBool
+          "the bootstrap brief never says to write .stack-config"
+          (says stackTooling ".stack-config")
+        report
+          [ "the " <> script <> " body does not source .stack-config"
+          | (script, marker) <-
+              [ ("ci-budget.sh", "may I promote right now")
+              , ("verify-stack.sh", "Verify a Graphite stack")
+              , ("stack-status.sh", "Status of every branch in the stack")
+              ]
+          , let body = scriptBody marker (promptText stackTooling)
+          , T.null body || not (T.isInfixOf ". \"$ROOT/.stack-config\"" body)
+          ]
     , -- @docs/workflows.md@ says which lenses a stacking run edits through, and
       -- a lens joining an inline list moves no name, count or skeleton this file
       -- is checked on. 'Incite.Feature.stackPlanLenses' is the roster it reads —
@@ -2206,6 +2227,25 @@ sectionBody heading doc =
     . drop 1
     . dropWhile (/= ("## " <> heading))
     $ T.lines doc
+
+-- | One fenced @```bash@ block out of the tooling brief, keyed by a line unique
+-- to that script. The three scripts are markdown code fences rather than files
+-- on disk — that is the whole point of the brief — so a test about their
+-- content has to read them the way the agent will.
+--
+-- __Keyed on a comment line AND on the shebang.__ The file names all appear
+-- together in the @.git\/info\/exclude@ block, which is itself a fence, so a
+-- name-keyed reader returns that list instead. And the prose introducing a
+-- script quotes the same sentence its header comment uses, so the marker alone
+-- matches the paragraph above the fence. Requiring the shebang is what makes
+-- this read the script rather than something that talks about it.
+scriptBody :: Text -> Text -> Text
+scriptBody marker doc =
+  case [b | b <- T.splitOn "```" doc, T.isInfixOf marker b, T.isInfixOf shebang b] of
+    (b : _) -> b
+    [] -> T.empty
+  where
+    shebang = "#!/usr/bin/env bash"
 
 -- | Fences 'docs/workflows.md' against the two things in it that only code can
 -- prove: which workflows exist (in order), and how many leaves a review tier
