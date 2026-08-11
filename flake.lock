@@ -112,6 +112,22 @@
         "url": "ssh://git@gitlab.com/mecha-team-zero/macha-orchestration"
       }
     },
+    "nix-config": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786477480,
+        "narHash": "sha256-2sAvFpFfYm2LqomsiOK7Ac4Moyp4X8TtMgkyPyPHk2U=",
+        "owner": "jwiegley",
+        "repo": "nix-config",
+        "rev": "b5bdbb77ff5f21bd4da72a01df25ba436c2ef398",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jwiegley",
+        "repo": "nix-config",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1751274312,
@@ -198,6 +214,7 @@
         "awesome-prompts": "awesome-prompts",
         "flake-prompt": "flake-prompt",
         "macha": "macha",
+        "nix-config": "nix-config",
         "nixpkgs": "nixpkgs_2",
         "ponytail": "ponytail",
         "promptdeploy": "promptdeploy",

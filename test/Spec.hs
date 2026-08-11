@@ -18,11 +18,13 @@ import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
+import Agent.Oracle (Answer (..))
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
 import Incite.Feature
   ( Orientation (..)
+  , actingGrant
   , fixerContinuation
   , closeWithChanges
   , paradoxRule
@@ -61,7 +63,6 @@ import Incite.Feature
   , stackContinuation
   , stackFuel
   , blockedMarker
-  , stackPin
   , stackGrant
   , stackPRs
   , stackPlanLenses
@@ -1811,16 +1812,16 @@ stackTests =
           ]
     ]
 
--- | Fences the tier that trades coverage for price, on the two things that
--- trade buys and the one thing it must not cost.
+-- | Fences the tier that trades coverage for price, on what that trade buys and
+-- on what it must not cost.
 --
 -- Everything else about @ship-feature-lite@ is a composition of bindings the
 -- heavy path already fences: 'Incite.Feature.planLeaf',
 -- 'Incite.Feature.implement', 'Incite.Feature.asReviewSubject',
 -- 'Incite.Review.reviewLiteFlow' and 'Incite.Feature.remediate' are one binding
 -- each, so a case here restating their contents would restate a fence rather
--- than add one. What is new is the cap, what the cap does when it runs out, and
--- where the chain stops.
+-- than add one. What is new is the cap, what the cap does when it runs out,
+-- where that shows and where it does not, the grant, and where the chain stops.
 liteTests :: TestTree
 liteTests =
   testGroup
@@ -1847,31 +1848,98 @@ liteTests =
       -- at trip n is the one that ASKED for trip n+1, so its last line is still
       -- 'continueMarker' and 'decideContinue' answers 'Left' on it. A converged
       -- run ends on WORK COMPLETE and answers 'Right'. Nothing else in this
-      -- repository tells the two outcomes apart.
+      -- repository tells the two outcomes apart. Where that text then goes —
+      -- and where it does not — is the third case below, because a marker
+      -- nobody can reach is not a distinction an operator has.
       --
-      -- Run against a stub worker that never converges, through the real
-      -- 'Incite.Feature.orchestrateWith' rather than 'Incite.Feature.decideTrip'
-      -- alone — the question is what the LOOP yields, not what the decider
-      -- returns.
-      testCase "an exhausted loop yields a summary that still carries the marker" $ do
-        let neverDone = dimap' id (const ("edited three files\n" <> continueMarker)) Id
-        exhausted <- flowOutput "lite" (orchestrateWith (Just 1) neverDone) "THE PLAN"
+      -- __The worker numbers its own trips, and the assertion is on the
+      -- number.__ A @const@ stub makes every trip's output byte-identical, so
+      -- the assertion holds for a loop that ran three times, once, or not at
+      -- all: @orchestrateWith _ worker = worker@ passes it. 'tripWorker' reads
+      -- the trip off the summary it was handed and writes the next one — the
+      -- loop's own \"your previous summary is your next input\" contract is what
+      -- carries the count, so no 'Data.IORef.IORef' is needed and nothing but a
+      -- real loop can produce trip three.
+      --
+      -- Driven off 'Incite.Feature.liteFuel' rather than a literal, so this is
+      -- an assertion about the constant the workflow actually passes.
+      testCase "an exhausted loop yields the LAST trip's summary, marker still on it" $ do
+        exhausted <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker (const continueMarker))) "THE PLAN"
+        exhausted @?= tripSummary (fromMaybe 0 liteFuel) continueMarker
         decideContinue exhausted @?= Left exhausted
-        assertBool
-          "the yielded summary does not end on the marker a reader greps for"
-          (T.isSuffixOf continueMarker (T.stripEnd exhausted))
     , -- The converged half of the same question, so the case above is a
       -- discrimination rather than a statement that every loop output carries
-      -- the marker.
-      testCase "a converged loop yields a summary that does not" $ do
-        let done = dimap' id (const "edited three files\nWORK COMPLETE") Id
-        converged <- flowOutput "lite" (orchestrateWith (Just 3) done) "THE PLAN"
+      -- the marker — and it converges BEFORE the cap, which is the other thing
+      -- a loop-free 'Incite.Feature.orchestrateWith' would get wrong: the fuel
+      -- is a ceiling, not a schedule, and a job finished on trip two costs two
+      -- turns.
+      testCase "a converged loop stops on the trip that said so, short of the cap" $ do
+        let doneOnTwo n = if n >= 2 then "WORK COMPLETE" else continueMarker
+        converged <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker doneOnTwo)) "THE PLAN"
+        converged @?= tripSummary 2 "WORK COMPLETE"
         decideContinue converged @?= Right converged
+    , -- __Where the marker is legible, and where it is not.__ The two cases
+      -- above fence what the LOOP yields. This one fences what becomes of that
+      -- text afterwards, because @docs\/operations.md@ tells an operator where
+      -- to read it and the wrong answer there is precisely the failure the
+      -- marker exists to prevent — a capped run that gave up, read as a
+      -- finished ship.
+      --
+      -- The loop's yield is an INPUT to the panel: 'Incite.Feature.orient' is a
+      -- pure prepend, so 'Incite.Feature.asReviewSubject' points the lenses at
+      -- the tree and carries the account in under it. Every stage after the
+      -- loop then writes fresh text of its own, so the run's final artifact is
+      -- 'Incite.Feature.remediate'\'s closing paragraph and carries neither
+      -- marker. Both halves are asserted, and the second is what a relay added
+      -- later would fail — which is the day the docs sentence changes.
+      --
+      -- 'runByLeaf' rather than 'flowOutput' because the question needs two
+      -- different answers in one run: an implement leaf that never converges,
+      -- and every other leaf answering as itself. One uniform answer proves
+      -- nothing here — it would be both the marker's source and the fixer's
+      -- output.
+      testCase "the marker reaches the panel and never the final artifact" $ do
+        let exhaustedWorker n
+              | n == "implement" = "edited three files\n" <> continueMarker
+              | otherwise = leafAnswer
+        (final, sent) <- runByLeaf shipFeatureLite exhaustedWorker "THE PLAN"
+        assertBool
+          "no leaf after the loop was shown the summary the loop yielded"
+          (any (\(n, rendered) -> n /= "implement" && T.isInfixOf continueMarker rendered) sent)
+        -- The run's final artifact IS the fixer's own answer, byte for byte:
+        -- nothing appends the loop's status to it, which is why
+        -- @docs/operations.md@ sends an operator to the transcript instead.
+        final @?= leafAnswer
+    , -- __The grant, pinned to the binding the prose names.__ Every other case
+      -- here reads 'Agent.Run.wfFlow'; this reads 'Agent.Run.wfGrant', which
+      -- nothing else does for this workflow. README, AGENTS.md and
+      -- @docs\/workflows.md@ all state that @ship-feature-lite@ runs under
+      -- 'Incite.Feature.actingGrant' — swapping @workflowGReq@ for
+      -- @workflowReq@, or widening the grant here, leaves every one of those
+      -- claims false and the rest of the suite green.
+      testCase "runs under actingGrant, which is what every document says" $
+        wfGrant shipFeatureLite @?= actingGrant
     , -- __The safety property, stated as an absence.__ 'shipDocs'\'s argument
       -- verbatim: an unattended run auto-answers a gate and @--sandbox@ isolates
       -- the working tree but not the network, so a PR leaf here would be an
-      -- irreversible action with nothing in the run able to stop it. An @Ask@ or
-      -- a PR leaf added later moves no cost and no test but this one.
+      -- irreversible action with nothing in the run able to stop it.
+      --
+      -- __Not the only fence a gate or a PR leaf would move__, and worth being
+      -- exact about the difference: 'Agent.Cost.worstCaseCost' counts every
+      -- leaf, @Ask@ included, so an added leaf takes the worst case off 11 and
+      -- @worstCaseTable@ below fails too. But that failure is repaired by
+      -- editing a number in @docs\/workflows.md@ — which would wave the new leaf
+      -- straight through. This case is the one whose only repair is removing the
+      -- leaf.
+      --
+      -- __The leaf spellings are upstream's, not ours.__
+      -- @Agent.Flow.Combinators.humanGate@ builds
+      -- @LeafName (\"gate:\" <> question)@ under an @Ask@, which
+      -- 'Agent.Op.opTagPrefixed' renders @ask:gate:…@; @submitPR@ is
+      -- @refineWith \"submit-pr\"@. Written down because the coupling is to
+      -- another repository's string literals and nothing in this one would
+      -- otherwise say where they came from — a rename upstream turns these two
+      -- fragments into an assertion that matches nothing, silently.
       testCase "nothing runs after the fixer, and the only question is the steer" $ do
         let names = leafNames (wfFlow shipFeatureLite)
             kinds = leafKinds (wfFlow shipFeatureLite)
@@ -1896,6 +1964,37 @@ liteTests =
       testCase "the Small changes worst-case table matches worstCaseCost" $
         worstCaseTable "Small changes" shipFeatureLite
     ]
+
+-- | A worker stub that can be asked which trip it is on, given a closing status
+-- as a function of the trip number.
+--
+-- __The trip count rides in the summary, because that is where the loop already
+-- puts it.__ 'Incite.Feature.orchestrateWith' hands a worker its own previous
+-- output as the next trip's input, so a worker that writes its trip number can
+-- read the last one back and add one — no 'Data.IORef.IORef', and the counter is
+-- carried by exactly the mechanism under test. A stub that ignores its input
+-- (@const@) makes every trip identical and cannot tell three trips from one.
+--
+-- A @dimap'@ over 'Id' rather than a leaf: the fuel accounting is what these
+-- cases are about, and a prompt leaf here would add a handler's answer between
+-- the loop and the assertion.
+tripWorker :: (Int -> Text) -> Flow Text Text
+tripWorker close =
+  dimap' id (\prev -> let n = tripOf prev + 1 in tripSummary n (close n)) Id
+
+-- | What 'tripWorker' writes on trip @n@. Shared with the assertions so the
+-- format is stated once — an expected value spelled out separately is a second
+-- copy of the stub, and the two drift.
+tripSummary :: Int -> Text -> Text
+tripSummary n closing = "trip " <> tshow n <> "\n" <> closing
+
+-- | The trip number 'tripSummary' wrote, or 0 for text it did not write (the
+-- loop's first input is the plan, not a summary).
+tripOf :: Text -> Int
+tripOf prev =
+  case [n | l <- T.lines prev, Just r <- [T.stripPrefix "trip " l], [(n, "")] <- [reads (T.unpack r)]] of
+    n : _ -> n
+    [] -> 0
 
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
 -- adjustment, each paired with the rubric it is a delta against.
@@ -2732,6 +2831,46 @@ flowOutput name flow input =
       )
       flow
       input
+
+-- | A whole shipped workflow run with each prompt leaf answered __by name__,
+-- returning the final artifact together with every rendered prompt and the leaf
+-- it went to.
+--
+-- __Why not 'flowLeafPrompts' or 'flowOutput'.__ Both answer every leaf the same
+-- thing, which cannot ask what one leaf's OUTPUT does to the stages after it: the
+-- answer that makes the orchestrator loop exhaust would also be the answer the
+-- fixer gives, so an assertion about the final artifact would hold for the wrong
+-- reason. Dispatching on 'leafNameOf' is what keeps the worker's text and the
+-- fixer's text distinguishable.
+--
+-- __The ask handler answers instead of failing__, unlike the two helpers above:
+-- those interpret prompt-only flows and an @Ask@ reaching them is news, whereas a
+-- shipped acting workflow has a @steer@ in it and an unattended run auto-answers
+-- it. This is that run, not a preflight. @Exec@ still fails loudly — nothing this
+-- is used on runs one.
+runByLeaf :: Workflow -> (Text -> Text) -> Text -> IO (Text, [(Text, Text)])
+runByLeaf wf answer input = do
+  sent <- newIORef []
+  final <-
+    fst
+      <$> interpret
+        ( \sc op x ->
+            let name = leafNameOf (opTag op)
+             in leafRunner
+                  LeafHandlers
+                    { lhPrompt = \rendered -> do
+                        modifyIORef' sent (<> [(name, rendered)])
+                        pure (answer name)
+                    , lhExec = \cmd -> assertFailure (T.unpack (wfName wf) <> " ran an exec leaf: " <> show cmd)
+                    , lhAsk = \_ -> pure (Answer "")
+                    }
+                  sc
+                  op
+                  x
+        )
+        (wfFlow wf)
+        input
+  (,) final <$> readIORef sent
 
 -- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather
 -- than picking one when it is not. @prompt-lint@ is a single @ste@ refinement

@@ -114,10 +114,13 @@ are still mediated by the backend's tool permission flow.
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
   `Just n` to cap at n trips after which the last summary yields to the
-  review panel rather than aborting the run. `orchestrateWith` takes that
-  ceiling as an argument and is what `orchestrate` is defined by, so a capped
-  loop cannot drift from the default one. Every call site names a constant
-  rather than a literal: `stack-prs` passes `stackFuel` (`Just 12`),
+  next stage rather than aborting the run — the next stage is a review panel
+  in `ship-feature-lite` and a gate, a fixer or a triage round in `stack-prs`.
+  `orchestrateWith` takes that ceiling as an argument and is what `orchestrate`
+  is defined by, so a capped loop cannot drift from the default one. Every call
+  site of `orchestrateWith` names a constant rather than a literal (the gate
+  loops under `checkLoop` are a different combinator with its own fuels):
+  `stack-prs` passes `stackFuel` (`Just 12`),
   `ship-feature-lite` passes `liteFuel` (`Just 3`), and `ship-feature`,
   `ship-docs` and `grind-paradox` take `workerFuel` (`Nothing`);
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
@@ -145,8 +148,12 @@ from `ship-feature` in anything they share. Three things distinguish it.
   means the task was never a small task. Exhaustion yields rather than aborts,
   so the panel still reads what the three trips landed — and the summary it
   yields is the one that asked for a fourth trip, so it still ends on
-  `WORK REMAINS`. That is how a capped run that gave up is told apart from one
-  that finished, and `test/Spec.hs` asserts it.
+  `WORK REMAINS`. That marker is the worker's own text, and it travels exactly
+  as far as that text does: into the panel's input and into the run transcript.
+  Every stage after the loop writes fresh text, so the run's **final artifact**
+  is the fixer's closing paragraph and carries neither marker. Read the
+  transcript, not the artifact, to tell a capped run that gave up from one that
+  finished. `test/Spec.hs` asserts both halves of that.
 - **It stops at `remediate`.** No human gate and no PR, which is `ship-docs`'s
   safety property and the same argument: an unattended run auto-answers a gate
   (`gateAnswer` defaults to `"yes"`) and `--sandbox` isolates the working tree

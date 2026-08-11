@@ -347,7 +347,9 @@ shipDocs =
 -- the panel with its 'continueMarker' still on it. The cap is what makes this
 -- tier's worst case a finite number rather than the unbounded one 'shipFeature'
 -- reports, and the marker is what stops an exhausted run from reading as a
--- finished one.
+-- finished one __at the leaf that wrote it__ — nothing after the loop relays it,
+-- so the run's final artifact is @remediate@\'s own closing paragraph and
+-- carries neither marker. See 'liteFuel'.
 --
 -- __It stops at @remediate@.__ 'shipDocs'\'s argument exactly: no 'humanGate'
 -- and no 'submitPR'. An unattended run auto-answers the gate — @gateAnswer@
@@ -570,14 +572,18 @@ workerFuel = Nothing
 -- landed to the panel and let a person read it — not to keep spending on a tier
 -- chosen for the wrong job.
 --
--- __A cap, not a truncation, and that distinction is legible.__
--- 'orchestrateWith' yields on exhaustion rather than aborting
--- ('decideTrip'), so the tree keeps every edit the three trips made and the
--- panel sees them. What separates exhaustion from convergence is the yielded
--- text itself: exhaustion yields the summary that asked for another trip, so its
--- last line is 'continueMarker', where a converged run ends on @WORK COMPLETE@.
--- The panel and a human reader both see which one happened, and @test\/Spec.hs@
--- asserts it rather than leaving it to be inferred.
+-- __A cap, not a truncation, and that distinction is legible — as far as the
+-- text goes, and no further.__ 'orchestrateWith' yields on exhaustion rather
+-- than aborting ('decideTrip'), so the tree keeps every edit the three trips
+-- made and the panel sees them. What separates exhaustion from convergence is
+-- the yielded text itself: exhaustion yields the summary that asked for another
+-- trip, so its last line is 'continueMarker', where a converged run ends on
+-- @WORK COMPLETE@. That text reaches the panel's input and the run transcript,
+-- because those are where the worker's own bytes go. It reaches nothing else:
+-- every stage after the loop writes fresh text, so the run's FINAL ARTIFACT is
+-- 'remediate'\'s closing paragraph and carries neither marker. An operator
+-- reads the transcript, not the artifact — @docs\/operations.md@ says so and
+-- @test\/Spec.hs@ asserts both halves of it.
 --
 -- Named rather than written as a literal @'Just' 3@ at the call site for
 -- 'stackFuel'\'s reason: @test\/Spec.hs@ fences the fuels as named finite
@@ -1474,7 +1480,7 @@ planLeaf =
     $ withBackend claudeAgent fable5
     $ refineWith "plan" (brief planBrief) id
 
--- | The shared analysis prefix: explore (three stances) then plan.
+-- | The shared analysis prefix: explore (four stances) then plan.
 explorePlan :: Flow Text Text
 explorePlan = explore >>> planLeaf
   where

@@ -533,15 +533,21 @@ another, leaf by leaf. The terms the rest of this section uses:
 - **Regrouping** — an agent leaf that re-expresses the change (as logical
   units, or as the commits it should have been) so a panel can review a
   different shape of it. The granularity axis, not a third lens.
-- **Orchestrator loop (`loopUntil`)** — one worker leaf (the only leaf that
-  edits files) is re-run on its own closing summary until it ends on
+- **Orchestrator loop (`orchestrateWith`)** — one worker leaf (the only leaf
+  that edits files) is re-run on its own closing summary until it ends on
   `WORK COMPLETE` rather than the `continueMarker`. No trip ceiling by default
-  (`workerFuel` is `Nothing`), and every capped call site names a constant:
-  `stack-prs` runs its four loops under `stackFuel` (12) and
+  (`workerFuel` is `Nothing`), and every capped call site *of this combinator*
+  names a constant: `stack-prs` runs its four loops under `stackFuel` (12) and
   `ship-feature-lite` under `liteFuel` (3). A cap yields the last summary to
   the next stage rather than aborting, so the edits already made are never
   stranded — and because that summary is the one that asked for another trip,
-  it still ends on `WORK REMAINS`.
+  it still ends on `WORK REMAINS`, in the transcript on that leaf; no later
+  stage relays it. The gate loops (`checkLoop`, under `greenGate`, `stackGate`,
+  `budgetGate` and `consentGate`) are the other user of `loopUntil` and take
+  the opposite policy — their own fuels, and exhaustion aborts rather than
+  yields, because reporting success over a failing check is worse than
+  stopping. See
+  [`docs/workflows.md`](docs/workflows.md#grinding-a-whole-tree).
 - **Gate** — where a run blocks on a human: `steer` (before the work starts),
   `humanGate` (before the PR). An unattended run auto-answers them.
 - **`execGrant`** — the whitelist of commands a world-acting workflow may run
