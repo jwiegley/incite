@@ -17,7 +17,7 @@ import Agent.Grant (permitExec)
 import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, scopeDeclText)
+import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
@@ -52,6 +52,7 @@ import Incite.Feature
   , shipFeature
   , budgetCheck
   , budgetFuel
+  , consentCheck
   , stackChecks
   , stackContinuation
   , stackFuel
@@ -1222,6 +1223,14 @@ synthesisAdmits =
 leafNames :: Flow Text Text -> [Text]
 leafNames flow = [leafNameOf t | FLeaf t <- toList (skeleton (toSkeleton flow))]
 
+-- | Every leaf as @\"kind:name\"@ — the run-graph identity, which is the only
+-- view that distinguishes a check WE run from a question we ask. A gate written
+-- as an 'Agent.Op.Ask' rather than an 'Agent.Op.Exec' sits in the same place in
+-- the ordering and protects nothing unattended, so the name alone cannot say
+-- whether a gate is real.
+leafKinds :: Flow Text Text -> [Text]
+leafKinds flow = [opTagPrefixed t | FLeaf t <- toList (skeleton (toSkeleton flow))]
+
 -- | Every leaf a 'Flow' reaches, paired with the __agent it resolves to__:
 -- @backend@, or @backend\/model@ where a model is named.
 --
@@ -1500,6 +1509,7 @@ stackActing =
   , "triage"
   , "verify-stack"
   , "repair"
+  , "promotion-consent"
   , "ci-budget"
   , "promote"
   ]
@@ -1537,6 +1547,22 @@ stackTests =
         assertBool
           "a promote leaf precedes every ci-budget leaf"
           ("ci-budget" `elem` takeWhile (/= "promote") (leafNames (wfFlow stackPRs)))
+    , -- Consent is the gate that holds when nobody is watching, so it has to be
+      -- an Exec leaf and it has to come first. `humanGate` cannot carry this:
+      -- @Agent.Run@ answers every Ask with @gateAnswer@, default "yes", so on
+      -- the MCP path the human gate approves itself. Both halves are asserted —
+      -- that the check runs before any promotion, and that it is our exec rather
+      -- than a question, because an Ask here would pass the ordering case while
+      -- protecting nothing.
+      testCase "consent is checked by our own exec before anything is promoted" $ do
+        let names = leafNames (wfFlow stackPRs)
+            consent = leafNameText (fst consentCheck)
+        assertBool
+          "a promote leaf precedes the consent check"
+          (consent `elem` takeWhile (/= "promote") names)
+        assertBool
+          "the consent check is not an Exec leaf"
+          (("exec:" <> consent) `elem` leafKinds (wfFlow stackPRs))
     , -- 'Incite.Feature.stackFuel' is finite because four unbounded loops in
       -- one sequence sum past 'maxBound' and report a NEGATIVE worst case —
       -- which is what @agent-functor cost@ printed for the four loops this
@@ -1586,7 +1612,7 @@ stackTests =
         -- runs them and a pin would mean nothing. Their names are derived from
         -- the check lists rather than typed here, so a renamed check cannot
         -- quietly re-enter the set this quantifies over.
-        let harnessRun = [leafNameText n | (n, _) <- budgetCheck : stackChecks]
+        let harnessRun = [leafNameText n | (n, _) <- consentCheck : budgetCheck : stackChecks]
             agentActing = [n | n <- stackActing, n `notElem` harnessRun]
         assertBool "no agent-run acting leaves to check" (not (null agentActing))
         report
@@ -1617,7 +1643,7 @@ stackTests =
       testCase "stackGrant permits both checks as the runtime spells them" $
         report
           [ "denied by stackGrant: " <> tshow line
-          | (_, cmd) <- budgetCheck : stackChecks
+          | (_, cmd) <- consentCheck : budgetCheck : stackChecks
           , let line = T.unwords (NE.toList cmd)
           , not (permitExec stackGrant line)
           ]

@@ -9,10 +9,12 @@ A block is a decision somebody has to make, and CI spent on branches that are
 waiting for that decision is CI spent twice. Repeat the block in your own
 summary, end `WORK BLOCKED` yourself, and stop.
 
-## The budget gate already ran for this turn
+## Two gates already ran, and neither was answered by an agent
 
-A harness outside this session ran `./ci-budget.sh --wait` immediately before
-this turn and read its exit code. You are here because it allowed a promotion.
+A harness outside this session checked that `.stack-promote-approved` exists —
+a person put it there — and then ran `./ci-budget.sh --wait` and read its exit
+code. You are here because both allowed a promotion. Never create that approval
+file yourself, under any reading of the plan.
 It enforces the cap and the yield rule for you, out of `.stack-config`, so you
 do not need to reason about either.
 

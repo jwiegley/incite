@@ -132,7 +132,17 @@ each of which builds on its own and reads as one logical step. It reuses
 `explorePlan`, `orchestrateWith`, `remediate`, `greenGate` and `reviewHeavyFlow`
 rather than copying them. Six things distinguish it.
 
-- **Two gates run our own exec, and that is why it is a flow.** `stackChecks`
+- **Three gates run our own exec, and that is why it is a flow.** Promotion is
+  gated on `.stack-promote-approved`, a file a person creates at the repository
+  root when they are willing to spend CI on this stack. The `humanGate` beside
+  it cannot carry that question: `Agent.Run` answers every `Ask` with
+  `gateAnswer`, which defaults to `"yes"`, so on the MCP path and on any
+  headless run the human gate approves itself. `consentGate` is an `Exec` leaf
+  reading a real exit code, with a fuel of one, so a missing approval file ends
+  the run before any branch leaves draft. `prompts/stack/rule.md` forbids the
+  agent from creating that file, which is the same class of rule as "never
+  merge".
+- **Two of those gates run repeatedly, and that is why it is a flow.** `stackChecks`
   runs `./verify-stack.sh` and `budgetCheck` runs `./ci-budget.sh --wait`, both
   through `verify`, so the exit codes are real. The second one is the point: an
   agent asked to check the CI budget before promoting is an agent that reports
@@ -200,7 +210,7 @@ the number fails the suite rather than stranding the prose.
 
 | Workflow | Worst-case leaves |
 |---|---:|
-| `stack-prs` | 138 |
+| `stack-prs` | 139 |
 
 ## Grinding a whole tree
 

@@ -62,6 +62,8 @@ module Incite.Feature
   , stackRule
   , stackChecks
   , budgetCheck
+  , consentCheck
+  , consentGate
   , budgetFuel
   , budgetGate
   , stackGrant
@@ -1054,6 +1056,7 @@ stackPRs =
       >>> orchestrateWith stackFuel (stackWorker "triage" stackTriage stackContinuation)
       >>> stackGate
       >>> humanGate "Promote this stack out of draft? Each branch spends a CI run on a shared runner."
+      >>> consentGate
       >>> orchestrateWith stackFuel (budgetGate >>> stackWorker "promote" stackPromote stackContinuation)
   where
     -- The same prepend @grind-paradox@ makes, for a related reason and not the
@@ -1156,6 +1159,35 @@ stackChecks = [("verify-stack", "./verify-stack.sh" :| [])]
 budgetCheck :: (LeafName, NonEmpty Text)
 budgetCheck = ("ci-budget", "./ci-budget.sh" :| ["--wait"])
 
+-- | The check that asks whether a person agreed to spend CI at all: does
+-- @.stack-promote-approved@ exist?
+--
+-- __An 'Agent.Op.Exec' leaf because the 'humanGate' beside it is not one.__
+-- @Agent.Run@ answers every 'Agent.Op.Ask' with @gateAnswer@, which defaults to
+-- @\"yes\"@, so on the MCP path and on any headless run the gate in front of
+-- spending a shared runner approves itself — it protects an operator at a
+-- terminal and nobody else. This is the same question asked in the one currency
+-- an unattended run cannot forge on its own behalf: an exit code. Absent file,
+-- non-zero, and 'consentGate' aborts the run.
+--
+-- __A file rather than a flag__, because a flag would have to be threaded
+-- through a caller that may be a cron entry. A file is created by whoever is
+-- actually willing to spend the CI, out of band, before the run reaches here.
+-- 'Incite.Prompts.stackDisciplines' forbids the agent from creating it, which is
+-- the same class of rule as "never merge" and holds for the same reason.
+consentCheck :: (LeafName, NonEmpty Text)
+consentCheck = ("promotion-consent", "test" :| ["-f", ".stack-promote-approved"])
+
+-- | 'consentCheck' as a gate, and the one place in this workflow where a single
+-- red check ends the run rather than starting a repair.
+--
+-- Fuel of one: 'checkLoop' runs the check once and 'loopUntil' aborts on
+-- exhaustion, so a missing approval file stops the run before any branch leaves
+-- draft. There is nothing for a repair leaf to do — the answer is a person's,
+-- not a defect — so the loop passes 'Id', exactly as 'budgetGate' does.
+consentGate :: Flow Text Text
+consentGate = checkLoop "consent" 1 Id [consentCheck]
+
 -- | The ceiling on how many times the promotion loop may wait out a held budget
 -- before the run fails.
 --
@@ -1202,7 +1234,7 @@ budgetGate = checkLoop "budget" budgetFuel Id [budgetCheck]
 -- @git@, @gt@, @gh@ and @nix@ command belongs to the agent's own tools, gated by
 -- its permission flow, or to a child of one of these two scripts.
 stackGrant :: Grant
-stackGrant = execGrant [NE.head cmd <> "*" | (_, cmd) <- budgetCheck : stackChecks]
+stackGrant = execGrant [NE.head cmd <> "*" | (_, cmd) <- consentCheck : budgetCheck : stackChecks]
 
 -- | The pin every acting leaf of a stacking run stands under.
 --

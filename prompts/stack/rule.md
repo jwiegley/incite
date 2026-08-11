@@ -68,3 +68,12 @@ Where the gate fails because a branch references a symbol introduced above it,
 the boundary is wrong. Move the definition down, or add a minimal stub and
 record the stub in `.stack-plan.md`. Do not pull the later work forward
 wholesale.
+
+## The approval file is not yours to create
+
+Promotion is gated on a file at the repository root named
+`.stack-promote-approved`. A person creates it, out of band, when they are
+willing to spend CI on this stack. Never create it, never restore it, and never
+suggest that a run create it in order to continue. Where it is absent, the run
+stops before anything leaves draft, and that is the gate working rather than a
+fault to route around.
