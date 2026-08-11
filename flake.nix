@@ -235,6 +235,7 @@
           ./prompts/review
           ./prompts/retro
           ./prompts/grind
+          ./prompts/stack
           ./commands/fess.md
           ./commands/grind-paradox.md
           ./commands/post-commit-audit.md
