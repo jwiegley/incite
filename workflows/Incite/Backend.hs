@@ -9,20 +9,32 @@
 -- "Incite.Feature" and "Incite.Review" from importing each other.
 module Incite.Backend
   ( fable5
+  , gpt55
   , backends
+  , backendsFor
   , claudeAgentBackend
+  , codexBackend
+  , codexScope
+  , opencodeBackend
+  , opencodeBackendFor
+  , opencodeScope
+  , blockOpencode
   , reviewer
   ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
+import qualified Data.Text as T
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 import Agent.Backend
-  ( BackendTag (ClaudeAgent)
+  ( BackendTag (ClaudeAgent, Codex)
   , Model
   , ModelSpec (Named)
   , claudeAgent
   , claudeModel
   , codex
+  , codexModel
   , defaultModel
   , opencode
   , withBackend
@@ -37,6 +49,43 @@ import Agent.Prompt (Prompt, brief)
 -- loudly rather than guessing if the key is ambiguous.
 fable5 :: Model 'ClaudeAgent 'Named
 fable5 = claudeModel "fable"
+
+-- | The model every codex leaf in this repository runs on, __named rather than
+-- inherited__.
+--
+-- Leaving this as 'defaultModel' means \"whatever @~\/.codex\/config.toml@
+-- happens to say\", and that is not a free choice: @codex-acp@ (0.13.0 and
+-- 0.16.0, its newest) cannot drive a model it has no built-in metadata for, and
+-- it cannot fetch metadata at all because one unknown reasoning-effort level
+-- (@max@) fails its decode of the whole models response. A global default of
+-- @gpt-5.6-sol@ therefore fails __every__ codex turn with @Internal error@ —
+-- see @Agent.Backend.codex@ for the full diagnosis.
+--
+-- That took out three of @review-lite@\'s five lenses at once (both codex
+-- reviewers, plus @qa@, which is codex under @BLOCK_OPENCODE@) while the tier
+-- went on describing itself as five independent reviewers. A review panel must
+-- not be hostage to an interactive tool's settings file, so it names its model
+-- here — exactly as 'fable5' does for claude-agent.
+--
+-- @gpt-5.5@ is verified to complete a turn through @codex-acp@; @gpt-5.6-sol@ is
+-- verified not to — and note that @codex-acp@ __advertises @gpt-5.6-sol@__, so
+-- nothing but running a turn tells the two apart. Revisit when the adapter
+-- vendors a newer @codex-core@.
+--
+-- __The effort suffix is part of the id, not decoration.__ This backend splits
+-- one model into one entry per reasoning level — @gpt-5.5\/low@,
+-- @gpt-5.5\/medium@, @gpt-5.5\/high@, @gpt-5.5\/xhigh@ — so the bare key
+-- @gpt-5.5@ is a substring of four of them and 'Agent.Op.matchModelKey' refuses
+-- an ambiguous key rather than picking one. Preflight catches that before a run
+-- spends anything, which is the whole point of it; read the ids off
+-- @agent-functor doctor@.
+--
+-- @xhigh@ because these are __reviewers__: a lens that misses a defect costs
+-- more than the tokens it saved, and the claude-agent side of the same panels is
+-- pinned to 'fable5' for the same reason. It is the level the codex leaves are
+-- costed at.
+gpt55 :: Model 'Codex 'Named
+gpt55 = codexModel "gpt-5.5/xhigh"
 
 -- | Every backend this repo drives, as __erased scope functions__. The
 -- @Backend b@ \/ @Model b m@ pair is type-indexed, so the tokens cannot sit in a
@@ -53,17 +102,118 @@ fable5 = claudeModel "fable"
 -- 'claudeAgentBackend' being the first entry a fact of the definition rather
 -- than of a @head@ nobody proved was safe.
 backends :: NonEmpty (LeafName, Flow Text Text -> Flow Text Text)
-backends =
-  claudeAgentBackend
-    :| [ ("codex", withBackend codex defaultModel)
-       , ("opencode", withBackend opencode defaultModel)
-       ]
+backends = backendsFor blockOpencode
+
+-- | 'backends' as a __pure function of whether opencode is blocked__, so the
+-- roster this repo actually ships and the roster a test can ask about are one
+-- definition. Everything below is stated of this; 'backends' is its application
+-- to the environment.
+--
+-- __Blocked drops the entry, rather than aliasing it to codex.__ When
+-- 'opencodeBackend' resolves to codex, keeping a third slot would put codex in
+-- the roster twice — and a duplicate here is not cosmetic. @panelAcross@ builds
+-- a lens × backend cross-product, so every lens would get two leaves with the
+-- same @lens\@codex@ name, the same prompt and the same model: the run pays for
+-- one review twice and the synthesis leaf reads one finding as two, which is
+-- how a single reviewer's opinion gets double-ranked. Two honest backends beat
+-- three slots holding two models.
+--
+-- __What this costs, said plainly.__ The panels narrow from three answers per
+-- lens to two, so @review-heavy@ is 14 reviewers rather than 21 and the fan-out
+-- buys correspondingly less. That is the true state of a machine without
+-- opencode, and the alternative — a third slot that is codex wearing opencode's
+-- name — would report 21 reviewers while running 14 models' worth of opinion.
+backendsFor :: Bool -> NonEmpty (LeafName, Flow Text Text -> Flow Text Text)
+backendsFor blocked =
+  claudeAgentBackend :| ([codexBackend] <> [opencodeBackendFor blocked | not blocked])
 
 -- | The claude-agent entry of 'backends', named so a flow can scope to just
 -- this one without indexing into that list. 'backends' is built from it, so tag
 -- and scope cannot drift between the fan-out and the single-backend use.
 claudeAgentBackend :: (LeafName, Flow Text Text -> Flow Text Text)
 claudeAgentBackend = ("claude-agent", withBackend claudeAgent fable5)
+
+-- | The codex entry, named for 'backendsFor'\'s sake: it is what
+-- 'opencodeBackend' becomes under @BLOCK_OPENCODE@, and the two being one
+-- binding is what makes the duplicate 'backendsFor' drops a fact of the
+-- definition rather than of a name matching by eye.
+codexBackend :: (LeafName, Flow Text Text -> Flow Text Text)
+codexBackend = ("codex", withBackend codex gpt55)
+
+-- | 'codexBackend'\'s scope alone, for the leaves pinned to codex by hand rather
+-- than through the roster. The counterpart of 'opencodeScope', and it exists for
+-- the same reason: __one switch moves every codex leaf in the repository__.
+--
+-- Six call sites wrote @'withBackend' codex 'defaultModel'@ out by hand, so the
+-- model question was answered independently in seven places and the answer in
+-- every one of them was \"ask the settings file\". When that file named a model
+-- @codex-acp@ cannot drive, all seven failed together and nothing named the
+-- shared cause. Route through this and the pin in 'gpt55' is the only thing
+-- there is to change.
+codexScope :: Flow Text Text -> Flow Text Text
+codexScope = snd codexBackend
+
+-- | The opencode entry — __or codex, where this install cannot reach
+-- opencode__. See 'blockOpencode' for the switch.
+--
+-- __The name moves with the scope, and that is the whole of the safety here.__
+-- "Incite.Review".@admits@ decides whether a backend may answer a lens by
+-- reading this name, and it refuses exactly one pairing: the fess rubric never
+-- runs on codex. Swap the scope to codex while leaving the name @opencode@ and
+-- that fence reads a label instead of a model — it would keep admitting the
+-- rubric, and the leaf would run on codex anyway. The substitution is therefore
+-- of the __entry__, never of the scope alone.
+--
+-- What that buys, given 'backendsFor' then drops the duplicate: a fess-carrying
+-- lens is left with claude-agent as the only backend that admits it, so under
+-- @BLOCK_OPENCODE@ the rubric always runs on claude — which is the one model
+-- with the context window to hold it. No special case states that; it falls out
+-- of the fence that was already there.
+opencodeBackend :: (LeafName, Flow Text Text -> Flow Text Text)
+opencodeBackend = opencodeBackendFor blockOpencode
+
+-- | 'opencodeBackend' as a pure function of the switch, for 'backendsFor'\'s
+-- reason and one sharper than it: a function that takes @blocked@ as an
+-- argument while its callee reads the global answers a question nobody asked.
+-- @backendsFor False@ built on the CAF returned @[claude-agent, codex, codex]@
+-- under @BLOCK_OPENCODE@ — the very duplicate 'backendsFor' documents itself as
+-- dropping — so the one test written to be environment-independent was not.
+opencodeBackendFor :: Bool -> (LeafName, Flow Text Text -> Flow Text Text)
+opencodeBackendFor True = codexBackend
+opencodeBackendFor False = ("opencode", withBackend opencode defaultModel)
+
+-- | 'opencodeBackend'\'s scope alone, for the two leaves pinned to opencode by
+-- hand rather than through the roster — @review-lite@\'s @qa@ and the
+-- @contemplative@ explore stance. They take a scope function, not an entry.
+--
+-- Neither carries the fess rubric, so neither is what the name/scope coupling
+-- in 'opencodeBackend' protects; they go through this binding so that one
+-- switch still moves every opencode leaf in the repository.
+opencodeScope :: Flow Text Text -> Flow Text Text
+opencodeScope = snd opencodeBackend
+
+-- | Does this machine have to avoid opencode? True when @BLOCK_OPENCODE@ is set
+-- to any non-empty value.
+--
+-- __An 'unsafePerformIO' CAF, deliberately.__ A workflow is a pure 'Flow' value
+-- built at the top level, and the whole inventory is a CAF reached long before
+-- anything runs; threading an environment through 'backendsFor',
+-- "Incite.Feature" and "Incite.Review" would put an @IO@ (or a reader argument)
+-- into every workflow signature to carry one process-constant 'Bool'. The
+-- @NOINLINE@ is what makes it constant: without it GHC may float the read to
+-- each use site, and a flag that answers differently at two use sites is worse
+-- than either answer.
+--
+-- Empty counts as unset, so @BLOCK_OPENCODE= nix run …@ turns it off for one
+-- command without unsetting it in the shell.
+--
+-- Everything that reads this is a pure function of it ('backendsFor',
+-- 'opencodeBackend'), so the impurity is one line and the behaviour it selects
+-- is testable in both directions without touching the environment.
+blockOpencode :: Bool
+blockOpencode =
+  maybe False (not . T.null . T.strip . T.pack) (unsafePerformIO (lookupEnv "BLOCK_OPENCODE"))
+{-# NOINLINE blockOpencode #-}
 
 -- | One reviewer in a fan-out: named, read-only, under a backend scope — built
 -- once here so no reviewer can drift in shape or acquire write access.

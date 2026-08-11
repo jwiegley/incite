@@ -17,10 +17,10 @@ import Agent.Grant (permitExec)
 import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, scopeDeclText)
+import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
-import Incite.Backend (backends, claudeAgentBackend)
+import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
 import Incite.Feature
   ( Orientation (..)
   , fixerContinuation
@@ -32,6 +32,7 @@ import Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
+  , asStackSubject
   , codeRule
   , continueMarker
   , decideContinue
@@ -49,15 +50,37 @@ import Incite.Feature
   , retrospective
   , shipDocs
   , shipFeature
+  , budgetCheck
+  , budgetFuel
+  , consentCheck
+  , stackChecks
+  , stackContinuation
+  , stackFuel
+  , blockedMarker
+  , stackPin
+  , stackGrant
+  , stackPRs
+  , stackPlanLenses
+  , stackRule
+  , stackWorker
   )
 import Incite.Prompts
-  ( codeReview
+  ( alexeyPrinciples
+  , alexeyReview
+  , alexeyStance
+  , codeReview
   , codeReviewerSecurity
   , docsCompleteness
   , docsStructure
   , fess
   , fixAll
   , paradoxFacts
+  , stackDisciplines
+  , stackFacts
+  , stackPromote
+  , stackSlice
+  , stackTooling
+  , stackTriage
   , grindCodegenGaps
   , grindDry
   , grindEmittedCode
@@ -89,6 +112,7 @@ import Incite.Review
   , grindSynthesis
   , toTree
   , architectureOfChange
+  , disciplineOfPanel
   , docsAccuracy
   , docsStrategyOfPlan
   , emissionLenses
@@ -136,6 +160,7 @@ tests =
     , lensesOfTests
     , codexFessTests
     , grindPanelTests
+    , stackTests
     , reorientationTests
     , promptLintTests
     , packagingTests
@@ -403,6 +428,7 @@ reframings =
   [ ("asReviewSubject", asReviewSubject, "test/golden/as-review-subject.txt")
   , ("asRetroSubject", asRetroSubject, "test/golden/as-retro-subject.txt")
   , ("asDocsSubject", asDocsSubject, "test/golden/as-docs-subject.txt")
+  , ("asStackSubject", asStackSubject, "test/golden/as-stack-subject.txt")
   ]
 
 -- | Three cases per reframing, and which mutation each one kills is worth
@@ -707,8 +733,8 @@ orientTests =
               (null (preambleViolations ps))
     , -- The guard on the assertion above: it defends the hand-listed rows
       -- below, which do go stale, not the quantification, which does not.
-      testCase "Orientation enumerates 3 constructors" $
-        length ([minBound .. maxBound] :: [Orientation]) @?= 3
+      testCase "Orientation enumerates 4 constructors" $
+        length ([minBound .. maxBound] :: [Orientation]) @?= 4
     , -- The join as an OBSERVABLE property of the rendered text, not as a
       -- restatement of 'orient'. Asserting @orient o s == preambleOf o <> …@
       -- would be the definition written twice and could never fail; this reads
@@ -834,6 +860,7 @@ expectedLensesOf subject = case subject of
     , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailReviewRubric)
     , ("doctrine", codeReview)
+    , ("discipline", disciplineOfPanel)
     ]
   OfChange ->
     [ ("correctness", reviewCorrectness)
@@ -843,6 +870,7 @@ expectedLensesOf subject = case subject of
     , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailAuditRubric)
     , ("doctrine", codeReview)
+    , ("discipline", disciplineOfPanel)
     , ("architecture", architectureOfChange)
     ]
   OfDocs ->
@@ -949,6 +977,7 @@ lensesOfTests =
               , "haskell"
               , "ponytail"
               , "doctrine"
+              , "discipline"
               ]
     , testCase "OfChange lens names" $
         map (leafNameText . fst) (lensesOf OfChange)
@@ -959,6 +988,7 @@ lensesOfTests =
               , "haskell"
               , "ponytail"
               , "doctrine"
+              , "discipline"
               , "architecture"
               ]
     , testCase "OfDocs lens names" $
@@ -1193,6 +1223,14 @@ synthesisAdmits =
 leafNames :: Flow Text Text -> [Text]
 leafNames flow = [leafNameOf t | FLeaf t <- toList (skeleton (toSkeleton flow))]
 
+-- | Every leaf as @\"kind:name\"@ — the run-graph identity, which is the only
+-- view that distinguishes a check WE run from a question we ask. A gate written
+-- as an 'Agent.Op.Ask' rather than an 'Agent.Op.Exec' sits in the same place in
+-- the ordering and protects nothing unattended, so the name alone cannot say
+-- whether a gate is real.
+leafKinds :: Flow Text Text -> [Text]
+leafKinds flow = [opTagPrefixed t | FLeaf t <- toList (skeleton (toSkeleton flow))]
+
 -- | Every leaf a 'Flow' reaches, paired with the __agent it resolves to__:
 -- @backend@, or @backend\/model@ where a model is named.
 --
@@ -1322,24 +1360,59 @@ grindPanelTests =
       -- So this reads the WORKFLOW's own skeleton, and it pins the pairing
       -- rather than the order: a reader can see here that @stubs@ runs on
       -- opencode without executing the zip in their head.
+      --
+      -- __Two tables, because the roster is two rosters.__ 'spread' cycles
+      -- 'Incite.Backend.backends', which narrows to claude-agent and codex under
+      -- @BLOCK_OPENCODE@ — so the pairing genuinely differs and a single table
+      -- would fence whoever's shell ran the suite. Both are written out by hand
+      -- rather than derived from a cycle, for this case's own reason: a derived
+      -- expectation is 'spread' restated, and would move with any reassignment
+      -- it is supposed to catch.
       testCase "grind-paradox fans out exactly these lens@backend leaves" $
         let panelLeaves = takeWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
-         in panelLeaves
-              @?= [ "correctness@claude-agent"
-                  , "tests@codex"
-                  , "stubs@opencode"
-                  , "vacuous@claude-agent"
-                  , "dry@codex"
-                  , "hardcodings@opencode"
-                  , "refactor@claude-agent"
-                  , "architecture@codex"
-                  , "performance@opencode"
-                  , "ponytail@claude-agent"
-                  , "target-consistency@codex"
-                  , "validator-calls@opencode"
-                  , "codegen-gaps@claude-agent"
-                  , "emitted-code@codex"
-                  ]
+            full =
+              [ "correctness@claude-agent"
+              , "tests@codex"
+              , "stubs@opencode"
+              , "vacuous@claude-agent"
+              , "dry@codex"
+              , "hardcodings@opencode"
+              , "refactor@claude-agent"
+              , "architecture@codex"
+              , "performance@opencode"
+              , "ponytail@claude-agent"
+              , "target-consistency@codex"
+              , "validator-calls@opencode"
+              , "codegen-gaps@claude-agent"
+              , "emitted-code@codex"
+              ]
+            -- Two backends, so the cycle alternates and every lens still gets
+            -- exactly one leaf — which is the property 'spread' exists for, and
+            -- the reason blocking narrows the MODEL per lens without dropping a
+            -- lens.
+            blocked =
+              [ "correctness@claude-agent"
+              , "tests@codex"
+              , "stubs@claude-agent"
+              , "vacuous@codex"
+              , "dry@claude-agent"
+              , "hardcodings@codex"
+              , "refactor@claude-agent"
+              , "architecture@codex"
+              , "performance@claude-agent"
+              , "ponytail@codex"
+              , "target-consistency@claude-agent"
+              , "validator-calls@codex"
+              , "codegen-gaps@claude-agent"
+              , "emitted-code@codex"
+              ]
+         in do
+              panelLeaves @?= if blockOpencode then blocked else full
+              -- Both tables cover every lens, whichever is live: a table that
+              -- lost a row would otherwise pass by agreeing with a panel that
+              -- had lost the same lens.
+              length full @?= length grindLenses
+              length blocked @?= length grindLenses
     , -- The acting half's leaves, in order, after the panel. A stage dropped
       -- from the chain — the fixer, the repair leaf, either check — leaves a
       -- workflow that still plans and still costs, and reports a green gate it
@@ -1416,6 +1489,276 @@ grindPanelTests =
           ]
     ]
 
+-- | The acting leaves of 'stackPRs', in the order the workflow runs them.
+--
+-- Written out because the claim is the ORDER and not the membership: every gate
+-- here is worth nothing in the wrong place. A @verify-stack@ that moved below
+-- the panel means 21 reviewers read branches that do not build; one that moved
+-- below the promotion gate means a shared CI slot is spent on a branch a local
+-- check already knew would fail; a @ci-budget@ that moved outside the promotion
+-- loop means the budget is read once and reused against a queue that has since
+-- changed. None of those moves any leaf NAME, any node count or any cost, so
+-- this list is the only instrument that can see one.
+stackActing :: [Text]
+stackActing =
+  [ "bootstrap"
+  , "cut"
+  , "verify-stack"
+  , "repair"
+  , "remediate"
+  , "triage"
+  , "verify-stack"
+  , "repair"
+  , "promotion-consent"
+  , "ci-budget"
+  , "promote"
+  ]
+
+-- | The four leaves 'Incite.Feature.stackWorker' builds, each with the body and
+-- the closing clause the workflow hands it.
+--
+-- A hand-kept mirror, like 'mirrorWorkflows', and the case above is what keeps
+-- it honest: those four names are asserted against the shipped flow, so a worker
+-- renamed on one side and not the other fails there.
+stackWorkers :: [(LeafName, Prompt, Prompt)]
+stackWorkers =
+  [ ("bootstrap", stackTooling, mempty)
+  , ("cut", stackSlice, stackContinuation)
+  , ("triage", stackTriage, stackContinuation)
+  , ("promote", stackPromote, stackContinuation)
+  ]
+
+-- | Fences the workflow whose gates are __ours__.
+--
+-- Every other acting workflow here trusts an agent with everything except its
+-- build. This one also decides, with a real exit code, whether a CI run may be
+-- started at all — and that decision lands on whoever else is queued for the
+-- same runners. So the structure carrying it is asserted rather than described.
+stackTests :: TestTree
+stackTests =
+  testGroup
+    "stack-prs"
+    [ testCase "acts in the order its gates are worth anything in" $
+        filter (`elem` stackActing) (leafNames (wfFlow stackPRs)) @?= stackActing
+    , -- The safety property the whole workflow exists to hold, stated on its
+      -- own rather than left as a corollary of the order above. A budget check
+      -- reached AFTER the first promotion is a check on a slot already spent.
+      testCase "no promotion leaf is reachable before a budget check" $
+        assertBool
+          "a promote leaf precedes every ci-budget leaf"
+          ("ci-budget" `elem` takeWhile (/= "promote") (leafNames (wfFlow stackPRs)))
+    , -- Consent is the gate that holds when nobody is watching, so it has to be
+      -- an Exec leaf and it has to come first. `humanGate` cannot carry this:
+      -- @Agent.Run@ answers every Ask with @gateAnswer@, default "yes", so on
+      -- the MCP path the human gate approves itself. Both halves are asserted —
+      -- that the check runs before any promotion, and that it is our exec rather
+      -- than a question, because an Ask here would pass the ordering case while
+      -- protecting nothing.
+      testCase "consent is checked by our own exec before anything is promoted" $ do
+        let names = leafNames (wfFlow stackPRs)
+            consent = leafNameText (fst consentCheck)
+        assertBool
+          "a promote leaf precedes the consent check"
+          (consent `elem` takeWhile (/= "promote") names)
+        assertBool
+          "the consent check is not an Exec leaf"
+          (("exec:" <> consent) `elem` leafKinds (wfFlow stackPRs))
+    , -- 'Incite.Feature.stackFuel' is finite because four unbounded loops in
+      -- one sequence sum past 'maxBound' and report a NEGATIVE worst case —
+      -- which is what @agent-functor cost@ printed for the four loops this
+      -- workflow runs in sequence, and it is what an operator reads before
+      -- deciding to spend anything. Nothing else here would notice: the flow
+      -- builds, plans and runs identically either way.
+      --
+      -- Both fuels are asserted finite HERE rather than left as literals only a
+      -- reader checks: 'stackFuel' being 'Nothing' is the overflow, and
+      -- 'budgetFuel' being unbounded is a promotion gate that waits forever
+      -- instead of handing a stuck queue to a person.
+      testCase "both fuels are finite, which is what keeps the cost a number" $ do
+        assertBool "stackFuel is unbounded" (stackFuel /= Nothing)
+        assertBool "budgetFuel is not positive" (budgetFuel > 0)
+        case worstCaseCost (toSkeleton (wfFlow stackPRs)) of
+          Finite n -> assertBool ("worst case is " <> show n) (n > 0)
+          other -> assertFailure ("worst case is " <> T.unpack (renderCost other))
+    , -- The figure in the prose, against the arithmetic. Same fence as the
+      -- review-tier table, and it exists because the Stacking section quoted a
+      -- bare number that no check could see going stale: a fuel change, a panel
+      -- change or one more stage moves it silently.
+      testCase "the Stacking worst-case table matches worstCaseCost" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let rows = tableRows (sectionBody "Stacking a change" doc)
+        assertBool "no worst-case row read from the Stacking section" (not (null rows))
+        report
+          [ complaint
+          | (name, cells) <- rows
+          , complaint <- case (name == wfName stackPRs, cells) of
+              (False, _) -> [name <> ": the Stacking table names a workflow this is not about"]
+              (True, raw : _) -> case reads (T.unpack (T.strip raw)) of
+                [(n, "")] ->
+                  let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
+                   in [ name <> ": docs/workflows.md says " <> tshow n
+                          <> ", the flow's worst case is " <> renderCost actual
+                      | actual /= Finite n
+                      ]
+                _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
+              (True, []) -> [name <> ": the row carries no count"]
+          ]
+    , -- Every acting leaf under one pin, read off the SHIPPED flow rather than
+      -- off the source. 'remediate' and 'repair' are unpinned in the two
+      -- workflows that share them, so nothing but this says they are pinned
+      -- here — and a backend scope moves no leaf name, node count or cost.
+      testCase "every acting leaf of stack-prs runs on claude-agent" $ do
+        -- The two Exec leaves are the harness's own commands, so no backend
+        -- runs them and a pin would mean nothing. Their names are derived from
+        -- the check lists rather than typed here, so a renamed check cannot
+        -- quietly re-enter the set this quantifies over.
+        let harnessRun = [leafNameText n | (n, _) <- consentCheck : budgetCheck : stackChecks]
+            agentActing = [n | n <- stackActing, n `notElem` harnessRun]
+        assertBool "no agent-run acting leaves to check" (not (null agentActing))
+        report
+          [ "unpinned acting leaf: " <> n <> " runs on " <> agent
+          | (n, agent) <- scopedLeaves (wfFlow stackPRs)
+          , n `elem` agentActing
+          , backendOf agent /= "claude-agent"
+          ]
+    , -- The third ending, and the reason it is a token rather than prose: the
+      -- stage after a blocked worker reads its last line, and a block reported
+      -- as completion is how a run spends CI on work a person owed a decision
+      -- on. 'decideContinue' must end the loop on it (it is not the continue
+      -- marker), and the promotion brief must refuse on it.
+      testCase "the blocked ending is terminal, distinct, and refused downstream" $ do
+        decideContinue ("work\n" <> blockedMarker) @?= Right ("work\n" <> blockedMarker)
+        assertBool "the blocked marker is the continue marker" (blockedMarker /= continueMarker)
+        assertBool
+          "the continuation clause does not name the blocked marker"
+          (says stackContinuation blockedMarker)
+        assertBool
+          "the promotion brief does not refuse a blocked hand-off"
+          (says stackPromote blockedMarker)
+    , -- The grant against the checks it is derived from, through the runtime's
+      -- own matcher — 'grindGrant'\'s case, and one sharper. An ungranted check
+      -- is denied inside the run, so a denied @ci-budget@ leaves a promotion
+      -- loop that never asks whether it may promote, while the artifact still
+      -- carries a budget section.
+      testCase "stackGrant permits both checks as the runtime spells them" $
+        report
+          [ "denied by stackGrant: " <> tshow line
+          | (_, cmd) <- consentCheck : budgetCheck : stackChecks
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec stackGrant line)
+          ]
+    , testCase "stackGrant denies what no check asked for" $
+        report
+          [ "stackGrant permits " <> tshow line
+          | line <- ["rm -rf /", "git push --force origin main", "gh pr merge 1"]
+          , permitExec stackGrant line
+          ]
+    , -- Every acting leaf stands under the facts and the disciplines, and the
+      -- one that can destroy the most is the FIRST — a branch recreated rather
+      -- than split takes a pull request's review history with it, long before
+      -- any fixer runs. A worker written later that skips 'stackWorker' would
+      -- lose both with nothing else going red.
+      testCase "every worker carries the facts, the rule, and its own body" $ do
+        complaints <-
+          mapM
+            ( \(name, body, closing) -> do
+                let named = leafNameText name
+                sent <- flowLeafPrompts (T.unpack named) (stackWorker name body closing) "ARTIFACT"
+                pure $ case sent of
+                  [leafText] ->
+                    [ named <> " drops " <> what
+                    | (what, needle) <-
+                        [ ("the facts", promptText stackFacts)
+                        , ("the code rule", promptText codeRule)
+                        , ("the stack disciplines", promptText stackDisciplines)
+                        , ("its own body", promptText body)
+                        , ("the artifact", "ARTIFACT")
+                        , ("its closing clause", promptText closing)
+                        ]
+                    , not (T.null (T.strip needle))
+                    , not (T.isInfixOf needle leafText)
+                    ]
+                  _ -> [named <> " is not one prompt leaf"]
+            )
+            stackWorkers
+        report (concat complaints)
+    , -- The artifact rule, asserted directly. It reaches every worker through
+      -- 'stackWorker', so the case above covers it there — but 'remediate' and
+      -- the repair leaf take it as an argument, and nothing else would say the
+      -- composition still carries both halves.
+      testCase "stackRule carries the code rule and the stack disciplines" $
+        report
+          [ "stackRule drops " <> what
+          | (what, needle) <-
+              [ ("the code rule", promptText codeRule)
+              , ("the stack disciplines", promptText stackDisciplines)
+              ]
+          , not (says stackRule needle)
+          ]
+    , -- Round trip through the decider rather than a substring check, for
+      -- 'documentTests'\'s reason: the clause shows the marker decorated, and
+      -- what has to hold is that the decorated form a worker copies is one
+      -- 'decideContinue' reads as "call me again". A clause that spelled the
+      -- marker itself would strand every loop in this workflow for its whole
+      -- fuel, with nothing in any output naming the cause.
+      testCase "the continuation clause decorates a marker decideContinue accepts" $ do
+        let decorated = "`" <> continueMarker <> "`"
+        assertBool
+          "the clause does not show the marker in the decoration this asserts"
+          (says stackContinuation decorated)
+        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+    , -- The third ending is the reason this clause is not 'fixerContinuation'.
+      -- A stacking run can be blocked by something no branch edit reaches — a
+      -- design disagreement, an approved branch, a starved runner pool — and a
+      -- worker with nowhere to put that either reports a completion it does not
+      -- have or spins its fuel.
+      testCase "the continuation clause admits the blocked ending" $
+        report
+          [ "stackContinuation does not say " <> tshow needle
+          | needle <-
+              [ "cannot continue without a person"
+              , "for a person"
+              , "Never report a block as completion"
+              ]
+          , not (saysLoosely stackContinuation needle)
+          ]
+    , -- The file the harness-run scripts learn this repository from. Q2 was
+      -- exactly this drift in the other direction: the brief recorded the job
+      -- budget into `.stack-plan.md`, `ci-budget.sh` read an environment
+      -- variable, and the gate the workflow exists for enforced a default
+      -- nobody chose. Both halves are asserted — the brief says to WRITE it,
+      -- and each script says to READ it — because either half alone is a value
+      -- with one home and no reader.
+      testCase "the config the scripts read is the config the brief writes" $ do
+        assertBool
+          "the bootstrap brief never says to write .stack-config"
+          (says stackTooling ".stack-config")
+        report
+          [ "the " <> script <> " body does not source .stack-config"
+          | (script, marker) <-
+              [ ("ci-budget.sh", "may I promote right now")
+              , ("verify-stack.sh", "Verify a Graphite stack")
+              , ("stack-status.sh", "Status of every branch in the stack")
+              ]
+          , let body = scriptBody marker (promptText stackTooling)
+          , T.null body || not (T.isInfixOf ". \"$ROOT/.stack-config\"" body)
+          ]
+    , -- @docs/workflows.md@ says which lenses a stacking run edits through, and
+      -- a lens joining an inline list moves no name, count or skeleton this file
+      -- is checked on. 'Incite.Feature.stackPlanLenses' is the roster it reads —
+      -- the same fence, and the same past failure, as the docs chain's.
+      testCase "the Stacking a change section names every plan lens stack-prs runs" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let body = sectionBody "Stacking a change" doc
+        assertBool "no Stacking a change section found" (not (T.null (T.strip body)))
+        report
+          [ "docs/workflows.md's Stacking a change section does not name " <> n
+          | (name, _) <- stackPlanLenses
+          , let n = leafNameText name
+          , not (T.isInfixOf n body)
+          ]
+    ]
+
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
 -- adjustment, each paired with the rubric it is a delta against.
 --
@@ -1431,6 +1774,7 @@ reorientations =
   , ("ponytailOfDocs", ponytailAuditRubric, ponytailOfDocs)
   , ("architectureOfChange", reviewArchitecture, architectureOfChange)
   , ("haskellOfHouse", haskellReviewer, haskellOfHouse)
+  , ("disciplineOfPanel", alexeyReview, disciplineOfPanel)
   , ("qaOfCommit", qaAgent, qaOfCommit)
   , ("docsStrategyOfPlan", technicalDocsStrategist, docsStrategyOfPlan)
   , ("slopOfDocs", stopSlop, slopOfDocs)
@@ -1505,6 +1849,22 @@ voidedSentences =
       , ("Lean already. Ship.", "Lean already. Ship.")
       ]
     )
+  ,
+    ( "disciplineOfPanel"
+    , alexeyReview
+    , disciplineOfPanel
+    , -- The instruction the lens cannot follow (there is no `references/`
+      -- directory in a prompt), and the three halves of the verdict that have no
+      -- reader behind a panel: the GitHub grades, the conditional-approval
+      -- formula, and the silent approval that a synthesis step cannot tell apart
+      -- from a backend that never ran.
+      [ ("Before reviewing, read both references", "spliced above")
+      , ("Conflict rule", "conflict rule stands")
+      , ("default to COMMENTED outside your competence", "You cast none.")
+      , ("Verdict grammar", "Drop the verdict grammar")
+      , ("LGTM up to X", "`LGTM up to X` formula")
+      ]
+    )
   ]
 
 reorientationTests :: TestTree
@@ -1568,6 +1928,30 @@ reorientationTests =
                   ]
                 ]
           ]
+    , -- 'disciplineOfPanel' is a three-file splice, and only ONE of the three is
+      -- its base — so every case above sees the skill and none of them can see
+      -- whether the references arrived. That is the failure this lens exists to
+      -- avoid: the skill's own first instruction is to read both before
+      -- reviewing, and a lens carrying the instruction without the text is one
+      -- whose reader invents what they said.
+      testCase "disciplineOfPanel carries both references the skill demands" $
+        report
+          [ complaint
+          | complaint <-
+              concat
+                [ [ "the discipline lens no longer carries " <> label
+                  | (label, reference) <-
+                      [("engineering-principles", alexeyPrinciples), ("stance", alexeyStance)]
+                  , not (says disciplineOfPanel (promptText reference))
+                  ]
+                , -- And the adjustment has to SAY they are here. Splicing them
+                  -- silently leaves the skill telling its reader to open a
+                  -- directory that does not exist.
+                  [ "the adjustment no longer says where the references went"
+                  | not (says disciplineOfPanel "Both are spliced above")
+                  ]
+                ]
+          ]
     , -- The guard on the two cases above: both quantify over lists derived from
       -- the bases, and a derivation that silently returned @[]@ would make them
       -- pass over nothing at all.
@@ -1576,6 +1960,12 @@ reorientationTests =
           @?= ["Verification gap", "Spec drift", "Scope creep", "Quiet downgrades"]
         sectionsOf (promptText ponytailAuditRubric)
           @?= ["Tags", "Hunt", "Output", "Boundaries"]
+        sectionsOf (promptText alexeyReview)
+          @?= [ "Identity guardrails (hard rules)"
+              , "Review procedure"
+              , "Severity gates"
+              , "Output register"
+              ]
     ]
 
 -- | Fail with every complaint named, or pass on @[]@.
@@ -1774,7 +2164,7 @@ packagingTests =
           @?= [True, False, False, True, False, False, True, False]
     ]
 
--- | The ten workflows "Main".workflows holds, rebuilt from library exports.
+-- | The twelve workflows "Main".workflows holds, rebuilt from library exports.
 -- This suite cannot import "Main" — it is the executable, not a library module
 -- — so this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
 -- binding, in the same order. A rename or reorder on either side is exactly
@@ -1784,6 +2174,7 @@ mirrorWorkflows =
   [ planFeature
   , shipFeature
   , shipDocs
+  , stackPRs
   , grindParadox
   , fessAudit
   , retro
@@ -1794,14 +2185,17 @@ mirrorWorkflows =
   , promptLint
   ]
 
--- | The row-level primitive 'tableFirstColumn' and 'tableFirstTwoColumns' both
--- build on: every markdown table row whose first cell opens with a backticked
--- name, paired with that row's remaining cells (unparsed, unfiltered). Written
--- once so the convention for what counts as a row — split on @|@, strip, check
--- the backtick prefix, take the name up to the closing backtick — moves both
--- readers together. Before this was two independent copies, and reformatting
--- the doc convention meant finding and editing both in lockstep or watching
--- them drift.
+-- | The row-level primitive every table reader here builds on: every markdown
+-- table row whose first cell opens with a backticked name, paired with that
+-- row's remaining cells (unparsed, unfiltered). Written once so the convention
+-- for what counts as a row — split on @|@, strip, check the backtick prefix,
+-- take the name up to the closing backtick — moves every reader together.
+-- Before this was two independent copies, and reformatting the doc convention
+-- meant finding and editing both in lockstep or watching them drift.
+--
+-- __Cells stay unparsed.__ A reader that parsed counts eagerly silently dropped
+-- the rows that failed to parse, which is exactly the defect @docsInventoryTests@
+-- exists to catch. Parsing — and reporting a parse failure — is the test's job.
 tableRows :: Text -> [(Text, [Text])]
 tableRows body =
   [ (name, drop 2 cells)
@@ -1821,20 +2215,6 @@ tableRows body =
 tableFirstColumn :: Text -> [Text]
 tableFirstColumn = map fst . tableRows
 
--- | 'tableRows', plus the __raw text__ of the row's second cell — the shape of
--- "Review tiers and leaf counts"' @| Tier | Leaves | … |@ table.
---
--- Left as 'Text' rather than parsed to 'Int' here, on purpose: a cell that
--- fails to parse used to be silently filtered out by this reader before
--- @docsInventoryTests@ ever saw it (via a failed @reads@ pattern match), which
--- is exactly the defect that check exists to catch. Parsing — and reporting a
--- parse failure — is now the test's job, not this reader's.
-tableFirstTwoColumns :: Text -> [(Text, Text)]
-tableFirstTwoColumns body =
-  [ (name, T.strip c2)
-  | (name, c2 : _) <- tableRows body
-  ]
-
 -- | The body of one @## Heading@ section: everything between it and the next
 -- @## @ heading (or end of file). Both tables this suite fences sit under their
 -- own @## @ heading, so this is what keeps 'tableFirstColumn' off tables that
@@ -1848,6 +2228,25 @@ sectionBody heading doc =
     . dropWhile (/= ("## " <> heading))
     $ T.lines doc
 
+-- | One fenced @```bash@ block out of the tooling brief, keyed by a line unique
+-- to that script. The three scripts are markdown code fences rather than files
+-- on disk — that is the whole point of the brief — so a test about their
+-- content has to read them the way the agent will.
+--
+-- __Keyed on a comment line AND on the shebang.__ The file names all appear
+-- together in the @.git\/info\/exclude@ block, which is itself a fence, so a
+-- name-keyed reader returns that list instead. And the prose introducing a
+-- script quotes the same sentence its header comment uses, so the marker alone
+-- matches the paragraph above the fence. Requiring the shebang is what makes
+-- this read the script rather than something that talks about it.
+scriptBody :: Text -> Text -> Text
+scriptBody marker doc =
+  case [b | b <- T.splitOn "```" doc, T.isInfixOf marker b, T.isInfixOf shebang b] of
+    (b : _) -> b
+    [] -> T.empty
+  where
+    shebang = "#!/usr/bin/env bash"
+
 -- | Fences 'docs/workflows.md' against the two things in it that only code can
 -- prove: which workflows exist (in order), and how many leaves a review tier
 -- costs. Neither is otherwise cross-validated — "Main".workflows and this file
@@ -1860,7 +2259,7 @@ docsInventoryTests =
     [ -- Direct list equality, not sorted-set equality. The table is meant to
       -- mirror 'mirrorWorkflows'\'s order (it is 'workflows/Main.hs'\'s order),
       -- and a bare set comparison cannot see a reorder: two tables naming the
-      -- same ten workflows in different sequences would both read as the same
+      -- same twelve workflows in different sequences would both read as the same
       -- set and this would stay green. Order is exactly what makes the claim on
       -- 'mirrorWorkflows' — "a rename or reorder on either side is exactly what
       -- this test exists to catch" — true.
@@ -1874,13 +2273,25 @@ docsInventoryTests =
       -- saw them: a row naming a workflow absent from 'mirrorWorkflows' (the old
       -- @Just wf <- [find …]@ pattern match failing inside the list
       -- comprehension, which drops that iteration rather than failing it), and a
-      -- row whose count cell is not a bare 'Int' (dropped by
-      -- 'tableFirstTwoColumns' itself, back when it parsed eagerly). Both are
-      -- text at this point — 'tableFirstTwoColumns' no longer parses — so both
-      -- get their own complaint below instead of disappearing.
+      -- row whose count cell is not a bare 'Int' (dropped by the reader itself,
+      -- back when it parsed eagerly). Both are text at this point — 'tableRows'
+      -- does not parse — so both get their own complaint below instead of
+      -- disappearing.
+      -- __Which column, decided by the environment the suite runs in.__ The
+      -- table states each tier twice — the roster with opencode, and the same
+      -- tier under @BLOCK_OPENCODE@ — because the flows are built from
+      -- 'Incite.Backend.backends', which reads that variable. A single column
+      -- would have made this fence a statement about whoever's shell ran the
+      -- suite: green under nix (which sandboxes the environment away) and red
+      -- on the machine the variable exists for. Both columns are hand-written
+      -- and each is checked whenever it is the live one, so neither is a
+      -- restatement of the arithmetic it fences.
       testCase "Review tiers and leaf counts matches worstCaseCost . toSkeleton . wfFlow" $ do
         doc <- TIO.readFile "docs/workflows.md"
-        let counts = tableFirstTwoColumns (sectionBody "Review tiers and leaf counts" doc)
+        let counts =
+              [ (name, T.strip (if blockOpencode then blocked else full))
+              | (name, full : blocked : _) <- tableRows (sectionBody "Review tiers and leaf counts" doc)
+              ]
         assertBool "no leaf-count rows read from the table" (not (null counts))
         report
           [ complaint
@@ -1958,12 +2369,15 @@ backendProseTests =
         -- named no backend at all would satisfy this rule vacuously, forever.
         assertBool "no Shape cell names any backend — the rule is over nothing" $
           not (null mentioned)
+        -- The vocabulary must stay the FULL one under @BLOCK_OPENCODE@ too, or
+        -- this rule quietly stops covering the name that blocking is about.
+        assertBool "the backend vocabulary narrowed — opencode mentions would go unread" $
+          "opencode" `elem` backendNames
         report
           [ wfName wf <> ": docs/workflows.md says " <> b <> ", but its leaves run on "
-            <> T.intercalate ", " agents
+            <> T.intercalate ", " (runsOn wf)
           | (wf, b) <- mentioned
-          , let agents = nub (map (backendOf . snd) (scopedLeaves (wfFlow wf)))
-          , b `notElem` agents
+          , b `notElem` runsOn wf
           ]
     , -- The rule above only refutes a backend the workflow runs NOWHERE, which
       -- is blind to a tier that runs on all three and misattributes one lens —
@@ -1981,7 +2395,23 @@ backendProseTests =
           ]
     ]
   where
-    backendNames = map leafNameText (map fst (NE.toList backends))
+    -- __The full roster, not the running one.__ These documents describe the
+    -- configuration this repository ships, so the names they may be held to
+    -- cannot depend on one machine's environment. Built from @backendsFor
+    -- False@: reading 'Incite.Backend.backends' here narrowed the vocabulary to
+    -- two names under @BLOCK_OPENCODE@, and the review-lite row's "qa on
+    -- opencode" then matched nothing and went unchecked — the rule went dark on
+    -- exactly the name blocking is about, and passed while doing it.
+    backendNames = map leafNameText (map fst (NE.toList (backendsFor False)))
+    -- What a workflow may be said to run on. Under @BLOCK_OPENCODE@ the opencode
+    -- slot resolves elsewhere, so a document that correctly describes the
+    -- default configuration would otherwise be reported as wrong for saying so.
+    -- Adding the slot's default name back is what keeps the rule live for every
+    -- OTHER name while blocked, rather than skipping the case wholesale: a row
+    -- claiming a backend its workflow never touches is still caught either way.
+    runsOn wf =
+      let agents = nub (map (backendOf . snd) (scopedLeaves (wfFlow wf)))
+       in agents <> ["opencode" | blockOpencode, leafNameText (fst opencodeBackend) `elem` agents]
 
 -- | Fences @README.md@'s inputs table against the only thing that decides what
 -- a third-party input can reach: @flake.nix@'s @builtins.readFile@ calls.
@@ -2025,6 +2455,15 @@ inputAllowlistTests =
 -- @code-review.md@ mentions the tier in one line of a review ladder and states
 -- only the count, so only the count is required of it. Demanding five pairings
 -- there would be demanding worse prose.
+-- __The pairings are the DEFAULT roster's, and are only demanded of the prose
+-- when that is the roster running.__ @qa@ is pinned to the opencode slot, which
+-- resolves to codex under @BLOCK_OPENCODE@ — and these documents describe the
+-- configuration this repository ships, not one machine's local override. Asking
+-- them to say \"qa on codex\" because of an environment variable would be
+-- demanding that the documents track a shell.
+--
+-- The count clause survives blocking, because five reviewers is five either
+-- way, so neither mode leaves this fence checking nothing.
 reviewLiteProse :: [(Text, Text)] -> [(FilePath, [Text])]
 reviewLiteProse lenses =
   [ ("commands/post-commit-audit.md", count "independent reviewers" : pairings)
@@ -2033,7 +2472,9 @@ reviewLiteProse lenses =
   ]
   where
     count noun = countWord (length lenses) <> " " <> noun
-    pairings = [n <> " on " <> backendOf a | (n, a) <- lenses]
+    pairings
+      | blockOpencode = []
+      | otherwise = [n <> " on " <> backendOf a | (n, a) <- lenses]
 
 -- | A small count, spelled — which is how the documents write it, and so the
 -- only form a substring check can look for.
@@ -2213,11 +2654,19 @@ scopeTests =
       -- reaches it. Written out rather than derived, because every derivation
       -- available here reads the same expression the workflow is built from and
       -- would move with it.
+      --
+      -- @contemplative@ is the opencode stance, so its cell moves with
+      -- @BLOCK_OPENCODE@ — read off 'opencodeBackend' rather than spelled twice,
+      -- because that binding IS what the stance is scoped to and a second
+      -- spelling here could only disagree with it.
       testCase "plan-feature runs each leaf on the agent its module argues for" $
         scopedLeaves (wfFlow planFeature)
           @?= [ ("intrepid", "claude-agent")
-              , ("skeptic", "codex")
-              , ("contemplative", "opencode")
+              , -- Pinned, not inherited: an unpinned codex leaf runs on whatever
+                -- ~/.codex/config.toml names, and a model codex-acp cannot drive
+                -- fails every codex turn at once. See 'Incite.Backend.gpt55'.
+                ("skeptic", "codex/gpt-5.5/xhigh")
+              , ("contemplative", leafNameText (fst opencodeBackend))
               , ("architect", "claude-agent/fable")
               , ("plan", "claude-agent/fable")
               , ("ponytail", runDefault)
@@ -2232,14 +2681,57 @@ scopeTests =
       -- backends, so the fourth independence is bought with a MODEL —
       -- @claude-agent\/fable@ against @claude-agent@ — which is why this reads
       -- the whole agent spec and not the backend tag.
-      testCase "no two explore stances share an agent" $
+      --
+      -- __Under @BLOCK_OPENCODE@ the law weakens, and it has to.__ The stances
+      -- hold claude-agent, codex, claude-agent\/fable and opencode; drop
+      -- opencode and three distinct agents remain for four stances, so a
+      -- collision is FORCED rather than chosen — @contemplative@ lands on codex
+      -- beside @skeptic@. What stays refutable is that the fan-out still uses
+      -- every agent available to it: a second avoidable collision, or a stance
+      -- silently re-pinned, moves this count.
+      testCase "no two explore stances share an agent the roster can tell apart" $
         let stances = [a | (n, a) <- scopedLeaves (wfFlow planFeature), n `elem` stanceNames]
          in do
               -- The reader proved before the law is quantified over it: a
               -- renamed stance would otherwise make distinctness a statement
               -- about the empty list.
               length stances @?= length stanceNames
-              nub stances @?= stances
+              length (nub stances)
+                @?= (if blockOpencode then length stanceNames - 1 else length stanceNames)
+    , -- THE UNPINNED BACKEND. A codex leaf that names no model runs on whatever
+      -- @~\/.codex\/config.toml@ happens to say, and @codex-acp@ cannot drive a
+      -- model it has no built-in metadata for (see 'Incite.Backend.gpt55'). One
+      -- line in an interactive tool's settings file therefore failed every codex
+      -- leaf in this repository at once — and @review-lite@, which puts three of
+      -- its five lenses on codex under @BLOCK_OPENCODE@, went on calling itself
+      -- five independent reviewers while three of them returned nothing.
+      --
+      -- Quantified over the WHOLE inventory rather than the leaves that happened
+      -- to be codex when this was written: the defect was six call sites each
+      -- answering the model question for itself, so a law that only knows about
+      -- today's six would miss the seventh.
+      --
+      -- Bare @"codex"@ is the unpinned spelling; @"codex/gpt-5.5/xhigh"@ is a pin.
+      testCase "no shipped leaf runs on codex without naming a model" $
+        [ (wfName wf, leaf)
+        | wf <- mirrorWorkflows
+        , (leaf, agent) <- scopedLeaves (wfFlow wf)
+        , agent == "codex"
+        ]
+          @?= []
+    , -- The leaf that writes the code, and the only pinned leaf in
+      -- 'shipFeature'. Everything else there is deliberately on the run's own
+      -- backend (the case below states that for the lens chains), so this one
+      -- has to be asserted by name or the pin is indistinguishable from the
+      -- default that happens to agree with it today.
+      --
+      -- @claude-agent@ with no @\/model@ suffix IS the pin: it names
+      -- claude-agent's own default, which is Claude Opus. @claude-agent\/fable@
+      -- here would mean implementation had been quietly moved onto the model the
+      -- review lenses use, and 'runDefault' would mean the pin was dropped and a
+      -- @--backend@ can move it again.
+      testCase "ship-feature implements on claude-agent's default model, pinned" $
+        lookup "implement" (scopedLeaves (wfFlow shipFeature)) @?= Just "claude-agent"
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at
@@ -2466,11 +2958,107 @@ backendTests :: TestTree
 backendTests =
   testGroup
     "backends"
-    [ testCase "has three backends" $
-        length backends @?= 3
-    , testCase "backend names" $
-        map (leafNameText . fst) (NE.toList backends)
+    [ -- Over 'backendsFor', not over 'backends': the shipped roster reads
+      -- @BLOCK_OPENCODE@ through an 'unsafePerformIO' CAF, so an assertion on
+      -- it states a property of whoever's shell ran the suite. The pure
+      -- function is the same definition with the environment as an argument,
+      -- and asking it both questions is what makes either answer a check.
+      testCase "with opencode available, three backends" $
+        map (leafNameText . fst) (NE.toList (backendsFor False))
           @?= ["claude-agent", "codex", "opencode"]
+    , -- __The duplicate is dropped, not aliased.__ 'opencodeBackend' resolves to
+      -- codex when blocked, so a roster that kept three slots would hold codex
+      -- twice — and @panelAcross@ is a cross-product, so every lens would get
+      -- two @lens\@codex@ leaves: one model's opinion, paid for twice and ranked
+      -- as two findings. That failure is invisible in a leaf NAME list unless
+      -- something asserts distinctness, so this does.
+      testCase "with opencode blocked, codex takes its place exactly once" $ do
+        let named = map (leafNameText . fst) (NE.toList (backendsFor True))
+        named @?= ["claude-agent", "codex"]
+        nub named @?= named
+    , -- __The whole point of the variable, quantified over the inventory.__
+      -- Everything else here fences a consequence of blocking — the roster
+      -- shape, which backend answers the fess rubric, what each tier costs.
+      -- None of them says the thing @BLOCK_OPENCODE@ exists to guarantee: that
+      -- no leaf ANYWHERE resolves to opencode. A tier written later that pins a
+      -- leaf with @withBackend opencode@ directly, rather than through
+      -- 'opencodeScope', satisfies every other case in this file and still
+      -- opens a session against a backend the machine cannot reach.
+      --
+      -- Both directions are asserted, because the blocked half alone is
+      -- unfalsifiable: a repository that reached opencode nowhere would satisfy
+      -- it forever. Unblocked, opencode must actually be reachable — which is
+      -- what gives the blocked case something to bite on.
+      testCase "BLOCK_OPENCODE removes opencode from every workflow, and nothing else does" $
+        let agents = nub (map (backendOf . snd) (concatMap (scopedLeaves . wfFlow) mirrorWorkflows))
+         in if blockOpencode
+              then
+                assertBool
+                  ("blocked, but these workflows still resolve a leaf to opencode: " <> show agents)
+                  ("opencode" `notElem` agents)
+              else
+                assertBool
+                  "unblocked, no workflow reaches opencode at all — the blocked case fences nothing"
+                  ("opencode" `elem` agents)
+    , -- An environment variable that halves a review panel and is written down
+      -- nowhere is a trap: nothing else in this suite reads the documents for
+      -- it, and a reader who does not know it exists cannot explain why their
+      -- run cost less than the table says. The leaf-count table's second column
+      -- is checked by 'docsInventoryTests'; this is what keeps the prose that
+      -- explains the column from being deleted out from under it.
+      testCase "BLOCK_OPENCODE is documented, with what it costs" $ do
+        doc <- proseNormal <$> TIO.readFile "docs/workflows.md"
+        report
+          [ "docs/workflows.md does not say " <> tshow needle
+          | needle <-
+              [ "BLOCK_OPENCODE"
+              , -- The three consequences, each in the words that section uses.
+                "panels get narrower"
+              , "fess rubric always runs on claude"
+              , "explore fan-out loses one axis"
+              ]
+          , not (T.isInfixOf needle doc)
+          ]
+    , -- __The name and the scope of the opencode slot, pinned together.__
+      -- 'Incite.Review.admits' refuses the fess rubric to codex by reading a
+      -- backend's NAME, so a slot whose name says @opencode@ while its scope
+      -- runs codex keeps an admission it should have lost, and the rubric runs
+      -- on codex anyway.
+      --
+      -- Nothing else here catches that. 'backendsFor' never calls
+      -- 'opencodeBackendFor' on its blocked branch — it drops the entry — so
+      -- the roster cases above stay green under the decoupling. The
+      -- resolved-scope check in 'codexFessTests' does catch it, but only when
+      -- @BLOCK_OPENCODE@ is set, and nix sandboxes that variable away: in CI
+      -- that check has never once run against a blocked roster. This is the
+      -- one that runs in both.
+      --
+      -- The scope is resolved through 'Incite.Backend.reviewer' — the same
+      -- builder the shipped stances go through — rather than trusted from the
+      -- name beside it. A pair whose two halves are read off each other proves
+      -- nothing about either.
+      testCase "the opencode slot's name and its scope name the same backend" $
+        let resolved (n, scope) =
+              (leafNameText n, map snd (scopedLeaves (snd (reviewer scope "probe" anyPrompt))))
+         in do
+              resolved (opencodeBackendFor False) @?= ("opencode", ["opencode"])
+              -- The substituted scope carries codex's model pin with it — a
+              -- blocked opencode leaf must land on the same named model as any
+              -- other codex leaf, not on the settings file's default.
+              resolved (opencodeBackendFor True) @?= ("codex", ["codex/gpt-5.5/xhigh"])
+    , -- The fence the substitution leans on, stated where the substitution is.
+      -- "Incite.Review".'admits' refuses the fess rubric to codex by reading a
+      -- backend's NAME, so the name and the scope have to move together: swap
+      -- the scope to codex under the name @opencode@ and the rubric keeps its
+      -- admission and runs on codex anyway. With the entry substituted whole,
+      -- claude-agent is the only backend left that admits it — which is the
+      -- property that makes blocking safe rather than merely quiet.
+      testCase "blocked, the fess rubric is left with claude-agent alone" $
+        [ b
+        | b <- map fst (NE.toList (backendsFor True))
+        , admits b fess
+        ]
+          @?= ["claude-agent"]
     , -- 'NE.head' rather than 'head': the list is 'NonEmpty' so that
       -- @Incite.Review.spread@ can cycle it without a guard, and this case
       -- comes along for free — there is no empty case left to answer.

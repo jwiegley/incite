@@ -60,6 +60,14 @@ module Incite.Prompts
   , grindValidatorCalls
   , grindCodegenGaps
   , grindEmittedCode
+    -- * Stacked pull requests
+  , stackFacts
+  , stackDisciplines
+  , stackSlicePlan
+  , stackTooling
+  , stackSlice
+  , stackTriage
+  , stackPromote
     -- * Review regroupings (views, not judges)
   , reviewUnits
   , reviewSequence
@@ -82,6 +90,10 @@ module Incite.Prompts
     -- * Upstream: promptdeploy
   , haskellReviewer
   , perfReviewer
+    -- * Upstream: alexey-review
+  , alexeyReview
+  , alexeyPrinciples
+  , alexeyStance
     -- * Upstream: SimpleEnglish (ASD-STE100)
   , steRules
   , steSkill
@@ -244,6 +256,98 @@ grindValidatorCalls = [promptFile|prompts/grind/validator-calls.md|]
 grindCodegenGaps = [promptFile|prompts/grind/codegen-gaps.md|]
 grindEmittedCode = [promptFile|prompts/grind/emitted-code.md|]
 
+-- Stacked pull requests -------------------------------------------------------
+
+-- | Everything a leaf of a stacking run needs to know about the repository it is
+-- pointed at: the probe that proves this working directory is one, what to read
+-- in order to learn the trunk name, the local gate, the CI trigger rules and the
+-- review bot, and the operating rules that keep every command non-interactive.
+--
+-- __The counterpart of 'paradoxFacts', and deliberately not its twin.__ That file
+-- states one project's paths, because there is exactly one Paradox checkout. A
+-- stack can be cut in any repository, so the values here would be wrong
+-- everywhere: this file names what to READ for each of them, and says to write
+-- the answers into @.stack-plan.md@ before anything touches git. The probe is the
+-- one thing it shares — a run that reads no branches reports no work, and so does
+-- a finished stack.
+--
+-- __Read by every worker, not only the first.__ The workflow prepends it to the
+-- run's input so the explore stances get it, and
+-- "Incite.Feature".@stackWorker@ splices it into each acting leaf, because a
+-- stage in a chain sees the previous leaf's output rather than the run's input.
+stackFacts :: Prompt
+stackFacts = [promptFile|prompts/stack/facts.md|]
+
+-- | What a stacking run may not do, under any finding and against any deadline:
+-- never merge, never rewrite an approved branch, never let the original branch
+-- name leave the bottom piece of a split, never fix at the top of the stack, and
+-- never spend a CI slot somebody else is queued for.
+--
+-- Composed under 'Incite.Feature.codeRule' rather than replacing it — see
+-- 'Incite.Feature.stackRule' — for the reason 'paradoxFacts' is composed the same
+-- way: the artifact rule says which side gives when the code and the record
+-- disagree, and these are the disciplines a repair stands under while it gives.
+stackDisciplines :: Prompt
+stackDisciplines = [promptFile|prompts/stack/rule.md|]
+
+-- | The plan lens that recuts an implementation plan into a stack of branches:
+-- inventory, then the dependency graph split into compile-time edges (which bind
+-- absolutely) and runtime edges (which defer), then the topological layers.
+--
+-- That split is the whole trick, and it is what makes an independently building
+-- branch reachable without shuffling hunks across boundaries: code nothing calls
+-- yet still builds, so a call site can wait where a signature cannot.
+stackSlicePlan :: Prompt
+stackSlicePlan = [promptFile|prompts/stack/slice-plan.md|]
+
+-- | The bootstrap brief: write the plan and the branch list to disk, then the
+-- three scripts, verbatim.
+--
+-- __Its own leaf, and that is a cost decision.__ The scripts are around 11 KB of
+-- bash, and two of them are run by the harness rather than by the agent
+-- ('Incite.Feature.stackChecks' and 'Incite.Feature.budgetCheck'), so they have
+-- to be on disk before any gate runs. Spliced into the slicing worker instead
+-- they would be re-sent on every trip of a loop that may take many; sent once
+-- here, the branch-cutting worker carries none of them.
+stackTooling :: Prompt
+stackTooling = [promptFile|prompts/stack/tooling.md|]
+
+-- | The branch-cutting worker: the backup branch, one @gt create@ per layer
+-- bottom-first, the fast gate after each one, what each kind of fast-gate failure
+-- means, the description written into the commit message where a non-interactive
+-- @gt submit@ can find it, and the equivalence check run once and never again.
+--
+-- It opens by asking which mode the run is in, because the two are not variants
+-- of one procedure: an unsubmitted branch is rebuilt from a backup, and a
+-- submitted stack is split in place so that the pull request on the bottom piece
+-- keeps its review history.
+stackSlice :: Prompt
+stackSlice = [promptFile|prompts/stack/slice.md|]
+
+-- | The review-round worker: submit the stack as drafts, trigger the review bot
+-- across every eligible branch in one batch, then classify what comes back and
+-- fix each finding at the branch that introduced it.
+--
+-- Draft pull requests cost no CI where the discovery step found that to be true,
+-- so this stage is free however many rounds it takes, and the whole discipline of
+-- the run is to spend nothing until the stack has settled.
+stackTriage :: Prompt
+stackTriage = [promptFile|prompts/stack/triage.md|]
+
+-- | The promotion worker: the four conditions a branch and everything below it
+-- must meet, the first promotion run as a measurement of how many jobs one pull
+-- request spawns, and the three ways a promoted branch fails — a check the local
+-- gate covers, a check only CI has, and CI not running at all.
+--
+-- The budget gate it opens by describing is not its own:
+-- 'Incite.Feature.budgetGate' runs @ci-budget.sh@ before every trip and reads the
+-- exit code, so the brief is told what already happened rather than asked to do
+-- it.
+stackPromote :: Prompt
+stackPromote = [promptFile|prompts/stack/promote.md|]
+
+-- Review regroupings -----------------------------------------------------------
+
 -- | The review-audit regroupings: re-express the change into logical units, or
 -- into the commits it should have been. Views, not judges — except
 -- 'reviewSequence'\'s own @## divergence@ report.
@@ -342,6 +446,31 @@ qaAgent = [promptFile|prompts/upstream/awesome-prompts/qa-agent.md|]
 haskellReviewer, perfReviewer :: Prompt
 haskellReviewer = [promptFile|prompts/upstream/promptdeploy/haskell-reviewer.md|]
 perfReviewer = [promptFile|prompts/upstream/promptdeploy/perf-reviewer.md|]
+
+-- | The @alexey-review@ skill and the two references it opens by demanding, from
+-- the @nix-config@ input: a review discipline distilled from one high-bar
+-- engineer's public review record.
+--
+-- Three files rather than one, and they are not alternatives. 'alexeyReview' is
+-- the __procedure__ — twelve numbered steps, the severity gates that say what
+-- blocks and what slides, the two-gear output register, and the identity
+-- guardrails that keep it a discipline rather than an impersonation.
+-- 'alexeyPrinciples' is what to care about (a test must mechanize its
+-- expectations, a skip must be a fail, unexplained perf deltas block, defensive
+-- code is guilty until explained) and 'alexeyStance' is how to say it (fifteen
+-- ranked principles with the evidence behind each, the calibration numbers under
+-- the gates, and the domain patterns for Haskell, C++, codegen and tests).
+--
+-- The skill's own first instruction is to read both references before reviewing,
+-- so none of the three reaches a panel alone: 'Incite.Review.disciplineOfPanel'
+-- is what splices them in that order and says where they went.
+--
+-- ~72 KB together, which makes this the most expensive brief in the repository
+-- by a wide margin — 'steSkill' at ~19.7 KB is the next one down.
+alexeyReview, alexeyPrinciples, alexeyStance :: Prompt
+alexeyReview = [promptFile|prompts/upstream/alexey/skill.md|]
+alexeyPrinciples = [promptFile|prompts/upstream/alexey/engineering-principles.md|]
+alexeyStance = [promptFile|prompts/upstream/alexey/stance.md|]
 
 -- | ASD-STE100 Simplified Technical English (MIT, © AminBlg), at two grades.
 --

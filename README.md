@@ -186,6 +186,7 @@ The split is deliberate: the reviewer never writes, the fixer never reviews.
 | `ponytail` | `github:dietrichgebert/ponytail`, `flake = false` | four skills + three workflow briefs |
 | `awesome-prompts` | `github:ai-boost/awesome-prompts`, `flake = false` | exactly seven files: `agentic_coder.txt`, `lookahead_planning_specialist.txt`, `code_reviewer_security.txt`, `Technical_Documentation_Strategist.txt`, `stop_slop.txt`, `qa_agent.txt`, `obsidian_vault_operator.txt` |
 | `promptdeploy` | `github:jwiegley/promptdeploy`, `flake = false` | the upstream this repo's prompts descend from — pinned to reconcile against, plus four sub-agents |
+| `nix-config` | `github:jwiegley/nix-config`, `flake = false` | exactly three files: `config/ai/skills/alexey-review/SKILL.md` and both of its `references/` — the `discipline` lens |
 | `simple-english` | `github:AminBlg/SimpleEnglish`, `flake = false` | ASD-STE100 as a skill, a plan lens, and the `prompt-lint` rubric |
 | `agent-functor` | `git+ssh://git@gitlab.com/fresheyeball/agent-functor` | the workflow library, `refs/heads/master` |
 
@@ -205,15 +206,15 @@ and looks like it worked. That rule is in the comment above the input in
 
 ### Upstream prompts
 
-Four inputs supply prompt text this repo does not author — ponytail,
-awesome-prompts, promptdeploy, and SimpleEnglish — contributing ten files under
-`prompts/upstream/` between them. None is taken as a flake — all four come in
-with `flake = false` and their files are read directly.
+Five inputs supply prompt text this repo does not author — ponytail,
+awesome-prompts, promptdeploy, nix-config, and SimpleEnglish — contributing
+thirteen files under `prompts/upstream/` between them. None is taken as a
+flake — all five come in with `flake = false` and their files are read directly.
 
 **Nothing is copied into git.** The update path is exactly:
 
 ```bash
-nix flake update ponytail     # or awesome-prompts, promptdeploy, simple-english
+nix flake update ponytail     # or awesome-prompts, promptdeploy, nix-config, simple-english
 # then rebuild — that's it
 ```
 
@@ -314,6 +315,33 @@ for capabilities this repo does not need.
 Never pulled in: host-tagged items (the `-- positron` / `-- personal` filetags are
 his machines), anything depending on Anvil (his Emacs MCP) or PAL, and the
 persian/`translate-tool` material.
+
+#### nix-config — the `alexey-review` discipline
+
+[nix-config](https://github.com/jwiegley/nix-config) is a machine configuration,
+and this repo wants one directory out of it: `config/ai/skills/alexey-review/`.
+That skill distils one high-bar engineer's public review record into a review
+discipline — a twelve-step procedure, severity gates that say what blocks and
+what slides, and a two-gear output register — with explicit guardrails against
+turning it into an impersonation.
+
+**Three files, because the skill's first instruction is to read two more.** It
+opens by telling the reader to read `references/engineering-principles.md`
+(what to care about) and `references/stance.md` (how to say it) before reviewing
+anything. A lens is a string in a prompt and has no directory to open, so all
+three are taken and `disciplineOfPanel` splices them in that order.
+
+| upstream | as | drives |
+|---|---|---|
+| `SKILL.md` | `alexey/skill.md` | `alexeyReview` — the procedure and the gates |
+| `references/engineering-principles.md` | `alexey/engineering-principles.md` | `alexeyPrinciples` — what a finding has to be about |
+| `references/stance.md` | `alexey/stance.md` | `alexeyStance` — the register, the calibration, the domain patterns |
+
+At ~72 KB together this is **the most expensive brief in the repository**, by a
+wide margin and on purpose — see [the review tiers](#the-review-tiers) for what
+it buys and where the bill lands. Nothing else in that repository is referenced;
+the `upstream` attrset in `flake.nix` is the allowlist, exactly as it is for
+awesome-prompts.
 
 #### SimpleEnglish — ASD-STE100
 
@@ -516,14 +544,16 @@ another, leaf by leaf. The terms the rest of this section uses:
 
 The inventory in `workflows/Main.hs` — each workflow is defined in
 `Incite.Feature` or `Incite.Review`, and only what that list names is exposed.
-The full table of all 10 workflows and what each does lives in one place:
+The full table of all 12 workflows and what each does lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth repeating here: `ship-feature` and `ship-docs` are the
-only **world-acting** workflows, both running under `actingGrant`
-(`execGrant ["nix*"]`) — the agent's own `git` and `gh` run as its own tools,
-behind its permission modal, not this grant. Every other workflow is
-prompt-only. Always run from the repository root, since `promptFile` resolves
+Two safety facts worth repeating here: four workflows are **world-acting** and
+every other one is prompt-only. `ship-feature` and `ship-docs` run under
+`actingGrant` (`execGrant ["nix*"]`); `grind-paradox` and `stack-prs` run under
+grants derived from their own check lists, so a check and its permission cannot
+drift apart. Whichever grant applies, it gates only the commands *we* run — the
+agent's own `git`, `gh` and `gt` run as its own tools, behind its permission
+modal. Always run from the repository root, since `promptFile` resolves
 a path against the package root at compile time and the working directory at
 run time, and those must be the same directory.
 
@@ -637,8 +667,8 @@ four review tiers are prompt-only and read-only; none holds `actingGrant`.
 
 The tiers escalate along three independent axes, and each buys something different.
 **Lenses** buy coverage — `review-lite` spreads four across backends for cheap
-independence; `review-heavy` adds security, tests, performance and Haskell;
-`review-audit` adds architecture. **Backends** buy confidence: from `review-heavy`
+independence; `review-heavy` adds security, tests, performance, Haskell and the
+`alexey-review` discipline; `review-audit` adds architecture. **Backends** buy confidence: from `review-heavy`
 up, every lens is answered by all three models, so agreement is confirmation and
 disagreement is signal rather than one model's opinion. **Granularity** re-expresses
 the change so a shape of finding the flat diff cannot show becomes visible — and
@@ -649,9 +679,9 @@ with the full three-backend panel and an architecture lens behind every view.
 
 `review-heavy` and `review-audit` both re-express the change and re-review the
 views; the tier is a price escalation, not a presence. `review-heavy` runs its
-7-lens panel over the diff as it landed, then regroups the change and runs the
+8-lens panel over the diff as it landed, then regroups the change and runs the
 same lenses over each regrouped view on claude-agent alone; `review-audit` runs
-the whole 24-reviewer panel three times, over the same three views:
+the whole 27-reviewer panel three times, over the same three views:
 
 | view | what the panel reads | what only this view finds |
 |---|---|---|
@@ -719,11 +749,28 @@ a lens that wanders into another's territory costs a turn and returns a
 duplicate. Security is upstream — `code_reviewer_security.txt`, an OWASP Top 10
 walkthrough that reports severity, attacker payoff, a corrected snippet and the
 preventing pattern per finding. It is verbose where the local lenses are terse,
-which `synthesis.md` absorbs, and at ~8.3 KB it is the second most expensive
-review lens after the doctrine (~10 KB) — not the second most expensive brief
-in the repo overall; `steSkill` (~19.7 KB, the `prompt-lint` brief) and the
-`lookahead` rubric (~8.4 KB) are both bigger. So it appears only in
-`review-heavy`, never in the per-commit `review-lite`.
+which `synthesis.md` absorbs, and at ~8.3 KB it is the third most expensive
+review lens, after the `discipline` lens below (~72 KB) and the doctrine
+(~10 KB). So it appears only in `review-heavy`, never in the per-commit
+`review-lite`.
+
+`discipline` is the one lens that is deliberately **not** narrow, and it is the
+most expensive brief in the repository — ~72 KB, against `steSkill`'s ~19.7 KB
+for the `prompt-lint` run. It is the `alexey-review` skill plus both of its
+references (see
+[nix-config](#nix-config--the-alexey-review-discipline)), and what it buys is a
+whole reviewer's calibration rather than one question: benchmarks read before
+the diff and perf read off the code with no benchmark at all; prose audited
+against the code it describes, where a false comment blocks as hard as false
+code; the hack generalised into the representation that would make it
+unnecessary; and the micro-probe sweep — "Still needed?", "Forgot to delete?",
+"Is this comment still true?" — which is the long tail every narrow lens here
+misses. Its verdict is stripped, because a synthesis step reads text and a
+silent approval is indistinguishable from a backend that never ran; its severity
+gates are kept whole, because they are what decides whether a thing is worth a
+line at all. It is the one lens exempt from the do-not-overlap rule above: both
+tiers it runs in end in `synthesis.md`, which merges duplicates and treats
+agreement between two reviewers as evidence.
 
 Haskell and performance are upstream too, from
 [promptdeploy](#promptdeploy--the-upstream-this-repo-descends-from), read out of

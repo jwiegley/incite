@@ -14,6 +14,7 @@ extra-source-files:
     prompts/review/*.md
     prompts/retro/*.md
     prompts/grind/*.md
+    prompts/stack/*.md
     -- Grafted in from the `flake = false` inputs; never in git (flake.nix).
     -- Every directory `Incite.Prompts` splices a `promptFile` from must be
     -- here: `extra-source-files` is what an sdist carries, and a `promptFile`
@@ -23,6 +24,7 @@ extra-source-files:
     prompts/upstream/ponytail/*.md
     prompts/upstream/awesome-prompts/*.md
     prompts/upstream/promptdeploy/*.md
+    prompts/upstream/alexey/*.md
     prompts/upstream/simple-english/*.md
     agents/*.md
     skills/*.md

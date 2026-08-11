@@ -82,6 +82,21 @@
       flake = false;
     };
 
+    # nix-config — John Wiegley's machine configuration, pinned for exactly one
+    # directory: `config/ai/skills/alexey-review/`, a review discipline written
+    # from one high-bar engineer's public review record. We take its `SKILL.md`
+    # and BOTH of its `references/`, because the skill's first instruction is to
+    # read them and a lens spliced into a prompt has no `references/` directory
+    # to open. Nothing else in the repository is referenced.
+    #
+    # `flake = false` for the same three reasons as `promptdeploy` below it: we
+    # want its markdown, not its closure, and a `github:` source fetch is the
+    # cheapest way to say so.
+    nix-config = {
+      url = "github:jwiegley/nix-config";
+      flake = false;
+    };
+
     # SimpleEnglish — ASD-STE100 Simplified Technical English as a skill (MIT,
     # © AminBlg): the aerospace controlled language, 53 rules, applied to
     # technical writing. We take `skills/simple-english/` and nothing else.
@@ -91,7 +106,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-prompt, macha, agent-functor, ponytail, awesome-prompts, promptdeploy, simple-english }:
+  outputs = { self, nixpkgs, flake-prompt, macha, agent-functor, ponytail, awesome-prompts, promptdeploy, nix-config, simple-english }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -202,6 +217,25 @@
         "prompts/upstream/promptdeploy/perf-reviewer.md" = stripFrontmatter (
           builtins.readFile "${promptdeploy}/agents/perf-reviewer.md"
         );
+        # The `alexey-review` skill and BOTH of its references, which is the
+        # whole of what `nix-config` contributes. The skill opens by telling the
+        # reader to open `references/engineering-principles.md` and
+        # `references/stance.md` before reviewing anything; a lens is a string in
+        # a prompt and has no directory to open, so
+        # `Incite.Review.disciplineOfPanel` splices all three and says where they
+        # went. Taking the skill alone would ship a lens whose first instruction
+        # is one it cannot follow.
+        #
+        # ~72 KB in total, which makes it by a wide margin the most expensive
+        # brief this repository sends — see "The review tiers" in the README for
+        # what that buys and where it is charged.
+        "prompts/upstream/alexey/skill.md" = stripFrontmatter (
+          builtins.readFile "${nix-config}/config/ai/skills/alexey-review/SKILL.md"
+        );
+        "prompts/upstream/alexey/engineering-principles.md" =
+          builtins.readFile "${nix-config}/config/ai/skills/alexey-review/references/engineering-principles.md";
+        "prompts/upstream/alexey/stance.md" =
+          builtins.readFile "${nix-config}/config/ai/skills/alexey-review/references/stance.md";
         # SimpleEnglish at two grades, because the two uses want different
         # things. `rules.md` is upstream's condensed system-prompt form (2,947 B) —
         # enough to REWRITE a plan step, cheap enough for a lens that runs on
@@ -235,6 +269,7 @@
           ./prompts/review
           ./prompts/retro
           ./prompts/grind
+          ./prompts/stack
           ./commands/fess.md
           ./commands/grind-paradox.md
           ./commands/post-commit-audit.md

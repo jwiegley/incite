@@ -16,6 +16,12 @@
 -- worker, its panel, the artifact rule its fixer stands under ('docsRule' or
 -- 'codeRule'), and where it stops. Bindings rather than copies for one reason:
 -- the workflows cannot drift in anything they share.
+--
+-- 'stackPRs' is the third acting shape over those same pieces, pointed at one
+-- change rather than at a request: it cuts a large diff into an ordered stack of
+-- branches. What it adds is a second harness-run gate — 'budgetGate' asks
+-- whether a CI slot may be spent at all, with a real exit code, before every
+-- trip of the promotion loop.
 module Incite.Feature
   ( planFeature
   , shipFeature
@@ -30,6 +36,7 @@ module Incite.Feature
   , asReviewSubject
   , asRetroSubject
   , asDocsSubject
+  , asStackSubject
   , document
   , retrospective
   , keeping
@@ -40,12 +47,31 @@ module Incite.Feature
   , closeWithChanges
   , fixerContinuation
   , orchestrate
+  , orchestrateWith
   , workerFuel
+  , stackFuel
   , repairFuel
+  , checkLoop
   , greenGate
+  , repairLeaf
   , grindChecks
   , grindGrant
   , paradoxRule
+  , stackPRs
+  , stackPlanLenses
+  , stackRule
+  , stackChecks
+  , budgetCheck
+  , consentCheck
+  , consentGate
+  , budgetFuel
+  , budgetGate
+  , stackGrant
+  , stackWorker
+  , stackPin
+  , stackGate
+  , stackContinuation
+  , blockedMarker
   , Orientation (..)
   , orient
   , preambleOf
@@ -58,7 +84,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Agent.Backend (claudeAgent, codex, defaultModel, opencode, withBackend)
+import Agent.Backend (claudeAgent, defaultModel, withBackend)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', second'', withMode, (>>>))
 import Agent.Flow.Combinators
   ( exploreFlows
@@ -76,7 +102,7 @@ import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief, i, iii, promptText, __i)
 import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 
-import Incite.Backend (backends, fable5, reviewer)
+import Incite.Backend (backends, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
   , docsStrategyOfPlan
@@ -104,6 +130,13 @@ import Incite.Prompts
       agenticCoder,
       lookaheadPlanningSpecialist,
       paradoxFacts,
+      stackDisciplines,
+      stackFacts,
+      stackPromote,
+      stackSlice,
+      stackSlicePlan,
+      stackTooling,
+      stackTriage,
       steRules )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
@@ -150,7 +183,26 @@ shipFeature =
     -- (HOW MUCH) and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that
     -- writes code unsupervised, and the reason the orchestrator needs no
     -- cadence of its own.
-    implement =
+    --
+    -- __Pinned, and the only leaf in this workflow that is.__ The lens chains
+    -- around it are deliberately left on the run's own backend, because they are
+    -- several readings of one text and their argument is that they stay
+    -- comparable. This leaf is different in kind: it is the one that writes code
+    -- unsupervised, under an orchestrator that will call it again, so its model
+    -- is a decision rather than a default. Left unpinned it inherits the run's —
+    -- a @run --backend codex@, or an MCP caller passing @backend@, silently
+    -- moves the leaf that does the work, and no leaf name, plan skeleton or cost
+    -- estimate moves with it.
+    --
+    -- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
+    -- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where
+    -- a fast reader over a fixed text is the point. Implementation is not that.
+    implement = withBackend claudeAgent defaultModel implementLeaf
+
+    -- Separated from its scope so the brief's indentation is untouched by it:
+    -- the body is a `__i` quasi-quote, and re-indenting a quasi-quote to nest it
+    -- one level deeper edits the prompt.
+    implementLeaf =
       refineWith
         "implement"
         ( brief
@@ -546,9 +598,23 @@ paradoxRule =
 -- ever sees its own text — the briefs' \"your own summary as input\" contract
 -- is unchanged, and the accounting is plumbing beside it, not inside it.
 orchestrate :: Flow Text Text -> Flow Text Text
-orchestrate worker =
-  dimap' (\summary -> (workerFuel, summary)) id
-    ( loopUntil (maybe (maxBound `div` 2) id workerFuel)
+orchestrate = orchestrateWith workerFuel
+
+-- | 'orchestrate' with the ceiling as an argument, and the binding 'orchestrate'
+-- is defined by — so a capped loop cannot drift from the default one in shape,
+-- in what the worker sees, or in what exhaustion does.
+--
+-- __A parameter because a workflow's fuel is a property of the workflow.__
+-- 'workerFuel' is 'Nothing' for the two that finish when their worker says so.
+-- 'stackFuel' is finite for the one that runs four of these loops in one chain:
+-- @Agent.Cost.worstCaseCost@ sums a sequence and multiplies through a loop, and
+-- four unbounded loops in a row sum past 'maxBound' and report a NEGATIVE worst
+-- case. A cost estimate that goes backwards is worse than a large one, because
+-- it is the number an operator reads before deciding to spend anything.
+orchestrateWith :: Maybe Int -> Flow Text Text -> Flow Text Text
+orchestrateWith fuel worker =
+  dimap' (\summary -> (fuel, summary)) id
+    ( loopUntil (maybe (maxBound `div` 2) id fuel)
         ( second'' worker >>> dimap' id (uncurry decideTrip) Id )
     )
 
@@ -569,6 +635,9 @@ data Orientation
   | -- | The documents in the tree, read against the code they describe. The
     -- docs panel's stage.
     AtDocs
+  | -- | The branches of a Graphite stack, each read against its own parent.
+    -- 'stackPRs'\'s review stage.
+    AtStack
   deriving (Eq, Show, Bounded, Enum)
 
 -- | The preamble that points a stage at an 'Orientation'\'s evidence.
@@ -603,6 +672,18 @@ Where a column asks you to quote, quote the record: a commit message, a finding,
 Read the documents themselves before reporting anything. An account of them follows and it is a claim to check, not a substitute for the files — where it and a document disagree, the document is what ships.
 
 Cite the document and the code on both sides of every finding. A statement about prose that you cannot point at a file and a line for is a preference, and a preference is not a finding here.|]
+  AtStack ->
+    [i|Review the stack of branches in the current working directory, one branch at a time. `.stack-branches` lists them bottom first, and a branch's own change is `git diff <parent>...<branch>` where the parent is the line above it in that file — never a diff against the trunk, which shows you every branch below it as well.
+
+Read the branches before reporting anything, and name the branch in every finding. A finding belongs to the branch that INTRODUCED the code, never to the top of the stack: a fix applied at the top is a merge conflict later.
+
+Two things are findings here that are not findings in a single diff, and one thing is not.
+
+* A branch that does not build on its own is a defect even when the whole stack builds, because each branch is reviewed and merged alone.
+* A branch a reviewer cannot judge without reading the rest of the stack is a defect, whatever its size.
+* Code that nothing calls yet is CORRECT here. Read `.stack-plan.md` first: where it names the later branch that calls the code, say nothing. Report the plan, not the code, where it names none.
+
+The account below is the closing summary of the stage that built the stack. It is a claim to check against the branches, not the branches themselves.|]
 
 -- | Point a stage at an orientation's evidence and hand it the account beneath.
 --
@@ -654,6 +735,19 @@ asRetroSubject = orient AtRecord
 -- before anything depended on them.
 asDocsSubject :: Text -> Text
 asDocsSubject = orient AtDocs
+
+-- | 'orient' at 'AtStack', for 'stackPRs'\'s review stage.
+--
+-- __One panel over the whole stack, not one panel per branch.__ A branch count
+-- is a runtime fact and @panelAcross@ is a static cross-product, so a panel per
+-- branch would need a fan-out over a number nothing knows when the 'Flow' is
+-- built — the same bound "Incite.Review".@spread@ exists to avoid, and the
+-- reason @grind-paradox@ audits a whole tree with one panel rather than one per
+-- module. What the preamble buys instead is attribution: the lenses read the
+-- branches one at a time and every finding names the branch that introduced the
+-- code, which is the branch a fix has to land on.
+asStackSubject :: Text -> Text
+asStackSubject = orient AtStack
 
 -- | What the artifact is, and which side gives when the artifact and the record
 -- it answers to disagree. One clause per acting workflow, and the argument
@@ -810,20 +904,20 @@ grindParadox =
   where
     withFacts steerText = promptText paradoxFacts <> "\n\n" <> steerText
 
--- | The ceiling on how many times the gate may hand a still-red tree to a
--- repair leaf. Fuel, not a schedule — a finite 'Int' where 'workerFuel' is a
--- 'Maybe', and much smaller: a failing check after three repairs is an
--- integration problem a person should look at, not one more turn.
-repairFuel :: Int
-repairFuel = 3
-
--- | Run @checks@ __ourselves__ until they pass, repairing between trips, and
--- keep the account that came in.
+-- | Run @checks@ __ourselves__ until they pass, doing @repair@ between trips,
+-- and keep the account that came in under a @## heading@ of its own.
 --
--- __The account survives the gate.__ What reaches this stage is the fixer's own
--- summary of what it closed and rejected, and it is the most useful thing in the
--- run's final artifact. 'keeping' puts it above the check lines rather than
--- letting 'verify' overwrite it with a log.
+-- Two gates are built from this and they differ in exactly one argument, which
+-- is the whole reason it is a binding: 'greenGate' repairs a red tree with a
+-- leaf, and 'budgetGate' has nothing to repair and passes 'Id'
+-- (@'left'' 'Id' = 'Id'@, so that loop carries no extra node at all). Everything
+-- else below is subtle enough that a second copy of it would be a second place
+-- to get it wrong.
+--
+-- __The account survives the gate.__ What reaches this stage is the previous
+-- leaf's own summary, and it is the most useful thing in the run's final
+-- artifact. 'keeping' puts it above the check lines rather than letting 'verify'
+-- overwrite it with a log.
 --
 -- __The @const mempty@ is the unit the homomorphism demands, not a scrubber
 -- bolted on.__ @Agent.Flow.Combinators.execStep@ APPENDS its status line to the
@@ -835,50 +929,439 @@ repairFuel = 3
 --
 -- __Exhaustion aborts, by upstream design.__ 'loopUntil' offers no
 -- yield-what-you-have policy (at its type the loop holds only an @a@ and must
--- produce a @b@), so a tree still red after 'repairFuel' trips fails the run
+-- produce a @b@), so a tree still red after the fuel runs out fails the run
 -- rather than falling through into 'keeping' and reporting success over a
--- failing build. That is the behaviour this gate wants, and it is upstream's
--- rather than ours — see 'orchestrate', which points the same default the other
--- way on purpose.
-greenGate :: Prompt -> [(LeafName, NonEmpty Text)] -> Flow Text Text
-greenGate artifactRule checks = keeping accountThenLog gateLoop
+-- failing check. That is the behaviour both gates want — see 'orchestrate',
+-- which points the same default the other way on purpose.
+checkLoop :: Text -> Int -> Flow Text Text -> [(LeafName, NonEmpty Text)] -> Flow Text Text
+checkLoop heading fuel repair checks = keeping accountThenLog gateLoop
   where
-    accountThenLog account gateLog = account <> "\n\n## gate\n" <> gateLog
+    accountThenLog account gateLog = account <> "\n\n## " <> heading <> "\n" <> gateLog
     gateLoop =
       loopUntil
-        repairFuel
+        fuel
         ( dimap' (const mempty) id (verify [(n, NE.toList cmd) | (n, cmd) <- checks])
             >>> dimap' id decideRed Id
-            >>> left'' repairLeaf
+            >>> left'' repair
         )
-    -- The one leaf that acts on a red gate. Under the artifact rule, because
-    -- the cheapest way to turn a failing check green is to weaken the assertion
-    -- that fails — and that move satisfies the gate, passes everything
-    -- downstream of it (there is nothing), and is exactly what the disciplines
-    -- spliced into the rule forbid.
-    repairLeaf =
-      refineWith
-        "repair"
-        ( brief
-            [__i|
-              #{artifactRule}
 
-              The checks below were run by the harness, not by an agent, and the
-              exit codes are real. Fix every failing one.
+-- | The ceiling on how many times the gate may hand a still-red tree to a
+-- repair leaf. Fuel, not a schedule — a finite 'Int' where 'workerFuel' is a
+-- 'Maybe', and much smaller: a failing check after three repairs is an
+-- integration problem a person should look at, not one more turn.
+repairFuel :: Int
+repairFuel = 3
 
-              Three rules, and they are the whole point of a gate:
+-- | 'checkLoop' with the leaf that acts on a red gate: run @checks@ ourselves
+-- until they pass, repairing between trips.
+greenGate :: Prompt -> [(LeafName, NonEmpty Text)] -> Flow Text Text
+greenGate artifactRule = checkLoop "gate" repairFuel (repairLeaf artifactRule)
 
-              - Never weaken an assertion, delete a test, or narrow a filter to
-                make a check pass. A check that fails is telling you something.
-              - Never hand-edit recorded output. Fix what generates it, then
-                regenerate, then read the diff.
-              - Where two individually-correct fixes conflict, repair the
-                conflict rather than reverting either one, and say which two.
+-- | The one leaf that acts on a red gate. Under the artifact rule, because the
+-- cheapest way to turn a failing check green is to weaken the assertion that
+-- fails — and that move satisfies the gate, passes everything downstream of it
+-- (there is nothing), and is exactly what the disciplines spliced into the rule
+-- forbid.
+repairLeaf :: Prompt -> Flow Text Text
+repairLeaf artifactRule =
+  refineWith
+    "repair"
+    ( brief
+        [__i|
+          #{artifactRule}
 
-              The check log follows:
-            |]
-        )
-        id
+          The checks below were run by the harness, not by an agent, and the
+          exit codes are real. Fix every failing one.
+
+          Three rules, and they are the whole point of a gate:
+
+          - Never weaken an assertion, delete a test, or narrow a filter to
+            make a check pass. A check that fails is telling you something.
+          - Never hand-edit recorded output. Fix what generates it, then
+            regenerate, then read the diff.
+          - Where two individually-correct fixes conflict, repair the
+            conflict rather than reverting either one, and say which two.
+
+          The check log follows:
+        |]
+    )
+    id
+
+-- | Cut one large diff into a Graphite stack of reviewable branches, prove every
+-- branch builds with a real exit code, review the stack, submit it as drafts,
+-- triage what the review bot says, and promote it bottom-first under a CI budget
+-- that yields to anybody else.
+--
+-- __The third acting shape, and it shares the analysis half by name.__
+-- 'shipFeature' turns a request into a change, @grind-paradox@ turns a tree into
+-- a repaired tree, and this turns one change into an ordered sequence of them.
+-- It reuses 'explorePlan', 'orchestrate', 'remediate', 'greenGate' and
+-- 'reviewHeavyFlow' rather than copying any of them, so it cannot drift from the
+-- other two in anything they share.
+--
+-- __Two gates run our own exec, and that is the whole reason this is a 'Flow'
+-- rather than one long brief.__ 'stackChecks' proves a stack builds and
+-- 'budgetCheck' decides whether a promotion may happen at all — both through
+-- @Agent.Flow.Combinators.verify@, so the exit codes are real. An agent asked to
+-- run @ci-budget.sh@ before each promotion is an agent that reports having run
+-- it; a 'budgetGate' in front of every trip of the promotion loop is a fact
+-- about the run. The gate that yields to a colleague's queued job is exactly the
+-- one worth taking out of an agent's hands.
+--
+-- __Where each gate sits is an argument, not an arrangement.__ The first
+-- 'greenGate' stands between the slicing loop and the panel, because 21
+-- reviewers reading branches that do not build is the most expensive way to
+-- learn they do not build. The second stands between the review rounds and
+-- promotion, because that is the last moment a local failure is still cheap: a
+-- branch that fails locally is guaranteed to fail CI, so promoting it spends a
+-- shared slot on a known answer.
+--
+-- __And a local pass is still not a prediction.__ CI runs checks no local gate
+-- can, which is why the promotion stage treats its first branch as a
+-- measurement rather than a formality. Nothing in this workflow calls a branch
+-- green on the strength of 'stackChecks' alone.
+--
+-- __It promotes, and it never merges.__ Promotion is where the run spends
+-- somebody else's CI, so it sits behind a 'humanGate' as well as behind the
+-- budget — but be exact about which of the two protects an unattended run.
+-- @Agent.Run@ auto-answers every 'Agent.Op.Ask' with @gateAnswer@, which
+-- defaults to @"yes"@, so on the MCP path and on any headless run the gate
+-- approves itself. The gate is real for an operator at a terminal and is
+-- decoration without one. 'budgetGate' is the protection that holds either way,
+-- because it is an 'Agent.Op.Exec' leaf reading a real exit code rather than a
+-- question somebody has to be present to answer. Merging is refused outright: 'stackDisciplines' forbids it at every
+-- acting leaf, because a merged stack destroys the review opportunity the whole
+-- run exists to create.
+stackPRs :: Workflow
+stackPRs =
+  workflowGReq
+    "stack-prs"
+    [iii|
+      Cut one large diff into a Graphite stack of roughly 500-line branches on
+      compile-time dependency boundaries, write the plan and its three scripts to
+      disk, prove every branch builds with a real exit code, review the stack
+      with the full panel, submit it as drafts, triage the review bot's findings,
+      and promote it bottom-first under a CI budget that yields to anybody else
+    |]
+    stackGrant
+    $ dimap' withStackFacts id explorePlan
+      >>> lensEdit [(name, brief body) | (name, body) <- stackPlanLenses]
+      >>> steer "Review the slice plan — every branch, what it holds, and what it defers"
+      >>> humanGate "Build the stack from this plan?"
+      >>> stackWorker "bootstrap" stackTooling mempty
+      >>> orchestrateWith stackFuel (stackWorker "cut" stackSlice stackContinuation)
+      >>> stackGate
+      >>> dimap' asStackSubject id reviewHeavyFlow
+      >>> orchestrateWith stackFuel (stackPin (remediate stackRule fixerContinuation))
+      >>> orchestrateWith stackFuel (stackWorker "triage" stackTriage stackContinuation)
+      >>> stackGate
+      >>> humanGate "Promote this stack out of draft? Each branch spends a CI run on a shared runner."
+      >>> consentGate
+      >>> orchestrateWith stackFuel (budgetGate >>> stackWorker "promote" stackPromote stackContinuation)
+  where
+    -- The same prepend @grind-paradox@ makes, for a related reason and not the
+    -- identical one. There the facts would be REPLACED by a caller's input,
+    -- because that workflow carries a default; here input is required, so
+    -- nothing is at risk of replacement and the prepend is only how the facts
+    -- reach the explore stances. What it buys is the same either way: the
+    -- caller's text stays a genuine steer rather than becoming the only place
+    -- the run learns which repository it is in.
+    withStackFacts steerText = promptText stackFacts <> "\n\n" <> steerText
+
+-- | The ceiling on every loop in 'stackPRs'. Finite where 'workerFuel' is not,
+-- and for two reasons that point the same way.
+--
+-- __Cost.__ Four orchestrated loops run in sequence here. @worstCaseCost@ sums
+-- a sequence, so four unbounded loops overflow 'maxBound' and report a negative
+-- worst case; four capped ones report a number an operator can read before
+-- spending anything.
+--
+-- __And exhaustion is safe here.__ 'orchestrateWith' yields the last summary at
+-- trip n rather than aborting, so a stack that needs more trips than this
+-- reaches the next stage with every branch it did cut, rather than stranding
+-- them. Twelve is generous against a stack of the size this workflow is for: a
+-- diff wanting more than twelve trips of cutting wants a person to look at the
+-- plan.
+stackFuel :: Maybe Int
+stackFuel = Just 12
+
+-- | The plan lenses a stacking run edits through, and the whole of what it puts
+-- between the planner and the steer.
+--
+-- 'editPlan'\'s six are written for an implementation plan — steps that will be
+-- carried out — and a slice plan is a different artifact: its entries are
+-- branches, and the only question about them is where the cuts fall. So this is
+-- a different chain rather than a narrowing of that one, exactly as
+-- 'docsPlanLenses' is.
+--
+-- __The cut first, then the English.__ 'stackSlicePlan' decides what each branch
+-- holds, and @simple-english@ rewords what survives. The other order spends the
+-- rewrite on entries the slice lens then merges away.
+--
+-- A named table rather than a list inlined into the workflow, for
+-- 'docsPlanLenses'\'s reason: @docs\/workflows.md@ says which lenses a stacking
+-- run edits through, and a lens added to an inline list changes no other name,
+-- count or skeleton that the prose is checked on.
+stackPlanLenses :: [(LeafName, Prompt)]
+stackPlanLenses =
+  [ ("slice", stackSlicePlan)
+  , ("simple-english", simpleEnglishLens)
+  ]
+
+-- | What a stacking run's fixers stand under: the code rule, plus the
+-- disciplines that only a stack has.
+--
+-- Built the way 'paradoxRule' is, and for the same reason. 'codeRule' answers
+-- which side gives when the code and the record disagree, and it is silent about
+-- everything a stack can lose that a single change cannot: a review thread
+-- destroyed by recreating a branch, an approval dismissed by a force-push, a fix
+-- applied at the top of the stack that becomes a conflict, a merge that ends the
+-- review before it starts.
+--
+-- __Spliced into every acting leaf, not only the fixers.__ 'stackWorker' puts it
+-- above each worker's own brief, because the leaf most able to destroy review
+-- history is the one cutting branches, and it runs long before any fixer does.
+stackRule :: Prompt
+stackRule =
+  [__i|
+    #{codeRule}
+
+    #{stackDisciplines}
+  |]
+
+-- | The check that proves a stack builds: the script the bootstrap leaf writes,
+-- run by __us__, over every branch in @.stack-branches@.
+--
+-- One entry rather than one per branch, because the branch list is a runtime
+-- fact and a 'Flow' is built before the run. The script owns the fan-out, the
+-- serial warm-up of the bottom branch, and the per-branch ledger the status
+-- table reads; what this owns is the exit code.
+--
+-- __Argv, no shell.__ @execStep@ runs the command directly, so the leading
+-- @.\/@ is load-bearing and the script must be executable. A missing or
+-- unexecutable script is a red gate, which 'repairLeaf' can fix — the bootstrap
+-- leaf writing it is what makes that the rare case rather than the first one.
+stackChecks :: [(LeafName, NonEmpty Text)]
+stackChecks = [("verify-stack", "./verify-stack.sh" :| [])]
+
+-- | The check that decides whether a promotion may happen at all: may I spend a
+-- CI slot right now?
+--
+-- __@--wait@ rather than a bare call__, so a held budget is waited out inside
+-- one exec rather than spun on by an agent. The script polls, and it fails
+-- closed: a queued run belonging to anybody else holds it unconditionally, and a
+-- job count it cannot read counts as a full budget rather than an empty one.
+--
+-- Separate from 'stackChecks' because the two answer different questions and
+-- fail differently. A red 'stackChecks' is a defect in the stack and a leaf can
+-- repair it; a red budget is somebody else's job queued ahead of yours, and the
+-- only correct response is to not promote.
+budgetCheck :: (LeafName, NonEmpty Text)
+budgetCheck = ("ci-budget", "./ci-budget.sh" :| ["--wait"])
+
+-- | The check that asks whether a person agreed to spend CI at all: does
+-- @.stack-promote-approved@ exist?
+--
+-- __An 'Agent.Op.Exec' leaf because the 'humanGate' beside it is not one.__
+-- @Agent.Run@ answers every 'Agent.Op.Ask' with @gateAnswer@, which defaults to
+-- @\"yes\"@, so on the MCP path and on any headless run the gate in front of
+-- spending a shared runner approves itself — it protects an operator at a
+-- terminal and nobody else. This is the same question asked in the one currency
+-- an unattended run cannot forge on its own behalf: an exit code. Absent file,
+-- non-zero, and 'consentGate' aborts the run.
+--
+-- __A file rather than a flag__, because a flag would have to be threaded
+-- through a caller that may be a cron entry. A file is created by whoever is
+-- actually willing to spend the CI, out of band, before the run reaches here.
+-- 'Incite.Prompts.stackDisciplines' forbids the agent from creating it, which is
+-- the same class of rule as "never merge" and holds for the same reason.
+consentCheck :: (LeafName, NonEmpty Text)
+consentCheck = ("promotion-consent", "test" :| ["-f", ".stack-promote-approved"])
+
+-- | 'consentCheck' as a gate, and the one place in this workflow where a single
+-- red check ends the run rather than starting a repair.
+--
+-- Fuel of one: 'checkLoop' runs the check once and 'loopUntil' aborts on
+-- exhaustion, so a missing approval file stops the run before any branch leaves
+-- draft. There is nothing for a repair leaf to do — the answer is a person's,
+-- not a defect — so the loop passes 'Id', exactly as 'budgetGate' does.
+consentGate :: Flow Text Text
+consentGate = checkLoop "consent" 1 Id [consentCheck]
+
+-- | The ceiling on how many times the promotion loop may wait out a held budget
+-- before the run fails.
+--
+-- Two, and the unit is not a poll — 'budgetCheck' passes @--wait@, so one trip
+-- is one full waiting period of the script's own (30 minutes, by its default),
+-- and the ceiling is therefore about an hour. Beyond that the runners are held
+-- by something this run cannot influence, and a person should read the queue
+-- rather than a loop spending fuel on it.
+budgetFuel :: Int
+budgetFuel = 2
+
+-- | Run 'budgetCheck' __ourselves__ and let nothing downstream promote until it
+-- exits zero.
+--
+-- __'Id' as the repair, and it is not a placeholder.__ There is nothing in the
+-- repository to fix: the gate is red because somebody else is queued, or because
+-- this stack already holds its budget. So the loop simply waits again, and
+-- @'left'' 'Id' = 'Id'@ means it does that without an extra node, an extra leaf,
+-- or an agent turn spent on the word \"waiting\".
+--
+-- __Exhaustion aborts, and that is the point.__ 'checkLoop' inherits
+-- 'loopUntil'\'s abort-on-exhaustion, so a budget still held after 'budgetFuel'
+-- waits fails the run rather than falling through into a promotion. A gate that
+-- gives up and lets the work past is not a gate, and this is the one whose
+-- failure lands on somebody else.
+--
+-- It sits inside the promotion loop rather than in front of it, so it is
+-- re-answered before every trip. A clearance read once and reused is a
+-- clearance about a queue that has since changed.
+budgetGate :: Flow Text Text
+budgetGate = checkLoop "budget" budgetFuel Id [budgetCheck]
+
+-- | The exec policy 'stackPRs' runs under, __derived from the checks__ rather
+-- than written beside them, for the reason 'grindGrant' is.
+--
+-- A grant and a check list are two statements of one fact, and they drift
+-- silently in the direction that matters: an ungranted check is denied inside
+-- the run, the gate never reads a real exit code, and the artifact still carries
+-- a section that looks like a gate ran. Here the second of the two is the budget
+-- gate, so the drift would be a promotion loop that never actually asks whether
+-- it may promote.
+--
+-- Narrower than 'actingGrant': this workflow runs no build of its own. Every
+-- @git@, @gt@, @gh@ and @nix@ command belongs to the agent's own tools, gated by
+-- its permission flow, or to a child of one of these two scripts.
+stackGrant :: Grant
+stackGrant = execGrant [NE.head cmd <> "*" | (_, cmd) <- consentCheck : budgetCheck : stackChecks]
+
+-- | The pin every acting leaf of a stacking run stands under.
+--
+-- __Named once, because the argument for it is one argument.__ These leaves cut
+-- branches, force pushes and spend CI on a shared runner. Left unpinned they
+-- inherit the run's backend, so a @run --backend codex@ or an MCP caller passing
+-- @backend@ silently moves a leaf that rewrites git history — and no leaf name,
+-- plan skeleton or cost estimate moves with it.
+--
+-- 'defaultModel' is claude-agent's own default, deliberately __not__ 'fable5':
+-- fable is pinned where a fast reader over a fixed text is the point, and none
+-- of these leaves is that.
+--
+-- __It covers the fixers too, not only the workers.__ 'remediate' and
+-- 'repairLeaf' are unpinned where 'shipFeature' and @grind-paradox@ use them,
+-- which is right there — a lens chain and a repair over one tree are readings,
+-- not rewrites. In a stacking run they are neither: @remediate@ edits at the
+-- branch that introduced the code and runs @gt restack@, and @repair@ fixes a
+-- red @verify-stack.sh@ the same way. A pin on the workers alone would have left
+-- the two leaves that rewrite the most history running on whatever the caller
+-- passed, while the documentation said every acting leaf was pinned.
+stackPin :: Flow Text Text -> Flow Text Text
+stackPin = withBackend claudeAgent defaultModel
+
+-- | 'greenGate' with its repair leaf under 'stackPin', which is the only thing
+-- that distinguishes it. Bound rather than written twice because 'stackPRs' runs
+-- it at both of its gate positions.
+stackGate :: Flow Text Text
+stackGate = checkLoop "gate" repairFuel (stackPin (repairLeaf stackRule)) stackChecks
+
+-- | One acting leaf of a stacking run: its own brief, under the facts and the
+-- rule, pinned to a model.
+--
+-- __Built once rather than four times__, so no worker can lose the disciplines
+-- or acquire a different backend by being written later. What each leaf supplies
+-- is its name, its body, and the closing clause that says whether anything will
+-- call it again.
+--
+-- __Pinned through 'stackPin'__, which is where the argument for the pin lives
+-- and which the fixers go through as well, so "every acting leaf is pinned" is
+-- a property of one binding rather than of remembering to wrap each one.
+--
+-- __The bill is real.__ 'stackFacts' and 'stackRule' come to roughly 8 KB, and
+-- every trip of every loop pays them. That is the price of a worker that cannot
+-- forget which repository it is in or what it may not do, and it is why
+-- 'Incite.Prompts.stackTooling' is a leaf of its own rather than a fifth
+-- standing brief.
+stackWorker :: LeafName -> Prompt -> Prompt -> Flow Text Text
+stackWorker name body closing =
+  stackPin (refineWith name (brief standing) id)
+  where
+    opening =
+      [__i|
+        #{stackFacts}
+
+        #{stackRule}
+
+        #{body}
+      |]
+    -- An own branch for the empty clause rather than splicing @mempty@ into a
+    -- template, for 'remediate'\'s reason: each body file closes with a sentence
+    -- of its own, and an unconditional @"\\n\\n" <> closing@ would leave a leaf
+    -- that runs once trailing two blank lines. Byte drift in a prompt is
+    -- invisible to every other instrument in this repository.
+    standing
+      | T.null (T.strip (promptText closing)) = opening
+      | otherwise =
+          [__i|
+            #{opening}
+
+            #{closing}
+          |]
+
+-- | The continuation contract every 'stackWorker' running under 'orchestrate'
+-- stands under.
+--
+-- __Splices 'continueMarker' rather than spelling it__, for the reason
+-- 'document' and 'fixerContinuation' do: the brief tells a worker how to ask for
+-- another trip and 'decideContinue' decides whether it asked, and the two agree
+-- only because both go through that binding.
+--
+-- __And it names the blocked ending explicitly.__ The other continuation clauses
+-- offer two endings, more work or finished, because their stages can always take
+-- one more step. A stacking run has a third: a design disagreement it must not
+-- settle alone, an approved branch it must not rewrite, a starved runner pool no
+-- branch edit can fix. Without somewhere to put that, a blocked worker either
+-- reports completion it does not have or spins its fuel. So the clause admits
+-- it, requires it in writing under a heading a person will read, and makes
+-- saying which of the two endings this is part of the contract.
+stackContinuation :: Prompt
+stackContinuation =
+  [__i|
+    You are running under an orchestrator that will call you again with your own
+    summary as its input, so write the summary for your successor: what you did,
+    which branches it touched, what is left, and what a stranger would need in
+    order to continue. Anything a person has to decide goes in `.stack-plan.md`
+    under `\#\# for a person`, not into this summary alone.
+
+    End with a status line, alone on the last line, and it is one of three:
+
+    - `#{continueMarker}` — work remains at this stage. You will be called again.
+    - `#{blockedMarker}` — you cannot continue without a person: a design
+      disagreement, an approved branch you must not rewrite, a runner pool no
+      branch edit can fix. Write the block under `\#\# for a person` first.
+    - `WORK COMPLETE` — this stage is finished, and nothing is waiting on
+      anybody.
+
+    Never report a block as completion. A later stage reads this line and a
+    block reported as `WORK COMPLETE` is how a run spends CI on work a person
+    was supposed to decide first.
+  |]
+
+-- | The marker a worker ends on when it cannot continue without a person.
+--
+-- __A third ending, because two were not enough.__ 'decideContinue' asks one
+-- question — another trip, or not — and a stacking run can stop for a reason
+-- that is neither. A worker with nowhere to put "an approved branch I must not
+-- rewrite" either reports a completion it does not have, and the promotion
+-- stage then spends CI on it, or spins its fuel until the loop aborts.
+--
+-- __Terminal to the loop, and visible to the stage after it.__ Anything that is
+-- not 'continueMarker' already ends the loop, so this changes no control flow;
+-- what it adds is a token the promotion brief can refuse on and a person can
+-- grep for. The distinction was prose before, and prose is not something the
+-- next stage can read.
+blockedMarker :: Text
+blockedMarker = "WORK BLOCKED"
 
 -- | The shared analysis prefix: explore (three stances) then plan.
 explorePlan :: Flow Text Text
@@ -912,8 +1395,8 @@ explorePlan = explore >>> plan
     explore =
       exploreFlows
         [ reviewer (withBackend claudeAgent defaultModel) "intrepid" intrepid
-        , reviewer (withBackend codex defaultModel) "skeptic" skeptic
-        , reviewer (withBackend opencode defaultModel) "contemplative" contemplative
+        , reviewer codexScope "skeptic" skeptic
+        , reviewer opencodeScope "contemplative" contemplative
         , reviewer (withBackend claudeAgent fable5) "architect" architect
         ]
         -- Narrowing, not ranking by importance: what breaks, then the shape it

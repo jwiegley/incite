@@ -8,9 +8,10 @@
 -- * "Incite.Prompts" — every prompt body, and nothing else. Data, not logic.
 -- * "Incite.Backend" — which model runs a leaf, and how a leaf is scoped to one.
 -- * "Incite.Feature" — request → plan → the work it asks for: a pull request
---   for code, edited prose for documentation, or — where the request is a whole
---   tree rather than a change — an audit, a ranked report, and a fixer run
---   against it until a real build and test suite go green.
+--   for code, edited prose for documentation, a stack of reviewable branches
+--   where the request is one change too large to review at once, or — where the
+--   request is a whole tree rather than a change — an audit, a ranked report,
+--   and a fixer run against it until a real build and test suite go green.
 -- * "Incite.Review"  — the review and audit tiers.
 --
 -- Two conventions that hold across all of them. __Prompt bodies live on disk__:
@@ -26,7 +27,7 @@ module Main (main) where
 
 import Agent.Run (Workflow, passMain)
 
-import Incite.Feature (grindParadox, planFeature, shipDocs, shipFeature)
+import Incite.Feature (grindParadox, planFeature, shipDocs, shipFeature, stackPRs)
 import Incite.Review (fessAudit, promptLint, retro, reviewAudit, reviewDocs, reviewHeavy, reviewLite)
 
 main :: IO ()
@@ -42,6 +43,7 @@ workflows =
   [ planFeature
   , shipFeature
   , shipDocs
+  , stackPRs
   , grindParadox
   , fessAudit
   , retro
