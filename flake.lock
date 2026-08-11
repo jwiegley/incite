@@ -7,11 +7,11 @@
         "nixpkgs-adapters": "nixpkgs-adapters"
       },
       "locked": {
-        "lastModified": 1786304854,
-        "narHash": "sha256-+FklCgbOTnUvf9b0Hgr7mFnOUrdWtIci7cna2RCrE24=",
+        "lastModified": 1786470379,
+        "narHash": "sha256-nd1s9HWS8y6bXdXhIMkHqBRSFJxr3dEqhoaDR0robVs=",
         "ref": "refs/heads/master",
-        "rev": "3cca001b8d4d8580e19c35a14cbbcf5fbcfae3c9",
-        "revCount": 253,
+        "rev": "ecd4ad4e90e771a7254fdc4d526c08956d76f234",
+        "revCount": 271,
         "type": "git",
         "url": "ssh://git@gitlab.com/fresheyeball/agent-functor"
       },
