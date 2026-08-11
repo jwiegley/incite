@@ -32,8 +32,8 @@ text.
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
 | `review-lite` | prompt-only | five per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode), pure fold reduction |
-| `review-heavy` | prompt-only | full-diff review by seven lenses on three backends, two regrouped views on claude-agent, then synthesis |
-| `review-audit` | prompt-only | eight-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
+| `review-heavy` | prompt-only | full-diff review by eight lenses on three backends, two regrouped views on claude-agent, then synthesis |
+| `review-audit` | prompt-only | nine-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
 | `review-docs` | prompt-only | documentation panel: accuracy, completeness, structure, slop, ponytail, each on three backends except accuracy (the fess rubric, never on codex), then synthesis |
 | `prompt-lint` | prompt-only | one SimpleEnglish CHECK-mode pass over procedural prompt text |
 
@@ -141,7 +141,7 @@ rather than copying them. Six things distinguish it.
   belonging to anybody else holds it unconditionally, and a job count it cannot
   read counts as a full budget.
 - **Where the gates sit is the argument.** The first `greenGate` stands between
-  the cutting loop and the panel, because 21 reviewers reading branches that do
+  the cutting loop and the panel, because 24 reviewers reading branches that do
   not build is the most expensive way to learn they do not build. The second
   stands between the review rounds and promotion, which is the last moment a
   local failure is still cheap.
@@ -200,7 +200,7 @@ the number fails the suite rather than stranding the prose.
 
 | Workflow | Worst-case leaves |
 |---|---:|
-| `stack-prs` | 133 |
+| `stack-prs` | 138 |
 
 ## Grinding a whole tree
 
@@ -296,8 +296,8 @@ same either way; a tier that fans across the roster gets narrower.
 | Tier | Leaves | Leaves, opencode blocked | What the cost buys |
 |---|---:|---:|---|
 | `review-lite` | 5 | 5 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails |
-| `review-heavy` | 38 | 31 | 21 full-diff reviewers, two regrouping leaves, 14 single-backend regrouped-view reviewers, and synthesis |
-| `review-audit` | 75 | 51 | full 24-leaf panel over three views, with regrouping leaves and synthesis |
+| `review-heavy` | 43 | 35 | 24 full-diff reviewers, two regrouping leaves, 16 single-backend regrouped-view reviewers, and synthesis |
+| `review-audit` | 84 | 57 | full 27-leaf panel over three views, with regrouping leaves and synthesis |
 | `review-docs` | 15 | 10 | five documentation lenses across three backends, less the one pairing `admits` forbids, plus synthesis |
 | `prompt-lint` | 1 | 1 | one grounded STE CHECK-mode report |
 

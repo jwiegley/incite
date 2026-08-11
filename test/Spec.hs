@@ -64,7 +64,8 @@ import Incite.Feature
   , stackWorker
   )
 import Incite.Prompts
-  ( codeReview
+  ( alexeyReview
+  , codeReview
   , codeReviewerSecurity
   , docsCompleteness
   , docsStructure
@@ -108,6 +109,7 @@ import Incite.Review
   , grindSynthesis
   , toTree
   , architectureOfChange
+  , disciplineOfPanel
   , docsAccuracy
   , docsStrategyOfPlan
   , emissionLenses
@@ -855,6 +857,7 @@ expectedLensesOf subject = case subject of
     , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailReviewRubric)
     , ("doctrine", codeReview)
+    , ("discipline", disciplineOfPanel)
     ]
   OfChange ->
     [ ("correctness", reviewCorrectness)
@@ -864,6 +867,7 @@ expectedLensesOf subject = case subject of
     , ("haskell", haskellOfHouse)
     , ("ponytail", ponytailAuditRubric)
     , ("doctrine", codeReview)
+    , ("discipline", disciplineOfPanel)
     , ("architecture", architectureOfChange)
     ]
   OfDocs ->
@@ -970,6 +974,7 @@ lensesOfTests =
               , "haskell"
               , "ponytail"
               , "doctrine"
+              , "discipline"
               ]
     , testCase "OfChange lens names" $
         map (leafNameText . fst) (lensesOf OfChange)
@@ -980,6 +985,7 @@ lensesOfTests =
               , "haskell"
               , "ponytail"
               , "doctrine"
+              , "discipline"
               , "architecture"
               ]
     , testCase "OfDocs lens names" $
@@ -1719,6 +1725,7 @@ reorientations =
   , ("ponytailOfDocs", ponytailAuditRubric, ponytailOfDocs)
   , ("architectureOfChange", reviewArchitecture, architectureOfChange)
   , ("haskellOfHouse", haskellReviewer, haskellOfHouse)
+  , ("disciplineOfPanel", alexeyReview, disciplineOfPanel)
   , ("qaOfCommit", qaAgent, qaOfCommit)
   , ("docsStrategyOfPlan", technicalDocsStrategist, docsStrategyOfPlan)
   , ("slopOfDocs", stopSlop, slopOfDocs)
@@ -1793,6 +1800,22 @@ voidedSentences =
       , ("Lean already. Ship.", "Lean already. Ship.")
       ]
     )
+  ,
+    ( "disciplineOfPanel"
+    , alexeyReview
+    , disciplineOfPanel
+    , -- The instruction the lens cannot follow (there is no `references/`
+      -- directory in a prompt), and the three halves of the verdict that have no
+      -- reader behind a panel: the GitHub grades, the conditional-approval
+      -- formula, and the silent approval that a synthesis step cannot tell apart
+      -- from a backend that never ran.
+      [ ("Before reviewing, read both references", "spliced above")
+      , ("Conflict rule", "conflict rule stands")
+      , ("default to COMMENTED outside your competence", "You cast none.")
+      , ("Verdict grammar", "Drop the verdict grammar")
+      , ("LGTM up to X", "`LGTM up to X` formula")
+      ]
+    )
   ]
 
 reorientationTests :: TestTree
@@ -1864,6 +1887,12 @@ reorientationTests =
           @?= ["Verification gap", "Spec drift", "Scope creep", "Quiet downgrades"]
         sectionsOf (promptText ponytailAuditRubric)
           @?= ["Tags", "Hunt", "Output", "Boundaries"]
+        sectionsOf (promptText alexeyReview)
+          @?= [ "Identity guardrails (hard rules)"
+              , "Review procedure"
+              , "Severity gates"
+              , "Output register"
+              ]
     ]
 
 -- | Fail with every complaint named, or pass on @[]@.

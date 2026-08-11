@@ -90,6 +90,10 @@ module Incite.Prompts
     -- * Upstream: promptdeploy
   , haskellReviewer
   , perfReviewer
+    -- * Upstream: alexey-review
+  , alexeyReview
+  , alexeyPrinciples
+  , alexeyStance
     -- * Upstream: SimpleEnglish (ASD-STE100)
   , steRules
   , steSkill
@@ -442,6 +446,31 @@ qaAgent = [promptFile|prompts/upstream/awesome-prompts/qa-agent.md|]
 haskellReviewer, perfReviewer :: Prompt
 haskellReviewer = [promptFile|prompts/upstream/promptdeploy/haskell-reviewer.md|]
 perfReviewer = [promptFile|prompts/upstream/promptdeploy/perf-reviewer.md|]
+
+-- | The @alexey-review@ skill and the two references it opens by demanding, from
+-- the @nix-config@ input: a review discipline distilled from one high-bar
+-- engineer's public review record.
+--
+-- Three files rather than one, and they are not alternatives. 'alexeyReview' is
+-- the __procedure__ — twelve numbered steps, the severity gates that say what
+-- blocks and what slides, the two-gear output register, and the identity
+-- guardrails that keep it a discipline rather than an impersonation.
+-- 'alexeyPrinciples' is what to care about (a test must mechanize its
+-- expectations, a skip must be a fail, unexplained perf deltas block, defensive
+-- code is guilty until explained) and 'alexeyStance' is how to say it (fifteen
+-- ranked principles with the evidence behind each, the calibration numbers under
+-- the gates, and the domain patterns for Haskell, C++, codegen and tests).
+--
+-- The skill's own first instruction is to read both references before reviewing,
+-- so none of the three reaches a panel alone: 'Incite.Review.disciplineOfPanel'
+-- is what splices them in that order and says where they went.
+--
+-- ~72 KB together, which makes this the most expensive brief in the repository
+-- by a wide margin — 'steSkill' at ~19.7 KB is the next one down.
+alexeyReview, alexeyPrinciples, alexeyStance :: Prompt
+alexeyReview = [promptFile|prompts/upstream/alexey/skill.md|]
+alexeyPrinciples = [promptFile|prompts/upstream/alexey/engineering-principles.md|]
+alexeyStance = [promptFile|prompts/upstream/alexey/stance.md|]
 
 -- | ASD-STE100 Simplified Technical English (MIT, © AminBlg), at two grades.
 --

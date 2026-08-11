@@ -24,6 +24,7 @@ extra-source-files:
     prompts/upstream/ponytail/*.md
     prompts/upstream/awesome-prompts/*.md
     prompts/upstream/promptdeploy/*.md
+    prompts/upstream/alexey/*.md
     prompts/upstream/simple-english/*.md
     agents/*.md
     skills/*.md

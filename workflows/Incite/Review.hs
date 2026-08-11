@@ -50,6 +50,7 @@ module Incite.Review
     -- name the body each lens is supposed to carry — see @lensesOf@\'s
     -- expected table in @test\/Spec.hs@.
   , architectureOfChange
+  , disciplineOfPanel
   , haskellOfHouse
   , qaOfCommit
   , qaOfCommitOver
@@ -115,7 +116,7 @@ reviewLite =
       -- fails, what is braided, what should not exist at all.
       (hierarchical ["correctness", "fess", "qa", "complexity", "ponytail"])
 
--- | The thorough tier: seven lenses answered by all three backends, then a
+-- | The thorough tier: eight lenses answered by all three backends, then a
 -- synthesis leaf that de-duplicates and ranks. Where 'reviewLite' spreads its
 -- lenses across backends for cheap independence, this buys the real thing. Use
 -- before a PR, not on a beat.
@@ -124,10 +125,10 @@ reviewHeavy =
   workflowReq
     "review-heavy"
     [iii|
-      Review a diff with seven review lenses (correctness, security, tests,
+      Review a diff with eight review lenses (correctness, security, tests,
       performance, Haskell, ponytail complexity, AI-generated-code failure
-      modes), each run on all three backends — 21 reviewers — then synthesise
-      one ranked list
+      modes, high-bar review discipline), each run on all three backends — 24
+      reviewers — then synthesise one ranked list
     |]
     reviewHeavyFlow
 
@@ -155,7 +156,7 @@ reviewHeavyFlow =
 -- architecture lens, at three granularities — the diff as landed, regrouped
 -- into logical units, and re-expressed as the commits it should have been
 -- (whose @## divergence@ is the finding only that view produces). The full
--- panel answers each. 75 leaves: run it deliberately, never on a beat.
+-- panel answers each. 84 leaves: run it deliberately, never on a beat.
 --
 -- The regroupings are agent leaves, not a pure split: \"logical unit\" and
 -- \"ideal sequence\" are semantic, unlike @T.lines@ on a plan.
@@ -164,10 +165,11 @@ reviewAudit =
   workflow
     "review-audit"
     [iii|
-      Exhaustively audit a change: eight review lenses (correctness, security,
-      tests, performance, Haskell, ponytail, AI-failure modes, architecture) on
-      all three backends, at three granularities (full diff, logical units,
-      ideal sequential edits) — 75 reviewers — then synthesise one ranked list
+      Exhaustively audit a change: nine review lenses (correctness, security,
+      tests, performance, Haskell, ponytail, AI-failure modes, review
+      discipline, architecture) on all three backends, at three granularities
+      (full diff, logical units, ideal sequential edits) — 84 reviewers — then
+      synthesise one ranked list
     |]
     [iii|
       The working change in the current working directory. Run `git diff` (or
@@ -313,6 +315,7 @@ lensesOf subject = case subject of
       , ("haskell", haskellOfHouse)
       , ("ponytail", ponytailRubric)
       , ("doctrine", codeReview)
+      , ("discipline", disciplineOfPanel)
       ]
 
 -- | 'lensesOf'\'s three laws as a refutable check: one 'Text' per law the set
@@ -502,6 +505,107 @@ architectureOfChange =
     alone does not show you the shape it is landing in.
 
     If the change leaves the shape no worse, say `Sound.` and stop.
+  |]
+
+-- | The @alexey-review@ discipline, with the references it demands spliced in
+-- and its verdict taken away — the lens every code tier runs under the name
+-- @discipline@.
+--
+-- __What it buys that the six lenses beside it do not.__ Every other code lens
+-- is narrow by construction, and the fan-out is worth its price precisely
+-- because they do not overlap. This one is the opposite shape on purpose: it is
+-- a whole senior reviewer's calibration, and the findings it reaches are the
+-- ones that live between the narrow lenses. Benchmarks read before the diff, and
+-- perf read off the code with no benchmark at all. Prose audited against the
+-- code it claims to describe, with a false comment blocking as hard as false
+-- code. The hack generalised rather than documented — what representation would
+-- make this special case unnecessary. And the micro-probe sweep, which is the
+-- long tail every panel here misses: "Still needed?", "Forgot to delete?", "Is
+-- this comment still true?"
+--
+-- __Three files, because the skill's first instruction is to read two more.__
+-- Left alone it opens by telling the reader to read
+-- @references\/engineering-principles.md@ and @references\/stance.md@ before
+-- reviewing anything, and a lens is a string in a prompt with no directory to
+-- open. So both are spliced in the order the skill names them, and the
+-- adjustment says where they went — otherwise the lens ships with an instruction
+-- it cannot follow, which is the state a model resolves by inventing what the
+-- files said.
+--
+-- __And the verdict goes.__ Upstream this discipline ends in a GitHub review:
+-- APPROVED, COMMENTED or CHANGES_REQUESTED, with silent approval as the default
+-- when a change is fine. Behind this lens there is a synthesis leaf reading text,
+-- so a silent approval is a block that never arrived and a backend that never ran
+-- — indistinguishable, which is the confusion 'grindSynthesisOver' exists to
+-- refuse one tier over. What replaces it is the panel's own line format, and the
+-- severity calibration is kept whole: the gates are what decide whether a thing
+-- is worth a line at all.
+--
+-- __No fence against the lenses beside it__, and that is the difference from
+-- 'qaOfCommit'. That leaf declines what its four siblings own because
+-- 'reviewLite' reduces by a pure fold and nothing de-duplicates. Both tiers this
+-- one runs in end in 'reviewSynthesis', which merges duplicates and treats
+-- agreement as evidence, so a finding declined here for looking like somebody
+-- else's beat is a finding nobody makes.
+disciplineOfPanel :: Prompt
+disciplineOfPanel =
+  [__i|
+    #{alexeyReview}
+
+    ---
+
+    #{alexeyPrinciples}
+
+    ---
+
+    #{alexeyStance}
+
+    ---
+
+    TWO ADJUSTMENTS to the skill above, and neither one softens a gate.
+
+    **The references are here, not on disk.** The skill opens by telling you to
+    read `references/engineering-principles.md` and `references/stance.md`
+    before reviewing. Both are spliced above between the horizontal rules, in
+    the order the skill names them: the engineering principles first, the stance
+    second. You have no `references/` directory to open and nothing to look up.
+    The conflict rule stands over the text as spliced — the principles decide
+    what to care about, the stance decides how to say it.
+
+    **You are one lens of a panel, not the reviewer of record.** Several
+    reviewers read this same change beside you, each under a different rubric,
+    and a synthesis step behind you merges what you all found. That changes two
+    of the sections above and leaves two alone.
+
+    The **Identity guardrails (hard rules)** stand unchanged. So do the
+    **Severity gates**: they are what decides whether a thing is worth a line at
+    all, and a lens with no calibration reports everything it sees.
+
+    The **Review procedure** stands, except for the verdict in its twelfth step.
+    You cast none. Nothing behind you reads an approval, a comment or a request
+    for changes, so the words are void and so is the silence: never approve by
+    saying nothing, because an empty answer here is indistinguishable from a
+    backend that failed to run. What survives of that step is its honest
+    scoping — close with one line saying what you read at what depth, what you
+    left, and who should cover the rest.
+
+    The **Output register** is replaced outright, and its two-gear rule is the
+    half that survives. Report each finding as ONE line: the location as
+    `file:line`, what is wrong there, and what fixes it. The severity call rides
+    in that line's own sentence exactly as described above — a question is a
+    probe, a bare imperative is do it, `An explanation is required.` is a hard
+    gate. Stay under 40 words unless the finding is genuinely subtle; the
+    numbered scenario and the worked counterexample are earned, never the
+    default. Keep " -- " for a dash. Drop the verdict grammar, the
+    `LGTM up to X` formula, the `suggestion` block and the offer to do the work
+    yourself — nothing behind you can read a diff suggestion or accept an offer.
+
+    Report a defect even where you expect another lens to reach it first. Two
+    reviewers finding one thing is evidence, and the step behind you merges
+    duplicates; a finding you declined because it looked like somebody else's
+    beat is a finding nobody made.
+
+    If the change survives every gate above, say `Sound.` and stop.
   |]
 
 -- | The adversarial QA reviewer pointed at one commit, and fenced off the four
