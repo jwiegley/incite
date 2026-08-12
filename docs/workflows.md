@@ -26,7 +26,7 @@ text.
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
-| `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation — and it stops there, with no gate and no PR |
+| `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation, then a real-exit-code `nix flake check` gate with `repairFuel` trips — and it stops there, with no human gate and no PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
@@ -135,8 +135,9 @@ are still mediated by the backend's tool permission flow.
 
 `ship-feature-lite` is the acting shape for a change that does not need the
 heavy tier. It reuses `planLeaf`, `implement`, `actingGrant`, `orchestrateWith`,
-`asReviewSubject` and `remediate` rather than copying them, so it cannot drift
-from `ship-feature` in anything they share. Three things distinguish it.
+`asReviewSubject`, `remediate` and `greenGate` rather than copying them, so it
+cannot drift from `ship-feature` in anything they share. Four things distinguish
+it.
 
 - **It plans with `planLeaf` alone.** No four exploration stances and no
   `editPlan` chain. Those buy independence on a change large enough to be
@@ -151,16 +152,25 @@ from `ship-feature` in anything they share. Three things distinguish it.
   `WORK REMAINS`. That marker is the worker's own text, and it travels exactly
   as far as that text does: into the panel's input and into the run transcript.
   Every stage after the loop writes fresh text, so the run's **final artifact**
-  is the fixer's closing paragraph and carries neither marker. Read the
-  transcript, not the artifact, to tell a capped run that gave up from one that
-  finished. `test/Spec.hs` asserts both halves of that.
-- **It stops at `remediate`.** No human gate and no PR, which is `ship-docs`'s
-  safety property and the same argument: an unattended run auto-answers a gate
-  (`gateAnswer` defaults to `"yes"`) and `--sandbox` isolates the working tree
-  but not the network, so a PR leaf here would be an irreversible action with
-  nothing in the run able to stop it. The change lands in the tree; opening the
-  pull request stays a human's push. The one question it does ask is the `steer`
-  before the work, where a wrong auto-answer costs a planning turn.
+  is the fixer's closing paragraph under the gate's verdict, and carries neither
+  marker. Read the transcript, not the artifact, to tell a capped run that gave
+  up from one that finished. `test/Spec.hs` asserts both halves of that.
+- **It ends on a gate the harness runs.** `greenGate codeRule codeChecks` runs
+  `nix flake check` itself and reads the exit code, so the last word on the tree
+  is not the fixer's. A red gate costs `repairFuel` repair trips and then aborts
+  the run; it does not report success over a failing check. `ship-feature` needs
+  no such stage because it ends at a human gate and a pull request, where a
+  person and CI read the change. Nothing reads a lite run but the tree. The
+  check is `nix flake check` and not `cabal test` because `actingGrant` is
+  `execGrant ["nix*"]`: an ungranted check is denied inside the run and the gate
+  reads a red no repair leaf can fix.
+- **It has no human gate and no PR**, which is `ship-docs`'s safety property and
+  the same argument: an unattended run auto-answers a gate (`gateAnswer`
+  defaults to `"yes"`) and `--sandbox` isolates the working tree but not the
+  network, so a PR leaf here would be an irreversible action with nothing in the
+  run able to stop it. The change lands in the tree; opening the pull request
+  stays a human's push. The one question it does ask is the `steer` before the
+  work, where a wrong auto-answer costs a planning turn.
 
 **The worst case is fenced, not quoted**, the same way the Stacking figure and
 the review-tier table are: `test/Spec.hs` reads the number below out of this
@@ -168,7 +178,7 @@ file and compares it against `worstCaseCost . toSkeleton . wfFlow`.
 
 | Workflow | Worst-case leaves |
 |---|---:|
-| `ship-feature-lite` | 11 |
+| `ship-feature-lite` | 17 |
 
 ## Stacking a change
 

@@ -17,7 +17,7 @@ import Agent.Grant (permitExec)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
+import Agent.Op (ExecOutcome (..), LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
 import Agent.Oracle (Answer (..))
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
@@ -1906,10 +1906,12 @@ liteTests =
         assertBool
           "no leaf after the loop was shown the summary the loop yielded"
           (any (\(n, rendered) -> n /= "implement" && T.isInfixOf continueMarker rendered) sent)
-        -- The run's final artifact IS the fixer's own answer, byte for byte:
-        -- nothing appends the loop's status to it, which is why
-        -- @docs/operations.md@ sends an operator to the transcript instead.
-        final @?= leafAnswer
+        -- The final artifact is the fixer's own answer with the gate's verdict
+        -- under its heading: nothing appends the LOOP's status to it, which is
+        -- why @docs/operations.md@ sends an operator to the transcript instead.
+        -- The @✓@ line is upstream's @decodeOutcome@ spelling, written out for
+        -- the reason the @ask:gate:@ fragment below is.
+        final @?= leafAnswer <> "\n\n## gate\n\n✓ flake-check (exit 0)"
     , -- __The grant, pinned to the binding the prose names.__ Every other case
       -- here reads 'Agent.Run.wfFlow'; this reads 'Agent.Run.wfGrant', which
       -- nothing else does for this workflow. README, AGENTS.md and
@@ -1919,15 +1921,32 @@ liteTests =
       -- claims false and the rest of the suite green.
       testCase "runs under actingGrant, which is what every document says" $
         wfGrant shipFeatureLite @?= actingGrant
-    , -- __The safety property, stated as an absence.__ 'shipDocs'\'s argument
-      -- verbatim: an unattended run auto-answers a gate and @--sandbox@ isolates
-      -- the working tree but not the network, so a PR leaf here would be an
-      -- irreversible action with nothing in the run able to stop it.
+    , -- __What the run ends on, stated as an order and as an absence.__
+      --
+      -- The order first: the last agent to touch the tree is the fixer, and a
+      -- fixer that breaks the build closes its findings and writes a confident
+      -- paragraph. Until the gate existed, that paragraph WAS the run's evidence
+      -- that the tree still built. So the tail of the chain is asserted whole —
+      -- the fixer, then the check we run ourselves, then the leaf that repairs a
+      -- red one — and both directions fail: dropping the gate, and appending
+      -- anything after it.
+      --
+      -- 'leafKinds' as well as 'leafNames', because a name cannot say whether a
+      -- gate is real. @exec:flake-check@ is 'Agent.Flow.Combinators.verify'
+      -- running argv and reading the exit code; the same stage written as an
+      -- @agentVerify@ prompt keeps the name, the position and the cost, and asks
+      -- an agent whether its own work passed.
+      --
+      -- Then the absence. 'shipDocs'\'s argument verbatim: an unattended run
+      -- auto-answers a gate and @--sandbox@ isolates the working tree but not
+      -- the network, so a PR leaf here would be an irreversible action with
+      -- nothing in the run able to stop it.
       --
       -- __Not the only fence a gate or a PR leaf would move__, and worth being
       -- exact about the difference: 'Agent.Cost.worstCaseCost' counts every
-      -- leaf, @Ask@ included, so an added leaf takes the worst case off 11 and
-      -- @worstCaseTable@ below fails too. But that failure is repaired by
+      -- leaf, @Ask@ included, so an added leaf takes the worst case off the
+      -- figure in the prose and @worstCaseTable@ below fails too. But that
+      -- failure is repaired by
       -- editing a number in @docs\/workflows.md@ — which would wave the new leaf
       -- straight through. This case is the one whose only repair is removing the
       -- leaf.
@@ -1940,12 +1959,15 @@ liteTests =
       -- another repository's string literals and nothing in this one would
       -- otherwise say where they came from — a rename upstream turns these two
       -- fragments into an assertion that matches nothing, silently.
-      testCase "nothing runs after the fixer, and the only question is the steer" $ do
+      testCase "the fixer is followed by the gate and by nothing else" $ do
         let names = leafNames (wfFlow shipFeatureLite)
             kinds = leafKinds (wfFlow shipFeatureLite)
             asks = [k | k <- kinds, T.isPrefixOf "ask:" k]
         assertBool "the flow has no leaves" (not (null names))
-        last names @?= "remediate"
+        dropWhile (/= "remediate") names @?= ["remediate", "flake-check", "repair"]
+        assertBool
+          "the gate is not a check we run ourselves"
+          ("exec:flake-check" `elem` kinds)
         -- One question, and it is the steer BEFORE the work — the gate that
         -- costs nothing to auto-answer, because answering it wrong spends a
         -- planning turn rather than opening a pull request.
@@ -2843,11 +2865,15 @@ flowOutput name flow input =
 -- reason. Dispatching on 'leafNameOf' is what keeps the worker's text and the
 -- fixer's text distinguishable.
 --
--- __The ask handler answers instead of failing__, unlike the two helpers above:
--- those interpret prompt-only flows and an @Ask@ reaching them is news, whereas a
--- shipped acting workflow has a @steer@ in it and an unattended run auto-answers
--- it. This is that run, not a preflight. @Exec@ still fails loudly — nothing this
--- is used on runs one.
+-- __The ask and exec handlers answer instead of failing__, unlike the two helpers
+-- above: those interpret prompt-only flows, where either one is news. This is a
+-- shipped acting workflow run unattended — it has a @steer@ the run auto-answers
+-- and a gate it runs itself — so both are answered rather than refused.
+--
+-- The exec answer is @exit 0@: a green tree, which is the run this asks about.
+-- It is not a claim that the gate works — 'Agent.Flow.Combinators.checkLoop'
+-- owns the red path and 'Incite.Feature.isRed' is fenced directly — it is what
+-- lets a caller assert what the stages AFTER a passing check produce.
 runByLeaf :: Workflow -> (Text -> Text) -> Text -> IO (Text, [(Text, Text)])
 runByLeaf wf answer input = do
   sent <- newIORef []
@@ -2861,7 +2887,7 @@ runByLeaf wf answer input = do
                     { lhPrompt = \rendered -> do
                         modifyIORef' sent (<> [(name, rendered)])
                         pure (answer name)
-                    , lhExec = \cmd -> assertFailure (T.unpack (wfName wf) <> " ran an exec leaf: " <> show cmd)
+                    , lhExec = \_ -> pure (ExecOutcome {eoExit = 0, eoStdout = "", eoStderr = ""})
                     , lhAsk = \_ -> pure (Answer "")
                     }
                   sc

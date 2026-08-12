@@ -234,8 +234,8 @@ Codex and Claude rendered trees differ:
 - read that marker in the **run transcript**, on the worker leaf's last output
   — not in the run's final artifact. The marker is the worker's own text and
   nothing relays it: every stage after the loop writes fresh text, so
-  `ship-feature-lite`'s final artifact is the fixer's closing paragraph and
-  carries neither marker;
+  `ship-feature-lite`'s final artifact is the fixer's closing paragraph under
+  the gate's verdict, and carries neither marker;
 - the run can still abort for reasons the fuel does not cover — a rate-limited
   backend (429) or a backend error — and the work done so far is not lost then
   either: with `--sandbox` it is on the run's `agent-functor/run-…` worktree

@@ -56,6 +56,7 @@ module Incite.Feature
   , stackFuel
   , repairFuel
   , checkLoop
+  , codeChecks
   , greenGate
   , repairLeaf
   , grindChecks
@@ -351,13 +352,27 @@ shipDocs =
 -- so the run's final artifact is @remediate@\'s own closing paragraph and
 -- carries neither marker. See 'liteFuel'.
 --
--- __It stops at @remediate@.__ 'shipDocs'\'s argument exactly: no 'humanGate'
--- and no 'submitPR'. An unattended run auto-answers the gate — @gateAnswer@
--- defaults to @\"yes\"@ — and @--sandbox@ isolates the working tree but not the
--- network, so a PR leaf here would be an irreversible action with nothing in the
--- run able to stop it. That omission is the safety property that keeps every
--- irreversible action out of an unattended run. The change lands in the tree;
--- opening the pull request stays a human's push.
+-- __It ends on a gate WE run, not on the fixer's word.__ Every other stage here
+-- is an agent reporting on its own work, and the last of them edits code: a
+-- fixer that breaks the build closes its findings, writes a confident paragraph
+-- and the run ends green. 'greenGate' over 'codeChecks' is the one statement in
+-- this workflow that no agent authors — 'Agent.Flow.Combinators.verify' runs the
+-- command and reads the exit code — and a red tree costs 'repairFuel' repair
+-- trips and then aborts the run rather than reporting success over it. That is
+-- the whole difference between a tier that ships a small change and a tier that
+-- ships whatever the last agent said it did.
+--
+-- 'shipFeature' needs no such stage for the same reason it can afford the heavy
+-- panel: it ends at a 'humanGate' and a pull request, so a person and CI read
+-- the change before anything merges. Nothing reads a lite run but the tree.
+--
+-- __And still no 'humanGate' and no 'submitPR'.__ 'shipDocs'\'s argument
+-- exactly: an unattended run auto-answers the gate — @gateAnswer@ defaults to
+-- @\"yes\"@ — and @--sandbox@ isolates the working tree but not the network, so
+-- a PR leaf here would be an irreversible action with nothing in the run able to
+-- stop it. That omission is the safety property that keeps every irreversible
+-- action out of an unattended run. The change lands in the tree; opening the
+-- pull request stays a human's push.
 shipFeatureLite :: Workflow
 shipFeatureLite =
   workflowGReq
@@ -365,7 +380,8 @@ shipFeatureLite =
     [iii|
       Plan a small change without the exploration stances, then implement it
       under an orchestrator capped at three trips; review the result with the
-      five-lens per-commit panel and remediate the findings
+      five-lens per-commit panel, remediate the findings, and gate on a
+      harness-run `nix flake check`
     |]
     actingGrant
     $ planLeaf
@@ -376,6 +392,7 @@ shipFeatureLite =
       -- exactly as 'shipFeature' and 'shipDocs' point their own panels.
       >>> dimap' asReviewSubject id reviewLiteFlow
       >>> remediate codeRule closeWithChanges
+      >>> greenGate codeRule codeChecks
 
 -- | The plan lenses 'shipDocs' edits through, and the whole of what it puts
 -- between the planner and the steer. 'editPlan'\'s six have no purchase on a
@@ -590,6 +607,25 @@ workerFuel = Nothing
 -- constants, and no test can assert an inline value the same way.
 liteFuel :: Maybe Int
 liteFuel = Just 3
+
+-- | The check 'shipFeatureLite'\'s gate runs __itself__, on the repository the
+-- run acts in: @nix flake check@, which is this tree's build, its test suite and
+-- its formatting in one exit code.
+--
+-- One command rather than a list, because the flake already composes them and a
+-- second list here would be a second place for the two to disagree — the same
+-- argument 'grindChecks' makes the other way, where the target project has no
+-- single entry point.
+--
+-- __No grant of its own.__ 'actingGrant' is @nix*@ already, so this check is
+-- permitted by the policy the workflow was running under before the gate
+-- existed. That is why the command is @nix@ and not @cabal@: an ungranted check
+-- is denied inside the run (exit 126), the gate reads a red it cannot repair,
+-- and 'repairFuel' trips later the run aborts on the permission rather than on
+-- the code. @test\/Spec.hs@ asserts the permission through the runtime's own
+-- matcher rather than trusting that reading.
+codeChecks :: [(LeafName, NonEmpty Text)]
+codeChecks = [("flake-check", "nix" :| ["flake", "check"])]
 
 -- | The checks the grind gate runs __itself__, as argv rather than as a shell
 -- string: the target tree's own build and its own test harness.
