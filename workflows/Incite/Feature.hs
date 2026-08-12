@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Turning a request into a plan, and a plan into the work it asks for: a pull
 -- request for code, edited prose for documentation.
@@ -54,11 +55,13 @@ module Incite.Feature
   , checkLoop
   , greenGate
   , repairLeaf
+  , GrindSpec (..)
   , grindCheckCmd
   , grindChecks
   , grindFlow
   , grindGrant
   , grindGrantFor
+  , grindRule
   , grindTests
   , grindTestsChecks
   , grindTestsGrant
@@ -115,7 +118,6 @@ import Incite.Review
   , docsStrategyOfPlan
   , emissionLenses
   , grindName
-  , grindSynthesis
   , grindSynthesisOver
   , grindTestsLenses
   , grindTestsName
@@ -536,13 +538,13 @@ grindChecks =
 -- then abort. A permanently red gate is worse than none: it teaches a reader
 -- that the gate means nothing.
 --
--- The Elixir grinds make the same bet on the same evidence: their own retired
--- driver gated on @nix develop -c mix compile@, so that project too keeps its
--- toolchain in a dev shell. Only a dry run in the target checkout can prove the
--- wrapper — execute every rendered argv verbatim there before the first paid
--- run, and reopen this choice if a check dies environment-shaped
--- (@command not found@, a missing env var, a nix eval error) rather than on its
--- own content.
+-- The Elixir checks ('grindTestsChecks') make the same bet on the same
+-- evidence: the driver they retire gated on @nix develop -c mix compile@, so
+-- that project too keeps its toolchain in a dev shell. Only a dry run in the
+-- target checkout can prove the wrapper — execute every rendered argv verbatim
+-- there before the first paid run, and reopen this choice if a check dies
+-- environment-shaped (@command not found@, a missing env var, a nix eval
+-- error) rather than on its own content.
 --
 -- @nix@ as every check's head also lines each derived grant ('grindGrantFor')
 -- up with 'actingGrant'\'s @nix*@, which is the same bargain the other acting
@@ -575,6 +577,12 @@ grindCheckCmd cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
 -- whole rendered line, and a line is not its own head), and a grant that
 -- denies its own gate invites editing the fence to match wrong prose.
 --
+-- A head-glob is wide on purpose: with 'grindCheckCmd' every head is @nix@, so
+-- the derived @nix*@ admits any dev-shell command, not only the checks. That
+-- is 'actingGrant'\'s own @nix*@ bargain, and @docs\/workflows.md@ documents
+-- the layering: a grant gates the 'Agent.Op.Exec' leaves the harness runs
+-- itself, and the agent's tools stand under the backend's own permissioning.
+--
 -- @date@ and @mkdir@ are the synthesis leaf's, not a check's — it reads the day
 -- and creates @docs\/audits\/@ before writing the report. They are named here
 -- because this is a grind's whole exec policy, and a leaf whose write
@@ -599,13 +607,25 @@ grindGrant = grindGrantFor grindChecks
 -- into the rule is how the fixer learns that a golden is regenerated and never
 -- hand-edited, which is the discipline a red gate is cheapest to defeat by
 -- breaking.
-paradoxRule :: Prompt
-paradoxRule =
+--
+-- __One derivation, because audit facts and repair facts are one fact.__
+-- 'grindFlow' builds its own fixer's rule from 'gsFacts' through this, and the
+-- named rules ('paradoxRule', 'grindTestsRule') are the same application —
+-- kept as bindings because a grind's second fixer and its 'greenGate' consume
+-- them outside 'grindFlow'. Two spellings of the splice would drift silently,
+-- one grind at a time.
+grindRule :: Prompt -> Prompt
+grindRule facts =
   [__i|
     #{codeRule}
 
-    #{paradoxFacts}
+    #{facts}
   |]
+
+-- | 'grindRule' at 'Incite.Prompts.paradoxFacts': what 'grindParadox'\'s fixer
+-- and its gate's repair leaf stand under.
+paradoxRule :: Prompt
+paradoxRule = grindRule paradoxFacts
 
 -- | Run @worker@ under the orchestrator every acting workflow uses: each trip
 -- is one worker turn taking the previous trip's own summary as its input, and
@@ -929,8 +949,39 @@ grindParadox =
       read what the lenses point you at.
     |]
     grindGrant
-    $ grindFlow paradoxFacts (lensesOf OfTree <> emissionLenses) (grindSynthesis grindName) paradoxRule
+    $ grindFlow
+      GrindSpec
+        { gsName = grindName
+        , gsFacts = paradoxFacts
+        , gsLenses = lensesOf OfTree <> emissionLenses
+        , gsSynthesisSuffix = mempty
+        }
       >>> greenGate paradoxRule grindChecks
+
+-- | Everything one grind supplies for itself, by name. A record with one
+-- constructor rather than positional arguments, because the positional form
+-- read @facts@, @synthesis@ and @rule@ as three bare 'Prompt's — a caller
+-- swapping any two type-checks, and the defect surfaces as a fixer standing
+-- under the synthesis brief.
+data GrindSpec = GrindSpec
+  { gsName :: Text
+  -- ^ The grind's slug ('Incite.Review.grindName' and kin): the tool's name,
+  -- and the dated report path the derived synthesis writes under.
+  , gsFacts :: Prompt
+  -- ^ The target tree's facts file. 'grindFlow' prepends it to the caller's
+  -- steer and splices it into the fixer's rule ('grindRule') — one field,
+  -- so the audit half and the repair half cannot read different facts.
+  , gsLenses :: [(LeafName, Prompt)]
+  -- ^ The lens table handed to 'Incite.Review.spread', whose ORDER is
+  -- semantic — 'spread' pairs backends positionally. The synthesis roster is
+  -- derived from this same table, so a lens the panel runs is a lens the
+  -- synthesis can refuse on.
+  , gsSynthesisSuffix :: Prompt
+  -- ^ Appended below the derived synthesis brief; 'mempty' for a grind with
+  -- nothing to add. The seam exists so a grind can EXTEND the shared brief —
+  -- a ranking clause, say — without replacing the derived roster, which is
+  -- what keeps a short panel refusable in every grind.
+  }
 
 -- | The shared grind prefix: the tree's facts prepended to the caller's steer,
 -- a 'spread' panel over the lenses, one synthesis, then an orchestrated fixer
@@ -944,19 +995,22 @@ grindParadox =
 -- because one 'dimap'' covers every leaf of the panel and leaves the caller's
 -- text as a genuine focus steer.
 --
--- What a grind supplies for itself: its facts file, its lens table (whose ORDER
--- is semantic — 'spread' pairs backends positionally), its synthesis brief
--- (derive it with 'Incite.Review.grindSynthesisOver' over the same table), and
--- the rule its fixer stands under. The unchanged 'grindParadox' fences in
--- @test\/Spec.hs@ and the render recorded at the hoist are what pin this
--- binding to the shape that workflow always had.
-grindFlow :: Prompt -> [(LeafName, Prompt)] -> Prompt -> Prompt -> Flow Text Text
-grindFlow facts lenses synthesis rule =
-  dimap' withFacts id (spread backends lenses)
+-- __The synthesis brief and the fixer's rule are derived, not passed.__
+-- 'Incite.Review.grindSynthesisOver' over the spec's own name and lens table,
+-- and 'grindRule' over the spec's own facts — so no grind can hand the
+-- synthesis a roster its panel does not run (a backend outage would fold into
+-- that as a clean tree), and no grind can audit under one set of facts and
+-- repair under another. The unchanged 'grindParadox' fences in @test\/Spec.hs@
+-- and the render recorded at the hoist are what pin this binding to the shape
+-- that workflow always had.
+grindFlow :: GrindSpec -> Flow Text Text
+grindFlow GrindSpec {..} =
+  dimap' withFacts id (spread backends gsLenses)
     >>> refineWith "synthesis" (brief synthesis) id
-    >>> orchestrate (remediate rule fixerContinuation)
+    >>> orchestrate (remediate (grindRule gsFacts) fixerContinuation)
   where
-    withFacts steerText = promptText facts <> "\n\n" <> steerText
+    synthesis = grindSynthesisOver gsName (map fst gsLenses) <> gsSynthesisSuffix
+    withFacts steerText = promptText gsFacts <> "\n\n" <> steerText
 
 -- | The checks the test-suite grind gates on: the target project's own compile
 -- (warnings as errors), its Elixir suite, and its TypeScript suite — each
@@ -973,20 +1027,13 @@ grindTestsChecks =
 grindTestsGrant :: Grant
 grindTestsGrant = grindGrantFor grindTestsChecks
 
--- | What the test-suite grind's fixer stands under: the code rule, plus that
--- tree's own facts and repair disciplines — 'paradoxRule'\'s shape, and for its
--- reason. The facts reach the audit half through the workflow's input prepend,
--- which is out of scope by the time a fixer reads a ranked list; splicing them
--- into the rule is how the fixer learns the fix hierarchy (source-of-truth
--- first, proof layer second, direct code last) that a red gate is cheapest to
--- defeat by ignoring.
+-- | 'grindRule' at 'Incite.Prompts.testsFacts': what the test-suite grind's
+-- fixers stand under — the one inside 'grindFlow', the second one acting on
+-- the review panel's findings, and the gate's repair leaf. Splicing the facts
+-- is how a fixer learns the fix hierarchy (source-of-truth first, proof layer
+-- second, direct code last) that a red gate is cheapest to defeat by ignoring.
 grindTestsRule :: Prompt
-grindTestsRule =
-  [__i|
-    #{codeRule}
-
-    #{testsFacts}
-  |]
+grindTestsRule = grindRule testsFacts
 
 -- | Audit a test suite with twelve lenses, rank and fix what they found, audit
 -- the FIX with the exhaustive review panel, fix what that found, then prove
@@ -1021,7 +1068,13 @@ grindTests =
       what the lenses point you at.
     |]
     grindTestsGrant
-    $ grindFlow testsFacts grindTestsLenses (grindSynthesisOver grindTestsName (map fst grindTestsLenses)) grindTestsRule
+    $ grindFlow
+      GrindSpec
+        { gsName = grindTestsName
+        , gsFacts = testsFacts
+        , gsLenses = grindTestsLenses
+        , gsSynthesisSuffix = mempty
+        }
       >>> dimap' asReviewSubject id reviewAuditFlow
       >>> orchestrate (remediate grindTestsRule fixerContinuation)
       >>> greenGate grindTestsRule grindTestsChecks

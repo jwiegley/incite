@@ -28,8 +28,9 @@ the server supplies your transcript. Outside a run there is no capture, so it is
 not available and the `fess` lens is what you have.
 
 Do not run a heavier check on this beat. `review-heavy` (eight lenses × three
-backends) and `review-audit` (84 leaves) are for a pre-PR review and a standing
-audit; running either per-commit burns the turns you need for the work.
+backends) and `review-audit` (84 leaves, or 57 leaves with opencode blocked)
+are for a pre-PR review and a standing audit; running either per-commit burns
+the turns you need for the work.
 
 ## Input — the part to get right
 

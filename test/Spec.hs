@@ -27,10 +27,13 @@ import Incite.Feature
   , fixerContinuation
   , closeWithChanges
   , paradoxRule
+  , GrindSpec (..)
   , grindChecks
+  , grindFlow
   , grindGrant
   , grindGrantFor
   , grindParadox
+  , grindRule
   , grindTests
   , grindTestsChecks
   , grindTestsGrant
@@ -1433,6 +1436,49 @@ grindPanelTests =
                     ]
                   ]
               )
+    , -- __The rule derivation, on facts no shipped grind has.__ 'paradoxRule'
+      -- and 'grindTestsRule' are both 'grindRule' applications, and the fixer
+      -- fences only evaluate those specializations — a 'grindRule' that ignored
+      -- its argument and spliced one grind's facts would pass on that grind
+      -- alone. Equality rather than infix: the rule IS the code rule above the
+      -- facts, under one blank line, and nothing else.
+      testCase "grindRule is the code rule above exactly the facts it is given" $
+        promptText (grindRule "THE SYNTHETIC FACTS")
+          @?= promptText codeRule <> "\n\nTHE SYNTHETIC FACTS"
+    , -- __What 'grindFlow' derives from its spec, on a spec no shipped grind
+      -- has.__ The fences below pin both shipped grinds' leaves and briefs, but
+      -- each supplies exactly the derived synthesis — so a 'grindFlow' that let
+      -- a spec's brief and its lens table drift apart, or dropped the suffix
+      -- seam the next grind's ranking clause needs, or repaired under facts the
+      -- audit never read, would ship green there. Read off the flow's own
+      -- leaves: the synthesis brief is 'grindSynthesisOver' at the spec's name
+      -- and lens table, a suffix lands appended below it and moves nothing
+      -- else, the fixer stands under 'grindRule' at the same facts, and the
+      -- facts sit above the caller's steer.
+      testCase "grindFlow derives its synthesis and its fixer's rule from the spec" $ do
+        let lenses = [("alpha-lens", "ALPHA?"), ("beta-lens", "BETA?")] :: [(LeafName, Prompt)]
+            specWith suffix =
+              GrindSpec
+                { gsName = "grind-synthetic"
+                , gsFacts = "THE SYNTHETIC FACTS"
+                , gsLenses = lenses
+                , gsSynthesisSuffix = suffix
+                }
+        bare <- flowLeafPrompts "grind-synthetic" (grindFlow (specWith mempty)) "STEER"
+        suffixed <- flowLeafPrompts "grind-synthetic" (grindFlow (specWith "THE RANKING CLAUSE")) "STEER"
+        let derived = promptText (grindSynthesisOver "grind-synthetic" (map fst lenses))
+            synthesisOf sent = sent !! length lenses
+        assertBool
+          "the synthesis brief is not derived from the spec's name and lens table"
+          (derived `T.isInfixOf` synthesisOf bare)
+        synthesisOf suffixed
+          @?= T.replace derived (derived <> "THE RANKING CLAUSE") (synthesisOf bare)
+        assertBool
+          "the fixer's rule is not derived from the spec's facts"
+          (promptText (grindRule "THE SYNTHETIC FACTS") `T.isInfixOf` last bare)
+        assertBool
+          "the facts are not prepended to the caller's steer"
+          ("THE SYNTHETIC FACTS\n\nSTEER" `T.isInfixOf` head bare)
     , grindFenceTests paradoxGrindFence
     , grindFenceTests testsGrindFence
     ]
@@ -1877,6 +1923,12 @@ stackTests =
       -- review-tier table, and it exists because the Stacking section quoted a
       -- bare number that no check could see going stale: a fuel change, a panel
       -- change or one more stage moves it silently.
+      --
+      -- __Two columns, and the live one checked__ — the review-tier table's
+      -- treatment, for the review-tier table's reason: 'stackPRs' carries a
+      -- review panel, so its worst case moves with @BLOCK_OPENCODE@, and a
+      -- single-column table made this fence a statement about whoever's shell
+      -- ran the suite.
       testCase "the Stacking worst-case table matches worstCaseCost" $ do
         doc <- TIO.readFile "docs/workflows.md"
         let rows = tableRows (sectionBody "Stacking a change" doc)
@@ -1886,15 +1938,17 @@ stackTests =
           | (name, cells) <- rows
           , complaint <- case (name == wfName stackPRs, cells) of
               (False, _) -> [name <> ": the Stacking table names a workflow this is not about"]
-              (True, raw : _) -> case reads (T.unpack (T.strip raw)) of
-                [(n, "")] ->
-                  let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
-                   in [ name <> ": docs/workflows.md says " <> tshow n
-                          <> ", the flow's worst case is " <> renderCost actual
-                      | actual /= Finite n
-                      ]
-                _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
-              (True, []) -> [name <> ": the row carries no count"]
+              (True, full : blocked : _) ->
+                let raw = T.strip (if blockOpencode then blocked else full)
+                 in case reads (T.unpack raw) of
+                      [(n, "")] ->
+                        let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
+                         in [ name <> ": docs/workflows.md says " <> tshow n
+                                <> ", the flow's worst case is " <> renderCost actual
+                            | actual /= Finite n
+                            ]
+                      _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
+              (True, _) -> [name <> ": the row does not carry both counts"]
           ]
     , -- Every acting leaf under one pin, read off the SHIPPED flow rather than
       -- off the source. 'remediate' and 'repair' are unpinned in the two
@@ -3016,9 +3070,12 @@ scopeTests =
       -- would move with it.
       --
       -- @contemplative@ is the opencode stance, so its cell moves with
-      -- @BLOCK_OPENCODE@ — read off 'opencodeBackend' rather than spelled twice,
+      -- @BLOCK_OPENCODE@: read off 'opencodeBackend' while opencode exists,
       -- because that binding IS what the stance is scoped to and a second
-      -- spelling here could only disagree with it.
+      -- spelling here could only disagree with it. Blocked, the stance lands
+      -- on codex — whose leaf NAME is @codex@ but whose scope carries the
+      -- 'Incite.Backend.gpt55' model pin — so that cell is spelled the way
+      -- @skeptic@'s pin is, not read off a name that omits the model.
       testCase "plan-feature runs each leaf on the agent its module argues for" $
         scopedLeaves (wfFlow planFeature)
           @?= [ ("intrepid", "claude-agent")
@@ -3026,7 +3083,11 @@ scopeTests =
                 -- ~/.codex/config.toml names, and a model codex-acp cannot drive
                 -- fails every codex turn at once. See 'Incite.Backend.gpt55'.
                 ("skeptic", "codex/gpt-5.5/xhigh")
-              , ("contemplative", leafNameText (fst opencodeBackend))
+              , ( "contemplative"
+                , if blockOpencode
+                    then "codex/gpt-5.5/xhigh"
+                    else leafNameText (fst opencodeBackend)
+                )
               , ("architect", "claude-agent/fable")
               , ("plan", "claude-agent/fable")
               , ("ponytail", runDefault)

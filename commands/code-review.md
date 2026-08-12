@@ -28,6 +28,7 @@ other specialists directly where the diff calls for them: `haskell-review`, `has
 whole-repository audit instead, or for a diff reviewed by more than one backend, use the
 `agent-functor` workflows: `review-lite` (six reviewers, the Haskell lens only when the diff
 touches Haskell, cheap enough per commit), `review-heavy`
-(24 reviewers plus regrouped views and a synthesis pass — 43 leaves — before a PR),
-`review-audit` (84-leaf whole-change audit across three granularities). `/pr-review` reviews a GitHub PR in a worktree and never posts back
-without explicit instruction.
+(24 reviewers plus regrouped views and a synthesis pass — 43 leaves, or 35 leaves with
+opencode blocked — before a PR), `review-audit` (84-leaf — 57-leaf with opencode blocked —
+whole-change audit across three granularities). `/pr-review` reviews a GitHub PR in a worktree
+and never posts back without explicit instruction.

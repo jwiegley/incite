@@ -25,8 +25,11 @@ factored out of the existing grind-paradox / review-audit machinery.
 
 - Session started 2026-08-12. No prior progress; this doc created at step 1.
 - Step 1 DONE: `nix flake check` green; baseline captures in `/tmp/grind-baseline/`
-  (plan-grind-paradox.txt, cost-grind-paradox.txt) — NOT committed. This machine
-  has `BLOCK_OPENCODE` set, so local renders show the blocked pairing; the nix
+  (plan-grind-paradox.txt, cost-grind-paradox.txt) — NOT committed. Re-anchored
+  after commit f6c8423 landed: regenerated from the committed tree with the nix
+  noise lines stripped, and diffed identical against the pre-refactor captures,
+  so the step-13 acceptance diff traces to the commit. This machine has
+  `BLOCK_OPENCODE` set, so local renders show the blocked pairing; the nix
   test sandbox sees the full roster.
 - **BLOCKER for steps 3 and 13**: no operation checkout (Elixir/Phoenix app,
   OTP app `operation`) exists on this machine — searched `/home/ishapira`
@@ -35,8 +38,9 @@ factored out of the existing grind-paradox / review-audit machinery.
   - Step 3's probe and dry run cannot execute here. Decision made on recorded
     evidence instead: `commands/grind-live-view.md`'s own final gate runs
     `nix develop -c mix compile --warnings-as-errors` (with a fallback clause),
-    so the target project has a nix dev shell; the paradox precedent
-    (`devShell`, Spec fence at Spec.hs:1483) uses
+    so the target project has a nix dev shell; the paradox precedent —
+    `grindCheckCmd`, fenced by the Spec case "every check runs inside the
+    target project's dev shell" — uses
     `nix develop --command bash -c <cmd>`. `grindCheckCmd` therefore takes the
     nix-develop branch, bash -c innermost. THE DRY RUN IS STILL OWED: before
     any paid run, execute every rendered argv of both grinds verbatim in the
@@ -46,23 +50,16 @@ factored out of the existing grind-paradox / review-audit machinery.
     Per step 12's own rule the JS engines stay until those runs pass; they are
     preserved as `commands/grind-tests-engine.md` and
     `commands/grind-live-view-engine.md` (unregistered) once step 12 lands.
-- Step 2 denotations (each law and its named check):
-  - `reviewAuditFlow :: Flow Text Text` ≡ the flow `reviewAudit` runs today:
-    `lensesOf OfChange`, regroups over the FULL panel (not
-    `panelAcross [claudeAgentBackend]` — that is `reviewHeavyFlow`'s
-    narrowing), then synthesis. Pinned by the step-4 render diff and the docs
-    84/57 leaf-count row.
-  - `grindGrantFor :: [(LeafName, NonEmpty Text)] -> Grant` grants by
-    head-glob per Feature.hs:555 (`NE.head cmd <> "*"` plus `date*`/`mkdir*`,
-    denies the deny-list trio). NOT the stricter rendered-check-lines reading —
-    that trips Spec.hs:1460-1506. Law: `grindGrantFor grindChecks ≡ grindGrant`,
-    pinned by the existing grindGrant fences; step 5 pins the generalization.
-  - `grindSynthesisOver` already existed (Review.hs:1172) with
-    `grindSynthesis grindName` as its byte-identical specialization; pinned by
-    grindPanelTests and step 5.
-  - `grindFlow` = shared grind prefix (facts prepend → spread panel →
-    synthesis → orchestrated fixer). Pinned by the unchanged grindParadox
-    fences and the step-4 render diff.
+- Step-2 denotations live where they are enforced, not here: `reviewAuditFlow`,
+  `grindGrantFor`, `grindSynthesisOver` and `grindFlow` each carry their law in
+  their own haddock, pinned by the named Spec cases — "grindGrantFor derives
+  its grant from the checks it is given", "grindSynthesisOver names the grind
+  and every roster lens exactly once", "grindFlow derives its synthesis and its
+  fixer's rule from the spec", and the per-grind `GrindFence` cases.
+- `grindFlow` takes a `GrindSpec` record (name, facts, lens table, synthesis
+  suffix); the synthesis brief and the fixer's rule are DERIVED from it. The
+  seam grind-live-view needs is `gsSynthesisSuffix`: its ranking clause goes
+  there, appended below the derived `grindSynthesisOver` brief.
 - Step-6 fact inventory (commands/grind-tests.md → prompts/grind/tests-facts.md),
   ticked line by line. Facts found: 24. Facts carried: 21 carried verbatim or
   tightened (stack, runners, mutation/coverage/property tooling and read paths,

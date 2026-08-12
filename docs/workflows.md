@@ -207,11 +207,13 @@ on whatever backend the caller passed.
 **The worst case is fenced, not quoted.** `test/Spec.hs` reads the figure below
 out of this file and compares it against `worstCaseCost . toSkeleton . wfFlow`,
 the same way the review-tier table is fenced — a fuel or panel change that moves
-the number fails the suite rather than stranding the prose.
+the number fails the suite rather than stranding the prose. The workflow carries
+a review panel, so the figure moves with `BLOCK_OPENCODE`; both columns are
+stated and the suite checks whichever one is live where it runs.
 
-| Workflow | Worst-case leaves |
-|---|---:|
-| `stack-prs` | 139 |
+| Workflow | Worst-case leaves | Worst case, opencode blocked |
+|---|---:|---:|
+| `stack-prs` | 139 | 131 |
 
 ## Grinding a whole tree
 
