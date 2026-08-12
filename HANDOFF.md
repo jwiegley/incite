@@ -7,14 +7,14 @@ factored out of the existing grind-paradox / review-audit machinery.
 
 ## Task list
 
-- [ ] 1. Green `nix flake check`; capture `plan grind-paradox` and `cost grind-paradox` renders to files (pre-refactor baseline).
-- [ ] 2. Fix denotations: haddock semantics + law + named check for `reviewAuditFlow`, `grindGrantFor`, `grindSynthesisOver`, `grindFlow`.
-- [ ] 3. Decide `grindCheckCmd` wrapper (probe operation checkout for dev shell); dry-run every rendered argv; record transcript.
-- [ ] 4. Prep refactor, zero behavior change; fences + render diff vs step-1 captures.
-- [ ] 5. Spec cases for `grindGrantFor` and `grindSynthesisOver` on synthetic inputs.
-- [ ] 6. `prompts/grind/tests-facts.md` + 9 lens bodies + Prompts.hs bindings + separation-law Spec case; manual fact-inventory tally.
-- [ ] 7. Define grind-tests in Review.hs/Feature.hs; empty-diff clause Spec case.
-- [ ] 8. Register + fence grind-tests; factor grindPanelTests into record helper with red trials.
+- [x] 1. Green `nix flake check`; capture `plan grind-paradox` and `cost grind-paradox` renders to files (pre-refactor baseline). DONE (commit f6c8423's session; captures in /tmp/grind-baseline/).
+- [x] 2. Fix denotations: haddock semantics + law + named check for `reviewAuditFlow`, `grindGrantFor`, `grindSynthesisOver`, `grindFlow`. DONE (recorded below and in the haddocks, commit f6c8423).
+- [x] 3. Decide `grindCheckCmd` wrapper: nix-develop branch chosen on recorded evidence (commit f6c8423). THE DRY RUN IN THE TARGET CHECKOUT IS STILL OWED — see blocker below.
+- [x] 4. Prep refactor, zero behavior change; fences + render diff vs step-1 captures. DONE (commit f6c8423; render diff empty).
+- [x] 5. Spec cases for `grindGrantFor` and `grindSynthesisOver` on synthetic inputs. DONE (commit f6c8423).
+- [x] 6. `prompts/grind/tests-facts.md` + 9 lens bodies + Prompts.hs bindings + separation-law Spec case; manual fact-inventory tally. DONE (tally below).
+- [x] 7. Define grind-tests in Review.hs/Feature.hs; empty-diff clause in the AtChange preamble (golden re-recorded) + Spec case. DONE.
+- [x] 8. Register + fence grind-tests; grindPanelTests factored into the `GrindFence` record helper; red trials run on both tables (full table flip → red, blocked table flip → red, both reverted). `factsFileTests` folded over both facts files; tests-grind fixer case added. DONE.
 - [ ] 9. `prompts/grind/live-view-facts.md` + 11 lens bodies + bindings; severity-word Spec case.
 - [ ] 10. Define grind-live-view; ranking-clause seam Spec case.
 - [ ] 11. Register + fence grind-live-view; docs pass; identifier grep with zero misses.
@@ -63,5 +63,18 @@ factored out of the existing grind-paradox / review-audit machinery.
   - `grindFlow` = shared grind prefix (facts prepend → spread panel →
     synthesis → orchestrated fixer). Pinned by the unchanged grindParadox
     fences and the step-4 render diff.
+- Step-6 fact inventory (commands/grind-tests.md → prompts/grind/tests-facts.md),
+  ticked line by line. Facts found: 24. Facts carried: 21 carried verbatim or
+  tightened (stack, runners, mutation/coverage/property tooling and read paths,
+  test locations, support/case templates, Wallaby+Ids, F* coverage+apply/3,
+  .dox layout+Dox.* namespace, wire strings, sleep-replacement signals incl.
+  GSAP onComplete, fix hierarchy, never-weaken, style, verification commands,
+  compile check). Deliberately dropped, with reasons: (1) muex v0.6 / Stryker
+  v9.6 version pins — versions drift and the read paths are the durable facts,
+  same failure class as paradox's stale `lib-tests`; (2) the report/TODO-file
+  paths — grindSynthesisOver owns the dated report path, and the grind design
+  has no separate TODO file (the fixer is the next stage of the same run);
+  (3) the JS-engine orchestration facts (agent counts, wave scheduling,
+  schemas) — replaced by the workflow machinery itself.
 - Post-commit audit per `post-commit-audit` skill after each commit; findings
   fixed via one `fix-all` subagent; fix commits not re-audited.

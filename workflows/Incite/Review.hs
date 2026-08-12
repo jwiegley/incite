@@ -35,6 +35,8 @@ module Incite.Review
   , grindName
   , grindSynthesis
   , grindSynthesisOver
+  , grindTestsName
+  , grindTestsLenses
     -- * Rescopings
     --
     -- | The two independent adjustments a grind lens stands under, and their
@@ -1154,6 +1156,44 @@ paired (name, lens) (backendTag, scope) = reviewer scope (name <> "@" <> backend
 -- and the tool that produced it cannot come to be called different things.
 grindName :: Text
 grindName = "grind-paradox"
+
+-- | The slug of the test-suite grind, bound for 'grindName'\'s reason: the
+-- tool, its synthesis brief and its dated report all splice this one binding.
+grindTestsName :: Text
+grindTestsName = "grind-tests"
+
+-- | The lenses the test-suite grind fans out, each under the 'reporting'
+-- output contract, in the order their blocks are read.
+--
+-- __The ORDER is semantic, not cosmetic__: @spread@ pairs one backend per lens
+-- positionally, so moving a row reassigns which model audits what — with no
+-- type error and no visible change to any name. The ordered @lens\@backend@
+-- table in @test\/Spec.hs@ is what says so; appending a row is safe, and any
+-- other reorder must move that table with it.
+--
+-- __An appendable table, not a 'Subject'.__ Every subject owes a @ponytail@
+-- lens ('lensesOf'\'s third law), and a test-suite audit already has its
+-- what-should-not-exist questions split sharper than ponytail asks them:
+-- @vacuous@ owns the tests that assert nothing and @stubs@ owns the skips and
+-- the dead helpers. Three of the twelve bodies are the shared grind lenses;
+-- the other nine only a test suite admits, and every project identifier they
+-- would otherwise need lives in 'Incite.Prompts.testsFacts' — the separation
+-- is a fenced law in @test\/Spec.hs@.
+grindTestsLenses :: [(LeafName, Prompt)]
+grindTestsLenses =
+  [ ("vacuous", reporting grindVacuous)
+  , ("coverage", reporting grindCoverage)
+  , ("property", reporting grindProperty)
+  , ("mutation", reporting grindMutation)
+  , ("stubs", reporting grindStubs)
+  , ("sleeps", reporting grindSleeps)
+  , ("generated-copies", reporting grindGeneratedCopies)
+  , ("testability", reporting grindTestability)
+  , ("dry", reporting grindDry)
+  , ("proofs", reporting grindProofs)
+  , ("selectors", reporting grindSelectors)
+  , ("isolation", reporting grindIsolation)
+  ]
 
 -- | 'reviewSynthesis' plus the two things a grind run needs of it, parameterised
 -- on the run's own name in the style of 'promptLintBrief'.

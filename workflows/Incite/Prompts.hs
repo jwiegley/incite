@@ -52,6 +52,7 @@ module Incite.Prompts
   , docsStructure
     -- * Grind lenses
   , paradoxFacts
+  , testsFacts
   , grindStubs
   , grindVacuous
   , grindDry
@@ -60,6 +61,15 @@ module Incite.Prompts
   , grindValidatorCalls
   , grindCodegenGaps
   , grindEmittedCode
+  , grindCoverage
+  , grindProperty
+  , grindMutation
+  , grindSleeps
+  , grindGeneratedCopies
+  , grindTestability
+  , grindProofs
+  , grindSelectors
+  , grindIsolation
     -- * Stacked pull requests
   , stackFacts
   , stackDisciplines
@@ -223,6 +233,13 @@ docsStructure = [promptFile|prompts/review/docs-structure.md|]
 paradoxFacts :: Prompt
 paradoxFacts = [promptFile|prompts/grind/paradox-facts.md|]
 
+-- | 'paradoxFacts' for the test-suite grind: the Elixir\/Phoenix\/TypeScript\/F*
+-- application's runners, coverage and mutation tooling, generated-code layout,
+-- and the fix hierarchy a repair stands under. Same three-section shape, same
+-- probe-first discipline, fenced by the same structural law in @test\/Spec.hs@.
+testsFacts :: Prompt
+testsFacts = [promptFile|prompts/grind/tests-facts.md|]
+
 -- | The four whole-tree grind lenses: unfinished work, tests that cannot fail,
 -- one decision written three times, and values baked in where they must be
 -- derived.
@@ -255,6 +272,30 @@ grindTargetConsistency = [promptFile|prompts/grind/target-consistency.md|]
 grindValidatorCalls = [promptFile|prompts/grind/validator-calls.md|]
 grindCodegenGaps = [promptFile|prompts/grind/codegen-gaps.md|]
 grindEmittedCode = [promptFile|prompts/grind/emitted-code.md|]
+
+-- | The nine grind lenses that only a __test suite__ admits: coverage read off
+-- the tooling's own reports, laws pinned by examples that want properties,
+-- mutations the suite never noticed, fixed waits standing in for real signals,
+-- hand-written copies of generated code, reshapes that unlock a test, code
+-- wanting a machine-checked proof, selectors that break on a restyle, and
+-- tests that hold the suite serial or leak state into their neighbors.
+--
+-- Repo-agnostic by construction, like the four above: every runner, tool name
+-- and path lives in 'testsFacts' instead, and the separation is a fenced law in
+-- @test\/Spec.hs@ — a lens body naming one project's identifiers goes red
+-- there, not in a review.
+grindCoverage, grindProperty, grindMutation, grindSleeps, grindGeneratedCopies :: Prompt
+grindCoverage = [promptFile|prompts/grind/coverage.md|]
+grindProperty = [promptFile|prompts/grind/property.md|]
+grindMutation = [promptFile|prompts/grind/mutation.md|]
+grindSleeps = [promptFile|prompts/grind/sleeps.md|]
+grindGeneratedCopies = [promptFile|prompts/grind/generated-copies.md|]
+
+grindTestability, grindProofs, grindSelectors, grindIsolation :: Prompt
+grindTestability = [promptFile|prompts/grind/testability.md|]
+grindProofs = [promptFile|prompts/grind/proofs.md|]
+grindSelectors = [promptFile|prompts/grind/selectors.md|]
+grindIsolation = [promptFile|prompts/grind/isolation.md|]
 
 -- Stacked pull requests -------------------------------------------------------
 

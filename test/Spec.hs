@@ -14,7 +14,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
-import Agent.Grant (permitExec)
+import Agent.Grant (Grant, permitExec)
 import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
@@ -31,6 +31,10 @@ import Incite.Feature
   , grindGrant
   , grindGrantFor
   , grindParadox
+  , grindTests
+  , grindTestsChecks
+  , grindTestsGrant
+  , grindTestsRule
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
@@ -77,6 +81,7 @@ import Incite.Prompts
   , fess
   , fixAll
   , paradoxFacts
+  , testsFacts
   , stackDisciplines
   , stackFacts
   , stackPromote
@@ -113,6 +118,7 @@ import Incite.Review
   , grindName
   , grindSynthesis
   , grindSynthesisOver
+  , grindTestsLenses
   , toTree
   , architectureOfChange
   , disciplineOfPanel
@@ -675,6 +681,21 @@ remediateTests =
               ]
           , not (T.isInfixOf needle leafText)
           ]
+    , -- The same route for the test-suite grind: its fixers learn the fix
+      -- hierarchy — source-of-truth first, proof layer second, direct code
+      -- last — only through this splice, and a red gate is cheapest to defeat
+      -- by ignoring exactly that.
+      testCase "the tests-grind fixer stands under the code rule and the suite's facts" $ do
+        [leafText] <- flowLeafPrompts "remediate" (remediate grindTestsRule fixerContinuation) "THE FINDINGS"
+        report
+          [ "the tests-grind fixer does not carry " <> label
+          | (label, needle) <-
+              [ ("codeRule", promptText codeRule)
+              , ("the facts file", promptText testsFacts)
+              , ("the continuation clause", promptText fixerContinuation)
+              ]
+          , not (T.isInfixOf needle leafText)
+          ]
     ]
 
 -- | The merge between the work and the retrospective, read off the flow's
@@ -770,6 +791,17 @@ orientTests =
         asReviewSubject "x" @?= orient AtChange "x"
         asRetroSubject "x" @?= orient AtRecord "x"
         asDocsSubject "x" @?= orient AtDocs "x"
+    , -- The empty-diff clause, as bytes the panels behind 'asReviewSubject'
+      -- actually receive. @grind-tests@ points an 84-leaf review pass at its
+      -- fixer's change; a fixer that touched nothing leaves that panel a clean
+      -- tree and a summary, and without this instruction the leaves review the
+      -- account as though it were the diff and call it a completed pass. A
+      -- later edit that drops the clause fails here, in CI — nothing else
+      -- reads these bytes, so nothing else can.
+      testCase "the change orientation carries the no-change-to-audit clause" $
+        assertBool
+          "preambleOf AtChange does not say `no change to audit`"
+          ("no change to audit" `T.isInfixOf` preambleOf AtChange)
     , -- What keeps 'reframings' honest. Golden coverage is only as good as the
       -- list naming the goldens, and that list is hand-written: a fourth
       -- orientation would ship with its bytes unfenced and every existing test
@@ -1307,22 +1339,6 @@ grindPanelTests =
       -- two halves would give two reviewers one @lens\@backend@ block.
       testCase "the union of tree lenses and emission lenses holds all three laws" $
         lensSetViolations grindLenses @?= []
-    , -- The guard on the body fence below, and on the backend pairing: two
-      -- lenses rendering the same text are two leaves doing one leaf's work on
-      -- two different models, which reads as agreement in the synthesis.
-      testCase "no grind lens repeats another's body" $
-        let bodies = map (promptText . snd) grindLenses
-            repeats = bodies \\ nub bodies
-         in report (map (("repeated grind lens body: " <>) . bodyTag) (nub repeats))
-    , -- The output contract, as a property of every body the panel sends. See
-      -- 'grindContract' for why the needles are literals here.
-      testCase "every grind lens carries the finding contract" $
-        report
-          [ leafNameText name <> " does not say " <> tshow needle
-          | (name, body) <- grindLenses
-          , needle <- grindContract
-          , not (says body needle)
-          ]
     , -- The contract against the reducer it is written for. See
       -- 'synthesisAdmits': the producer and the consumer are two files, and
       -- nothing but this reads them together.
@@ -1353,160 +1369,6 @@ grindPanelTests =
           ]
     , testCase "emission lenses carry the bodies they name" $
         report (lensBodyMismatches expectedEmissionLenses emissionLenses)
-    , -- 'spread' is a zip against a cycled backend list, so the leaf count is
-      -- the LENS count — not @min@ of the two, and not the cross-product a
-      -- panel would give.
-      --
-      -- __A law about 'spread', and it needs the case below beside it.__ Both
-      -- sides here are derived from 'grindLenses', so a lens deleted from the
-      -- panel moves them together and this stays green. What it refutes is
-      -- 'spread' itself: point it at @panelAcross@ and the count triples.
-      testCase "spread gives one leaf per lens" $
-        length (leafNames (spread backends grindLenses)) @?= length grindLenses
-    , -- The panel's WIDTH, as a plain number, because the law above cannot see
-      -- it. 42 leaves is what a full panel over these lenses would cost and 14
-      -- is what @grind-paradox@ pays; a lens quietly dropped from either half
-      -- of the union is a lens nobody runs, and the run reports a clean tree
-      -- for the part it never read.
-      testCase "the grind panel is 14 lenses wide" $
-        length grindLenses @?= 14
-    , -- __The shipped workflow, not a union assembled here.__ Every case above
-      -- reads 'grindLenses', which this file composes; nothing forced
-      -- @grindParadox@ to compose the same thing in the same order. Union the
-      -- two halves the other way round in production and every law above stays
-      -- green while a different model audits each lens — which is exactly the
-      -- reassignment the ordered name list is supposed to catch.
-      --
-      -- So this reads the WORKFLOW's own skeleton, and it pins the pairing
-      -- rather than the order: a reader can see here that @stubs@ runs on
-      -- opencode without executing the zip in their head.
-      --
-      -- __Two tables, because the roster is two rosters.__ 'spread' cycles
-      -- 'Incite.Backend.backends', which narrows to claude-agent and codex under
-      -- @BLOCK_OPENCODE@ — so the pairing genuinely differs and a single table
-      -- would fence whoever's shell ran the suite. Both are written out by hand
-      -- rather than derived from a cycle, for this case's own reason: a derived
-      -- expectation is 'spread' restated, and would move with any reassignment
-      -- it is supposed to catch.
-      testCase "grind-paradox fans out exactly these lens@backend leaves" $
-        let panelLeaves = takeWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
-            full =
-              [ "correctness@claude-agent"
-              , "tests@codex"
-              , "stubs@opencode"
-              , "vacuous@claude-agent"
-              , "dry@codex"
-              , "hardcodings@opencode"
-              , "refactor@claude-agent"
-              , "architecture@codex"
-              , "performance@opencode"
-              , "ponytail@claude-agent"
-              , "target-consistency@codex"
-              , "validator-calls@opencode"
-              , "codegen-gaps@claude-agent"
-              , "emitted-code@codex"
-              ]
-            -- Two backends, so the cycle alternates and every lens still gets
-            -- exactly one leaf — which is the property 'spread' exists for, and
-            -- the reason blocking narrows the MODEL per lens without dropping a
-            -- lens.
-            blocked =
-              [ "correctness@claude-agent"
-              , "tests@codex"
-              , "stubs@claude-agent"
-              , "vacuous@codex"
-              , "dry@claude-agent"
-              , "hardcodings@codex"
-              , "refactor@claude-agent"
-              , "architecture@codex"
-              , "performance@claude-agent"
-              , "ponytail@codex"
-              , "target-consistency@claude-agent"
-              , "validator-calls@codex"
-              , "codegen-gaps@claude-agent"
-              , "emitted-code@codex"
-              ]
-         in do
-              panelLeaves @?= if blockOpencode then blocked else full
-              -- Both tables cover every lens, whichever is live: a table that
-              -- lost a row would otherwise pass by agreeing with a panel that
-              -- had lost the same lens.
-              length full @?= length grindLenses
-              length blocked @?= length grindLenses
-    , -- The acting half's leaves, in order, after the panel. A stage dropped
-      -- from the chain — the fixer, the repair leaf, either check — leaves a
-      -- workflow that still plans and still costs, and reports a green gate it
-      -- never ran.
-      testCase "grind-paradox then synthesises, fixes, and gates on real checks" $
-        dropWhile (/= "synthesis") (leafNames (wfFlow grindParadox))
-          @?= ["synthesis", "remediate", "build", "tests", "repair"]
-    , -- And the pairing preserves distinctness: 'unionFindings' heads each
-      -- block by leaf name, so two leaves sharing one would make two reviewers
-      -- indistinguishable in the reduction. Distinct LENS names do not imply
-      -- distinct LEAF names on their own — the pairing is what appends the
-      -- backend tag, and this is the case that reads the result.
-      testCase "spread leaf names are distinct" $
-        let ns = leafNames (spread backends grindLenses)
-         in report
-              [ "repeated leaf name: " <> n | n <- nub (ns \\ nub ns) ]
-    , -- __The grant against the checks it is derived from, through the
-      -- runtime's own matcher.__ A grant and a check list are two statements of
-      -- one fact, and the drift is silent in the direction that matters: an
-      -- ungranted check is DENIED inside the run (exit 126, "denied by grant"),
-      -- the gate never reads a real exit code, and the artifact still carries a
-      -- gate section.
-      --
-      -- 'permitExec' over @T.unwords@ is exactly what @Agent.Run@ applies to an
-      -- 'Agent.Op.Exec' leaf, so this fails on a broken argv rather than
-      -- restating the derivation. A membership check on the glob set would pass
-      -- on globs that match nothing.
-      testCase "grindGrant permits every check as the runtime spells it" $
-        report
-          [ "denied by grindGrant: " <> tshow line
-          | (_, cmd) <- grindChecks
-          , let line = T.unwords (NE.toList cmd)
-          , not (permitExec grindGrant line)
-          ]
-    , -- __Every check carries its own toolchain.__ 'execStep' runs argv
-      -- directly — no shell, no profile, no dev shell — so a check that needs
-      -- the target project's environment has to ask for it in its own argv.
-      --
-      -- This is not a style rule; a rehearsal found it the expensive way.
-      -- Paradox's `test.sh` ends by executing a path built from `$GHC_VER` and
-      -- `$PARADOX_VER`, which its dev shell sets and nothing else does. Run
-      -- bare it exits non-zero on a tree in perfect health, so the gate is red
-      -- on every run, for a reason no repair leaf can fix: `repairFuel` trips
-      -- hunting a defect in the code, then an abort. A gate that cannot go
-      -- green is worse than no gate.
-      --
-      -- Nothing else can see this. `plan` renders the leaf NAME, `cost` counts
-      -- it, and the grant case below passes either way — an ungranted command
-      -- and an unrunnable one both fail, and only one of them is about the
-      -- grant.
-      testCase "every check runs inside the target project's dev shell" $
-        report
-          [ leafNameText n <> " runs bare: " <> tshow (T.unwords (NE.toList cmd))
-          | (n, cmd) <- grindChecks
-          , take 3 (NE.toList cmd) /= ["nix", "develop", "--command"]
-          ]
-    , -- The synthesis leaf's two, which are nobody's check. Without them its
-      -- write fails inside the agent while it still returns the whole ranked
-      -- report — so the run reports success with no file on disk, and only the
-      -- filesystem can tell.
-      testCase "grindGrant permits the report write" $
-        report
-          [ "denied by grindGrant: " <> tshow line
-          | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
-          , not (permitExec grindGrant line)
-          ]
-    , -- And it is not a blanket grant. Deriving from a list is only worth
-      -- anything if the derivation still denies what is not on it.
-      testCase "grindGrant denies what no check asked for" $
-        report
-          [ "grindGrant permits " <> tshow line
-          | line <- ["rm -rf /", "git push origin master", "curl example.com"]
-          , permitExec grindGrant line
-          ]
     , -- __The generalization, on a check list no shipped grind has.__ Every
       -- grant case above evaluates 'grindGrantFor' only at 'grindChecks', so a
       -- 'grindGrantFor' that ignored its argument and returned 'grindGrant'
@@ -1571,7 +1433,354 @@ grindPanelTests =
                     ]
                   ]
               )
+    , grindFenceTests paradoxGrindFence
+    , grindFenceTests testsGrindFence
     ]
+
+-- | One grind's whole fence, as data: the laws every grind must pin, applied
+-- per instantiation by 'grindFenceTests'. A record rather than a per-grind
+-- copy of the cases, so a law added here reaches every grind by existing — and
+-- so the second grind could not land with fewer fences than the first.
+--
+-- __Every table is hand-written at the instantiation, never derived.__ A
+-- derived expectation is the combinator restated, and moves with any
+-- reassignment it is supposed to catch; the whole point of these fields is
+-- that a human wrote down which model audits which lens and which leaves act.
+data GrindFence = GrindFence
+  { gfLabel :: String
+  -- ^ The workflow's name, as the test group's.
+  , gfWorkflow :: Workflow
+  -- ^ The shipped workflow whose skeleton the tables are read against.
+  , gfLenses :: [(LeafName, Prompt)]
+  -- ^ The lens table the grind hands to @spread@, imported from the module
+  -- that ships it.
+  , gfWidth :: Int
+  -- ^ The panel's width as a plain literal, because both sides of every other
+  -- law move together when a lens is quietly dropped.
+  , gfPanelFull :: [Text]
+  -- ^ The @lens\@backend@ pairing over the full three-backend roster.
+  , gfPanelBlocked :: [Text]
+  -- ^ The same pairing under @BLOCK_OPENCODE@: two backends, alternating —
+  -- every lens still gets exactly one leaf, only the model changes.
+  , gfActingTailFull :: [Text]
+  -- ^ Every leaf from @synthesis@ on, in order, over the full roster. A stage
+  -- dropped from the chain — a fixer, a repair leaf, a check — leaves a
+  -- workflow that still plans and still costs, and reports a gate it never ran.
+  , gfActingTailBlocked :: [Text]
+  -- ^ The same tail under @BLOCK_OPENCODE@. Distinct from the full one only
+  -- where the tail itself contains a panel, as @grind-tests@'s review-audit
+  -- segment does.
+  , gfGrant :: Grant
+  , gfGrantLabel :: Text
+  -- ^ How the grant's failures are reported, so a red case names the binding.
+  , gfChecks :: [(LeafName, NE.NonEmpty Text)]
+  }
+
+-- | The laws of one grind, read off its 'GrindFence'. Factored from the cases
+-- @grind-paradox@ accumulated one defect at a time, with each case's original
+-- rationale kept where it was learned.
+grindFenceTests :: GrindFence -> TestTree
+grindFenceTests gf =
+  testGroup
+    (gfLabel gf)
+    [ -- Two lenses rendering the same text are two leaves doing one leaf's
+      -- work on two different models, which reads as agreement in the
+      -- synthesis.
+      testCase "no grind lens repeats another's body" $
+        let bodies = map (promptText . snd) (gfLenses gf)
+            repeats = bodies \\ nub bodies
+         in report (map (("repeated grind lens body: " <>) . bodyTag) (nub repeats))
+    , -- The output contract, as a property of every body the panel sends. See
+      -- 'grindContract' for why the needles are literals here.
+      testCase "every grind lens carries the finding contract" $
+        report
+          [ leafNameText name <> " does not say " <> tshow needle
+          | (name, body) <- gfLenses gf
+          , needle <- grindContract
+          , not (says body needle)
+          ]
+    , -- 'spread' is a zip against a cycled backend list, so the leaf count is
+      -- the LENS count — not @min@ of the two, and not the cross-product a
+      -- panel would give.
+      --
+      -- __A law about 'spread', and it needs the table case beside it.__ Both
+      -- sides here are derived from the lens table, so a lens deleted from the
+      -- panel moves them together and this stays green. What it refutes is
+      -- 'spread' itself: point it at @panelAcross@ and the count triples.
+      testCase "spread gives one leaf per lens" $
+        length (leafNames (spread backends (gfLenses gf))) @?= length (gfLenses gf)
+    , -- The panel's WIDTH, as a plain number, because the law above cannot see
+      -- it. A lens quietly dropped from the table is a lens nobody runs, and
+      -- the run reports a clean tree for the part it never read.
+      testCase "the panel is exactly as wide as its table" $
+        length (gfLenses gf) @?= gfWidth gf
+    , -- __The shipped workflow, not a table assembled here.__ Every case above
+      -- reads the lens table; nothing forced the workflow to hand @spread@ the
+      -- same thing in the same order. Compose it differently in production and
+      -- every law above stays green while a different model audits each lens —
+      -- which is exactly the reassignment this ordered list catches.
+      --
+      -- __Two tables, because the roster is two rosters.__ 'spread' cycles
+      -- 'Incite.Backend.backends', which narrows to claude-agent and codex
+      -- under @BLOCK_OPENCODE@ — so the pairing genuinely differs and a single
+      -- table would fence whoever's shell ran the suite. Both are hand-written
+      -- rather than derived from a cycle: a derived expectation is 'spread'
+      -- restated, and would move with any reassignment it is supposed to catch.
+      testCase "fans out exactly these lens@backend leaves" $ do
+        takeWhile (/= "synthesis") (leafNames (wfFlow (gfWorkflow gf)))
+          @?= (if blockOpencode then gfPanelBlocked gf else gfPanelFull gf)
+        -- Both tables cover every lens, whichever is live: a table that lost a
+        -- row would otherwise pass by agreeing with a panel that had lost the
+        -- same lens.
+        length (gfPanelFull gf) @?= length (gfLenses gf)
+        length (gfPanelBlocked gf) @?= length (gfLenses gf)
+    , -- The acting half's leaves, in order, after the panel. A stage dropped
+      -- from the chain — the fixer, the repair leaf, a check — leaves a
+      -- workflow that still plans and still costs, and reports a green gate it
+      -- never ran.
+      testCase "then synthesises, fixes, and gates on real checks" $
+        dropWhile (/= "synthesis") (leafNames (wfFlow (gfWorkflow gf)))
+          @?= (if blockOpencode then gfActingTailBlocked gf else gfActingTailFull gf)
+    , -- And the pairing preserves distinctness: 'unionFindings' heads each
+      -- block by leaf name, so two leaves sharing one would make two reviewers
+      -- indistinguishable in the reduction. Distinct LENS names do not imply
+      -- distinct LEAF names on their own — the pairing is what appends the
+      -- backend tag, and this is the case that reads the result.
+      testCase "spread leaf names are distinct" $
+        let ns = leafNames (spread backends (gfLenses gf))
+         in report
+              ["repeated leaf name: " <> n | n <- nub (ns \\ nub ns)]
+    , -- __The grant against the checks it is derived from, through the
+      -- runtime's own matcher.__ A grant and a check list are two statements
+      -- of one fact, and the drift is silent in the direction that matters: an
+      -- ungranted check is DENIED inside the run (exit 126, "denied by
+      -- grant"), the gate never reads a real exit code, and the artifact still
+      -- carries a gate section.
+      --
+      -- 'permitExec' over @T.unwords@ is exactly what @Agent.Run@ applies to
+      -- an 'Agent.Op.Exec' leaf, so this fails on a broken argv rather than
+      -- restating the derivation. A membership check on the glob set would
+      -- pass on globs that match nothing.
+      testCase "the grant permits every check as the runtime spells it" $
+        report
+          [ "denied by " <> gfGrantLabel gf <> ": " <> tshow line
+          | (_, cmd) <- gfChecks gf
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec (gfGrant gf) line)
+          ]
+    , -- __Every check carries its own toolchain.__ 'execStep' runs argv
+      -- directly — no shell, no profile, no dev shell — so a check that needs
+      -- the target project's environment has to ask for it in its own argv.
+      --
+      -- This is not a style rule; a rehearsal found it the expensive way.
+      -- Paradox's `test.sh` ends by executing a path built from `$GHC_VER` and
+      -- `$PARADOX_VER`, which its dev shell sets and nothing else does. Run
+      -- bare it exits non-zero on a tree in perfect health, so the gate is red
+      -- on every run, for a reason no repair leaf can fix: `repairFuel` trips
+      -- hunting a defect in the code, then an abort. A gate that cannot go
+      -- green is worse than no gate.
+      --
+      -- Nothing else can see this. `plan` renders the leaf NAME, `cost` counts
+      -- it, and the grant case above passes either way — an ungranted command
+      -- and an unrunnable one both fail, and only one of them is about the
+      -- grant.
+      testCase "every check runs inside the target project's dev shell" $
+        report
+          [ leafNameText n <> " runs bare: " <> tshow (T.unwords (NE.toList cmd))
+          | (n, cmd) <- gfChecks gf
+          , take 3 (NE.toList cmd) /= ["nix", "develop", "--command"]
+          ]
+    , -- The synthesis leaf's two, which are nobody's check. Without them its
+      -- write fails inside the agent while it still returns the whole ranked
+      -- report — so the run reports success with no file on disk, and only the
+      -- filesystem can tell.
+      testCase "the grant permits the report write" $
+        report
+          [ "denied by " <> gfGrantLabel gf <> ": " <> tshow line
+          | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
+          , not (permitExec (gfGrant gf) line)
+          ]
+    , -- And it is not a blanket grant. Deriving from a list is only worth
+      -- anything if the derivation still denies what is not on it.
+      testCase "the grant denies what no check asked for" $
+        report
+          [ gfGrantLabel gf <> " permits " <> tshow line
+          | line <- ["rm -rf /", "git push origin master", "curl example.com"]
+          , permitExec (gfGrant gf) line
+          ]
+    ]
+
+-- | @grind-paradox@'s fence: the 14-lens union, the plain
+-- audit-synthesize-fix-gate tail, and the grant derived from its two checks.
+paradoxGrindFence :: GrindFence
+paradoxGrindFence =
+  GrindFence
+    { gfLabel = "grind-paradox"
+    , gfWorkflow = grindParadox
+    , gfLenses = grindLenses
+    , gfWidth = 14
+    , gfPanelFull =
+        [ "correctness@claude-agent"
+        , "tests@codex"
+        , "stubs@opencode"
+        , "vacuous@claude-agent"
+        , "dry@codex"
+        , "hardcodings@opencode"
+        , "refactor@claude-agent"
+        , "architecture@codex"
+        , "performance@opencode"
+        , "ponytail@claude-agent"
+        , "target-consistency@codex"
+        , "validator-calls@opencode"
+        , "codegen-gaps@claude-agent"
+        , "emitted-code@codex"
+        ]
+    , gfPanelBlocked =
+        [ "correctness@claude-agent"
+        , "tests@codex"
+        , "stubs@claude-agent"
+        , "vacuous@codex"
+        , "dry@claude-agent"
+        , "hardcodings@codex"
+        , "refactor@claude-agent"
+        , "architecture@codex"
+        , "performance@claude-agent"
+        , "ponytail@codex"
+        , "target-consistency@claude-agent"
+        , "validator-calls@codex"
+        , "codegen-gaps@claude-agent"
+        , "emitted-code@codex"
+        ]
+    , gfActingTailFull = ["synthesis", "remediate", "build", "tests", "repair"]
+    , gfActingTailBlocked = ["synthesis", "remediate", "build", "tests", "repair"]
+    , gfGrant = grindGrant
+    , gfGrantLabel = "grindGrant"
+    , gfChecks = grindChecks
+    }
+
+-- | @grind-tests@'s fence: the 12-lens table, the tail that runs a whole
+-- review-audit pass between its two fixers, and the grant derived from its
+-- three checks.
+--
+-- __The review-audit segment is written out literally, never as
+-- @leafNames reviewAuditFlow@.__ A fence computed from the code under test
+-- accepts any mis-composition of that code — swap in 'reviewHeavyFlow' (whose
+-- regrouped views run on claude-agent alone) or a diff-subject panel (which
+-- has no @architecture@ lens) and a derived expectation moves with the bug.
+-- 'reviewAuditPanelFull' and 'reviewAuditPanelBlocked' are this file's own
+-- statement of that tier's cross-product, and the tail is assembled from those
+-- literal blocks by concatenation alone.
+testsGrindFence :: GrindFence
+testsGrindFence =
+  GrindFence
+    { gfLabel = "grind-tests"
+    , gfWorkflow = grindTests
+    , gfLenses = grindTestsLenses
+    , gfWidth = 12
+    , gfPanelFull =
+        [ "vacuous@claude-agent"
+        , "coverage@codex"
+        , "property@opencode"
+        , "mutation@claude-agent"
+        , "stubs@codex"
+        , "sleeps@opencode"
+        , "generated-copies@claude-agent"
+        , "testability@codex"
+        , "dry@opencode"
+        , "proofs@claude-agent"
+        , "selectors@codex"
+        , "isolation@opencode"
+        ]
+    , gfPanelBlocked =
+        [ "vacuous@claude-agent"
+        , "coverage@codex"
+        , "property@claude-agent"
+        , "mutation@codex"
+        , "stubs@claude-agent"
+        , "sleeps@codex"
+        , "generated-copies@claude-agent"
+        , "testability@codex"
+        , "dry@claude-agent"
+        , "proofs@codex"
+        , "selectors@claude-agent"
+        , "isolation@codex"
+        ]
+    , gfActingTailFull =
+        ["synthesis", "remediate"]
+          <> reviewAuditPanelFull
+          <> ("regroup:units" : reviewAuditPanelFull)
+          <> ("regroup:sequence" : reviewAuditPanelFull)
+          <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
+    , gfActingTailBlocked =
+        ["synthesis", "remediate"]
+          <> reviewAuditPanelBlocked
+          <> ("regroup:units" : reviewAuditPanelBlocked)
+          <> ("regroup:sequence" : reviewAuditPanelBlocked)
+          <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
+    , gfGrant = grindTestsGrant
+    , gfGrantLabel = "grindTestsGrant"
+    , gfChecks = grindTestsChecks
+    }
+
+-- | One view's worth of the review-audit panel, as literals: nine change
+-- lenses, every backend answering each, in @panelAcross@'s reading order.
+-- @grind-tests@ runs this three times — the full diff and the two regrouped
+-- views — and 'testsGrindFence' concatenates this block rather than deriving
+-- it from the flow it fences.
+reviewAuditPanelFull :: [Text]
+reviewAuditPanelFull =
+  [ "correctness@claude-agent"
+  , "correctness@codex"
+  , "correctness@opencode"
+  , "security@claude-agent"
+  , "security@codex"
+  , "security@opencode"
+  , "tests@claude-agent"
+  , "tests@codex"
+  , "tests@opencode"
+  , "performance@claude-agent"
+  , "performance@codex"
+  , "performance@opencode"
+  , "haskell@claude-agent"
+  , "haskell@codex"
+  , "haskell@opencode"
+  , "ponytail@claude-agent"
+  , "ponytail@codex"
+  , "ponytail@opencode"
+  , "doctrine@claude-agent"
+  , "doctrine@codex"
+  , "doctrine@opencode"
+  , "discipline@claude-agent"
+  , "discipline@codex"
+  , "discipline@opencode"
+  , "architecture@claude-agent"
+  , "architecture@codex"
+  , "architecture@opencode"
+  ]
+
+-- | 'reviewAuditPanelFull' under @BLOCK_OPENCODE@: the same nine lenses on the
+-- two-backend roster.
+reviewAuditPanelBlocked :: [Text]
+reviewAuditPanelBlocked =
+  [ "correctness@claude-agent"
+  , "correctness@codex"
+  , "security@claude-agent"
+  , "security@codex"
+  , "tests@claude-agent"
+  , "tests@codex"
+  , "performance@claude-agent"
+  , "performance@codex"
+  , "haskell@claude-agent"
+  , "haskell@codex"
+  , "ponytail@claude-agent"
+  , "ponytail@codex"
+  , "doctrine@claude-agent"
+  , "doctrine@codex"
+  , "discipline@claude-agent"
+  , "discipline@codex"
+  , "architecture@claude-agent"
+  , "architecture@codex"
+  ]
 
 -- | The acting leaves of 'stackPRs', in the order the workflow runs them.
 --
@@ -2258,9 +2467,9 @@ packagingTests =
           @?= [True, False, False, True, False, False, True, False]
     ]
 
--- | The twelve workflows "Main".workflows holds, rebuilt from library exports.
--- This suite cannot import "Main" — it is the executable, not a library module
--- — so this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
+-- | The workflows "Main".workflows holds, rebuilt from library exports. This
+-- suite cannot import "Main" — it is the executable, not a library module — so
+-- this list is a hand-kept mirror of @workflows/Main.hs@'s @workflows@
 -- binding, in the same order. A rename or reorder on either side is exactly
 -- what 'docsInventoryTests' exists to catch.
 mirrorWorkflows :: [Workflow]
@@ -2270,6 +2479,7 @@ mirrorWorkflows =
   , shipDocs
   , stackPRs
   , grindParadox
+  , grindTests
   , fessAudit
   , retro
   , reviewLite
@@ -3119,22 +3329,66 @@ factDisciplines =
   , "final gate"
   ]
 
--- | The facts file @grind-paradox@ prepends to every lens and splices into its
--- fixer's rule. Two properties, and no other instrument in this repository
--- reads either: the file is markdown, and 'promptText' is the only thing that
--- ever looks inside it.
+-- | Every grind facts file, labelled: the roster the structural law below
+-- folds over. A new grind's facts file joins the law by joining this list.
+grindFactsFiles :: [(String, Prompt)]
+grindFactsFiles = [("paradox", paradoxFacts), ("tests", testsFacts)]
+
+-- | The identifiers that pin a lens body to one repository — hand-listed from
+-- the projects the grinds point at, matched case-insensitively. A lens body
+-- carrying one belongs in that project's facts file instead.
+projectIdentifiers :: [Text]
+projectIdentifiers =
+  [ "OperationWeb"
+  , "operation"
+  , "muex"
+  , ".dox"
+  , "Wallaby"
+  , "excoveralls"
+  , "Stryker"
+  , "fstar"
+  ]
+
+-- | The facts files the grinds prepend to every lens and splice into their
+-- fixers' rules. No other instrument in this repository reads them: each file
+-- is markdown, and 'promptText' is the only thing that ever looks inside one.
+--
+-- __A fold over the roster, not a case per file__, so the structural law
+-- reaches a new facts file by the file joining the list — which is also what
+-- keeps the two files one shape, and a fixer reading either one oriented the
+-- same way.
 factsFileTests :: TestTree
 factsFileTests =
   testGroup
-    "the grind facts file"
+    "the grind facts files"
     [ -- The probe is what tells "the audit read nothing" from "the tree is
       -- clean", and it can only do that if the model reaches it before any
       -- path it is meant to check. First section, and nothing before it.
-      testCase "the mandatory probe is the first section, and holds the refusal line" $ do
-        map fst (sections (promptText paradoxFacts))
-          @?= ["Probe first", "Project facts", "Repair disciplines"]
-        assertBool "the refusal line is not inside the probe section" $
-          T.isInfixOf "FACTS PATHS UNRESOLVED:" (sectionBody "Probe first" (promptText paradoxFacts))
+      testCase "every facts file opens with the probe, and holds the refusal line" $
+        mapM_
+          ( \(label, facts) -> do
+              assertEqual
+                (label <> ": section order")
+                ["Probe first", "Project facts", "Repair disciplines"]
+                (map fst (sections (promptText facts)))
+              assertBool (label <> ": the refusal line is not inside the probe section") $
+                T.isInfixOf "FACTS PATHS UNRESOLVED:" (sectionBody "Probe first" (promptText facts))
+          )
+          grindFactsFiles
+    , -- The separation law: a grind lens body is repo-agnostic by
+      -- construction, and every project identifier lives in the facts file
+      -- instead. Nothing but this can see the difference — a lens body naming
+      -- one repository's modules reports confident findings about paths that
+      -- exist on no other tree, and it plans, costs and renders identically.
+      -- The needle list is hand-written; extend it with the next grind's
+      -- identifiers when its lenses land.
+      testCase "no repo-agnostic grind lens names a project identifier" $
+        report
+          [ leafNameText name <> " names " <> tshow ident
+          | (name, body) <- grindTestsLenses
+          , ident <- projectIdentifiers
+          , T.isInfixOf (T.toLower ident) (T.toLower (promptText body))
+          ]
     , -- One home per fact. The repair section restated the golden-reset
       -- ordering, the never-hand-edit rule, the interface-constructor ban and
       -- the test-filtering rule, all of which the facts above it already said —

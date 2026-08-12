@@ -27,7 +27,7 @@ module Main (main) where
 
 import Agent.Run (Workflow, passMain)
 
-import Incite.Feature (grindParadox, planFeature, shipDocs, shipFeature, stackPRs)
+import Incite.Feature (grindParadox, grindTests, planFeature, shipDocs, shipFeature, stackPRs)
 import Incite.Review (fessAudit, promptLint, retro, reviewAudit, reviewDocs, reviewHeavy, reviewLite)
 
 main :: IO ()
@@ -45,6 +45,7 @@ workflows =
   , shipDocs
   , stackPRs
   , grindParadox
+  , grindTests
   , fessAudit
   , retro
   , reviewLite

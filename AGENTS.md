@@ -207,8 +207,9 @@ previously untestable because it was buried in `where` clauses:
   this repo can see (they all run in a git checkout).
 - Backend structure.
 - `docsInventoryTests` — `docs/workflows.md`'s "Exposed inventory" table against
-  the actual twelve-workflow list, and its "Review tiers and leaf counts" table
-  against `worstCaseCost . toSkeleton . wfFlow` for each named workflow.
+  the workflow list the binary actually exposes, in order, and its "Review
+  tiers and leaf counts" table against `worstCaseCost . toSkeleton . wfFlow`
+  for each named workflow.
 
 The workflows themselves — the `Flow` values and combinators — remain under test
 in the `agent-functor` library repo. The suite runs as

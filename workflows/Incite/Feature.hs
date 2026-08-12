@@ -59,6 +59,10 @@ module Incite.Feature
   , grindFlow
   , grindGrant
   , grindGrantFor
+  , grindTests
+  , grindTestsChecks
+  , grindTestsGrant
+  , grindTestsRule
   , paradoxRule
   , stackPRs
   , stackPlanLenses
@@ -112,8 +116,12 @@ import Incite.Review
   , emissionLenses
   , grindName
   , grindSynthesis
+  , grindSynthesisOver
+  , grindTestsLenses
+  , grindTestsName
   , lensesOf
   , retroFlow
+  , reviewAuditFlow
   , reviewDocsFlow
   , reviewHeavyFlow
   , spread
@@ -140,7 +148,8 @@ import Incite.Prompts
       stackSlicePlan,
       stackTooling,
       stackTriage,
-      steRules )
+      steRules,
+      testsFacts )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
 -- worktree, no git, no PR; 'shipFeature' and 'shipDocs' are the acting halves.
@@ -686,7 +695,7 @@ data Orientation
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
@@ -948,6 +957,74 @@ grindFlow facts lenses synthesis rule =
     >>> orchestrate (remediate rule fixerContinuation)
   where
     withFacts steerText = promptText facts <> "\n\n" <> steerText
+
+-- | The checks the test-suite grind gates on: the target project's own compile
+-- (warnings as errors), its Elixir suite, and its TypeScript suite — each
+-- through 'grindCheckCmd', run by us with the exit code read.
+grindTestsChecks :: [(LeafName, NonEmpty Text)]
+grindTestsChecks =
+  [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")
+  , ("tests", grindCheckCmd "mix test")
+  , ("vitest", grindCheckCmd "cd assets && npx vitest run")
+  ]
+
+-- | 'grindGrantFor' at 'grindTestsChecks', for 'grindGrant'\'s reason: the
+-- check list is the only place either statement of the policy can change.
+grindTestsGrant :: Grant
+grindTestsGrant = grindGrantFor grindTestsChecks
+
+-- | What the test-suite grind's fixer stands under: the code rule, plus that
+-- tree's own facts and repair disciplines — 'paradoxRule'\'s shape, and for its
+-- reason. The facts reach the audit half through the workflow's input prepend,
+-- which is out of scope by the time a fixer reads a ranked list; splicing them
+-- into the rule is how the fixer learns the fix hierarchy (source-of-truth
+-- first, proof layer second, direct code last) that a red gate is cheapest to
+-- defeat by ignoring.
+grindTestsRule :: Prompt
+grindTestsRule =
+  [__i|
+    #{codeRule}
+
+    #{testsFacts}
+  |]
+
+-- | Audit a test suite with twelve lenses, rank and fix what they found, audit
+-- the FIX with the exhaustive review panel, fix what that found, then prove
+-- the suites still pass with our own exec.
+--
+-- 'grindParadox'\'s shape over 'grindFlow', plus the one segment that workflow
+-- does not run: a full 'Incite.Review.reviewAuditFlow' pass over the fixer's
+-- change, reframed through 'asReviewSubject', with a second orchestrated fixer
+-- acting on what the panel raised. A test-suite remediation is the change most
+-- worth that price — its cheapest failure mode is a fix that weakens what a
+-- test asserts, which is invisible to a green gate and exactly what a review
+-- panel reads diffs for. 'asReviewSubject'\'s own no-change clause is what
+-- keeps the pass honest when the fixer touched nothing: the panel reports
+-- @no change to audit@ rather than reviewing the account as though it were a
+-- diff.
+grindTests :: Workflow
+grindTests =
+  workflowG
+    grindTestsName
+    [iii|
+      Audit a test suite with twelve lenses spread one per backend (vacuous
+      tests, coverage gaps, missing property tests, survived mutations, stubs
+      and skips, sleeps and magic timeouts, hand-written copies of generated
+      code, testability reshapes, repetition, machine-checked-proof candidates,
+      fragile browser selectors, async and isolation debt), write a dated
+      ranked report, fix every finding under an orchestrated fixer, audit the
+      fix with the exhaustive review panel and remediate what it finds, then
+      gate on the project's real compile and test suites
+    |]
+    [iii|
+      Audit the test suite in the current working directory. No focus: read
+      what the lenses point you at.
+    |]
+    grindTestsGrant
+    $ grindFlow testsFacts grindTestsLenses (grindSynthesisOver grindTestsName (map fst grindTestsLenses)) grindTestsRule
+      >>> dimap' asReviewSubject id reviewAuditFlow
+      >>> orchestrate (remediate grindTestsRule fixerContinuation)
+      >>> greenGate grindTestsRule grindTestsChecks
 
 -- | Run @checks@ __ourselves__ until they pass, doing @repair@ between trips,
 -- and keep the account that came in under a @## heading@ of its own.
