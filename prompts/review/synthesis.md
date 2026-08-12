@@ -10,6 +10,11 @@ and acts on it in order.
 - **Remove what is not supported.** A finding with no location, no reachable
   path, or no stated consequence does not survive. Say how many you removed; do
   not list them.
+- **Validate the rest against the code, not against the report.** A reviewer's
+  claim is a lead, not a fact. Before a finding is ranked, open the file at its
+  location and read the lines the claim is about. A claim the code contradicts
+  is dropped and counted with the unsupported ones. Validate by reading only —
+  no build, no test run. This stage cites code, not runs.
 - **Resolve conflicts.** Where reviewers disagree — one wants a guard added, one
   wants the layer deleted — say which is right and why, rather than reporting
   both and leaving the choice open.
