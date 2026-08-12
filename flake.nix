@@ -457,7 +457,7 @@
         {
           type = "agent";
           name = "haskell-review";
-          description = "Local Haskell review addendum, to run alongside haskell-reviewer rather than instead of it: no bare primitive in a top-level signature, newtypes over type aliases for domain concepts, smart constructors with the raw constructor unexported, sum types where a String stands in for a closed set, RecordWildCards binding fields by their own names, DataKinds and GADT indices where they retire a runtime check, pure logic extracted out of IO, and totality and strict accumulation as absolutes. Overrules the upstream rubric on orphan instances, which are fine in this codebase.";
+          description = "Local Haskell review addendum, to run alongside haskell-reviewer rather than instead of it: no partial field accessors on a multi-constructor type, no bare primitive in a top-level signature, newtypes over type aliases for domain concepts and over bare Map keys, smart constructors with the raw constructor unexported, sum types where a String stands in for a closed set, record syntax at every site with RecordWildCards binding fields by their own names, DataKinds and GADT indices where they retire a runtime check, type indices over stored dimensions with generated singletons and injective families, one rank-2 traversal per recursive type, pure logic extracted out of IO, Generically for product monoids, quickcheck-classes-base batteries on every hand-written instance, and totality and strict accumulation as absolutes. Overrules the upstream rubric on orphan instances, which are fine in this codebase.";
           mode = "subagent";
           extraFrontmatter = {
             tools = {

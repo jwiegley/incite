@@ -11,6 +11,47 @@ upstream rubric.
 
 ## Make illegal states unconstructible
 
+### No partial field accessors
+
+A record field accessor that some constructor of its type lacks is a **partial
+function**. It compiles, it type-checks, and it crashes on every constructor without
+the field. `-Wpartial-fields` catches it. `{-# OPTIONS_GHC -Wno-partial-fields #-}`
+is never the answer — it is a finding of its own. (A label every constructor carries
+is total — the warning stays silent — and is not a finding under this rule.)
+
+```haskell
+-- ❌ REJECT: callTarget is partial, and crashes on Placeholder
+data NodeRhs
+  = Placeholder { placeholderTarget :: Text }
+  | CallFunction { callTarget :: CallTarget, callArgs :: [Expr] }
+```
+
+Three fixes, in order of preference:
+
+1. **Extract the multi-field constructor into its own single-constructor record**
+   and nest it. Prefix the record constructor with `Mk`, so the type does not read
+   as `Foo (Foo ...)`.
+2. **Drop the label** where the constructor holds one field and the accessor has no
+   callers. A positional constructor cannot be projected partially.
+3. **Write a total function** where the field is genuinely shared across
+   constructors: `ropeConfigLayout :: RopeConfig a -> Maybe RopeLayout`. It returns
+   the `Maybe` that the accessor was hiding.
+
+```haskell
+-- ✅ REQUIRE: every accessor is total, because its record has one constructor
+data NodeRhs = Placeholder Text | CallFunction CallFunction
+
+data CallFunction = MkCallFunction
+  { callTarget :: CallTarget
+  , callArgs   :: [Expr]
+  , callKwargs :: Map Keyword Expr
+  }
+```
+
+**Action:** report every field label that at least one constructor of its type
+lacks, and name which of the three fixes applies. Report `-Wno-partial-fields`
+wherever it appears.
+
 ### Newtypes for domain concepts (required)
 
 A type *alias* provides zero compile-time safety. The upstream rubric flags
@@ -30,6 +71,20 @@ getProducts :: UserId -> ProductId -> [Product]   -- the swap is a type error
 ```
 
 **Action:** require a newtype for any domain-specific identifier or value.
+
+The rule bites hardest on `Map` keys and on tuples. `Map Text Expr` says nothing
+about what the `Text` is; `Map Keyword Expr` says it. The wrapper costs one line and
+keeps the literals working:
+
+```haskell
+newtype Keyword = Keyword Text
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (IsString, Pretty)   -- "dtype" still works; rendering unchanged
+```
+
+Stay targeted. A newtype earns its place where a primitive loses its meaning in
+transit. Wrapping an obvious single field, or every element of a list, is ceremony,
+and the ponytail lens will charge for it.
 
 ### No primitive in a top-level signature
 
@@ -61,7 +116,22 @@ primitive itself (a text-wrapping helper, a numeric formatter — the primitive 
 the domain), and an instance method whose type the class fixes. Local bindings in a
 `where` or `let` are out of scope.
 
-### RecordWildCards: the name is the field name
+### Record syntax, never positional
+
+A positional pattern and a `_` wildcard both break silently when a field is added or
+reordered, and both discard the name the field already carries. Use record syntax at
+every site, in one of three forms.
+
+```haskell
+-- Ignore every field: Con{} — needs no extension
+freeVarsOfNodeRhs Placeholder{} = []
+
+-- Capture by name: NamedFieldPuns
+freeVarsOfNodeRhs (CallFunction MkCallFunction{callArgs}) = concatMap freeVars callArgs
+
+-- Construct by name, every field named
+exampleNode = Node{nodeBinder = "x", nodeRhs = rhs, nodeMetadata = mempty, nodeSourceLocs = []}
+```
 
 Where a record is destructured, use `RecordWildCards` and let the bound names be the
 field names. A rename at the binding site is a second name for one thing, and it makes
@@ -76,10 +146,26 @@ render (Config lvl nm _) = ...
 render Config {..} = ... logLevel ... serviceName ...
 ```
 
-**Action:** report a destructure that renames a field it could have bound by name, and
-report positional matching on a record with more than two fields. Where a name genuinely
-must differ (two records of the same type in one scope), the binding stays explicit —
-say so in the finding rather than forcing the wildcard.
+`{..}` works at construction sites too, and there it is the stronger form. Where a
+construction lists every field as `field = someLocal`, rename the locals after the
+fields and collapse the list: `Node{nodeSourceLocs = [], ..}`.
+
+Two conditions on that collapse:
+
+- **The renamed locals must be one-shot** — bound once, and used only in the
+  construction. Do not rename a descriptive local that several call sites reuse just
+  to reach `{..}`. That trades clarity for brevity.
+- **`-Wname-shadowing -Werror` bites.** A local named after a field whose selector is
+  in scope unqualified through an import shadows that selector, and the build fails.
+  Same-module selectors and qualified ones (`L.functionParams`) are safe. Where the
+  import shadows, the explicit field list stays.
+
+**Action:** report a destructure that renames a field it could have bound by name.
+Report positional matching on a record with more than two fields, and report a `_`
+wildcard where `Con{}` says the same thing. Single-field non-record constructors
+(`Placeholder Text`, `Var x`) stay positional. Where a name genuinely must differ —
+two records of the same type in one scope, or the shadowing case above — the binding
+stays explicit. Say so in the finding rather than forcing the wildcard.
 
 ### DataKinds and GADTs where they retire a runtime check
 
@@ -105,6 +191,70 @@ unwritable rather than merely unlikely.
 type parameter was not used, report it with the index that would retire it. Report the
 reverse too — type-level machinery that buys no invariant is complexity, and the
 ponytail lens will charge for it.
+
+### The rest of the type-level toolkit
+
+Each item below is held to the same test as the section above: reach for it when it
+removes a check or an impossible case, and not otherwise.
+
+**Type indices over stored dimensions.** A rank, a length or a dimension in a record
+field is a value that two branches can disagree about. As a type index under
+`KnownNat` it is one fact, and `natVal` recovers it where the runtime needs it. Let
+the plugins close the index arithmetic — `-fplugin GHC.TypeLits.KnownNat.Solver` and
+`-fplugin GHC.TypeLits.Normalise` — rather than a hand proof or an `unsafeCoerce`.
+
+```haskell
+-- ❌ REJECT: rank is a field, and every operation re-checks it
+data Tensor = Tensor { tensorRank :: Int, tensorData :: Vector Double }
+
+-- ✅ REQUIRE: rank is an index, and the bad call does not compile
+Squeeze :: KnownNat n => Expr (TTensor (n + 1)) -> Fin (n + 1) -> Expr (TTensor n)
+```
+
+**Generated singletons, never a hand-written bridge.** Where an index must be
+recovered at run time, `genSingletons` and `singDecideInstances` write the `Sing`
+type, the `SingI` instances and the decidable equality. The typed downcast then falls
+out of `decideEquality`, which returns the `:~:` that makes the cast safe. No tag
+comparison and no `unsafeCoerce` are left to review.
+
+```haskell
+hasType :: Sing (a :: Type) -> SomeExpr -> Maybe (Expr a)
+hasType expected (SomeExpr @actual e) = case decideEquality expected (sing @actual) of
+  Just Refl -> Just e
+  Nothing   -> Nothing
+```
+
+**Injective type families.** An associated type the compiler cannot invert forces an
+annotation at every call site. Declare the dependency — `TypeFamilyDependencies`, the
+`= r | r -> k` form — and the wrapped payload resolves its own kind.
+
+**Phantom parameters for namespaces.** One identifier type serving several namespaces
+lets any name reach any function, and the compiler agrees. A phantom parameter over a
+closed kind separates them at no runtime cost, with the raw constructor unexported.
+
+```haskell
+data NameKind = Buffer | Channel | Tensor | Kernel | Config
+newtype Name (k :: NameKind) = UnsafeName RawName
+declare :: Declarable k => Name k -> InfoType k -> Decls -> Decls
+```
+
+**One rank-2 traversal, not one recursion per consumer.** Every consumer that walks a
+recursive type by hand is one more place where a new constructor goes unhandled and
+nothing says so. Write the traversal once, rank-2 over an `Applicative`, and derive
+the folds from it.
+
+```haskell
+traverseSubExprs :: Applicative f => (forall b. Expr b -> f (Expr b)) -> Expr a -> f (Expr a)
+
+foldMapSubExprs :: Monoid m => (forall b. Expr b -> m) -> Expr a -> m
+foldMapSubExprs f = getConst . traverseSubExprs (Const . f)
+```
+
+**Action:** report a stored dimension that a type index would carry; a hand-written
+`Sing`, `SingI` or equality witness that `genSingletons` reaches; a non-injective
+family that needs an annotation at its call sites; one identifier type shared by two
+namespaces; and the second hand-written recursion over a type that already has a
+traversal.
 
 ### Smart constructors for validated data
 
@@ -186,10 +336,10 @@ Three rules govern this, in order:
    `data`/`newtype` it serves — never standalone, never in another module unless
    the orphan policy below forces it.
 2. **Name the strategy on every clause** (`DerivingStrategies`).
-3. **Add the dependency that lets you derive.** If a library — `deriving-aeson`,
-   `generic-monoid`, `quickcheck-instances`, `generic-deriving` — turns a
-   hand-written instance into a derived one, add the dependency. A dependency is
-   audited once; a hand-written instance is re-checked at every review.
+3. **Add the dependency that lets you derive** — after base runs out. If a library,
+   such as `deriving-aeson` or `quickcheck-instances`, turns a hand-written instance
+   into a derived one, add the dependency. A dependency is audited once; a
+   hand-written instance is re-checked at every review.
 
 A hand-written instance is permitted only when no derivation path exists *at all* —
 not by adding a package, not by a `via` wrapper, not by `GeneralizedNewtypeDeriving`.
@@ -255,6 +405,26 @@ newtype UserId = UserId Text
 **Action:** report a hand-written instance on a `newtype` whose body is a delegation
 to the wrapped value.
 
+### `Generically` from base for product monoids
+
+A record whose every field is a monoid has a `Semigroup` and a `Monoid` that are pure
+structure: field-wise `<>`, field-wise `mempty`. base ships the wrapper that derives
+them, so this case costs no package at all.
+
+```haskell
+import GHC.Generics (Generic, Generically (..))
+
+data Subst = Subst {substNames :: Map (Name TypedFx) SomeExpr, substDims :: Map DimVar Dim}
+  deriving stock (Show, Generic)
+  deriving (Semigroup, Monoid) via Generically Subst
+```
+
+**Action:** report a hand-written product `Semigroup` or `Monoid`, and name
+`Generically` as the fix. Report `generic-monoid` or `generic-deriving` in a
+dependency list where `Generically` plus stock deriving already reach the instance.
+The dependency rule below covers instances that base cannot derive. It is not a
+licence to add a package first.
+
 ### No standalone deriving
 
 `deriving instance Eq Foo` separates the instance from the type it belongs to, making
@@ -282,11 +452,12 @@ the dependency**. This is not a judgement call — a dependency is audited once;
 hand-written instance is re-checked at every review. Common cases:
 
 - `deriving-aeson` — `ToJSON`/`FromJSON` with a field-label modifier, `via` a wrapper.
-- `generic-monoid` — `Semigroup`/`Monoid` for record types whose fields are all
-  monoids, derived generically instead of hand-written.
 - `quickcheck-instances` — `Arbitrary` for common types.
-- `generic-deriving` — `Eq`, `Ord`, `Show` and more for types the stock deriving
-  does not reach.
+- `quickcheck-classes-base` — the law batteries that pay for a hand-written instance,
+  below.
+
+`Semigroup` and `Monoid` for a product type are base's `Generically`, above, and not
+a package.
 
 **Action:** when a hand-written instance could be replaced by a derivable one from
 an existing or addable package, name the package in the finding. "We do not have that
@@ -299,6 +470,32 @@ by a property test, or it is a finding. No property test, no hand-written instan
 derive instead. For `ToJSON`/`FromJSON`: a round-trip test
 (`decode . encode == id`). For `Eq`: reflexivity. For `Semigroup`/`Monoid`:
 associativity and identity laws.
+
+Do not hand-write the law statements either. `quickcheck-classes-base` ships the
+batteries. Bind them to the test tree once, and each hand-written instance then costs
+three lines.
+
+```haskell
+import Test.QuickCheck.Classes.Base (Laws (..), eqLaws, functorLaws, applicativeLaws, monadLaws)
+
+lawsToTests :: Laws -> TestTree
+lawsToTests l = testGroup (lawsTypeclass l) [testProperty n p | (n, p) <- lawsProperties l]
+```
+
+The higher-kinded batteries need `Eq1`, `Show1` and `Arbitrary1`. Orphans in the test
+module are the right answer there, under the orphan policy below.
+
+Laws worth naming in a finding: `Eq` reflexive, symmetric and transitive; `Ord`
+total; `Semigroup` associative; `Monoid` identity; and the `Functor`, `Applicative`
+and `Monad` laws **with superclass coherence**. `(<*>) == ap` and `pure == return`
+are laws, and a hand-written `Monad` breaks them quietly. Round-trips get the same
+treatment: `fromString (show x) == x`.
+
+One caveat on round-trips. Where `Show` is not injective, so that two distinct values
+print the same, the round-trip holds only on the canonical subset. Scope the
+generator to that subset, and say so in the test. Do not answer a non-injective
+`Show` with a merging smart constructor, because it corrupts values that are
+genuinely distinct.
 
 **Action:** report every hand-written instance that has no corresponding property
 test. The fix is either to add the test, or — preferred — to find the derivation
@@ -327,6 +524,11 @@ record builds one chain per field unless the fields are strict, and a small inpu
 today is not an argument — it is the reason the leak is found in production instead
 of in review.
 
+`StrictData` is a module default here, not a per-field decision, and `Strict` is the
+stronger form that also bangs `let`/`where` bindings and function arguments — still
+to WHNF, not a deep force. A field that is lazy on purpose carries a comment saying
+why.
+
 ## Orphan instances are fine here
 
 **This overrules the upstream `haskell-reviewer` rubric, which lists orphan instances
@@ -341,20 +543,30 @@ not as the presence of an orphan.
 
 ## Checklist
 
+- [ ] No field label on a multi-constructor type, and no `-Wno-partial-fields`
 - [ ] Newtypes for domain concepts, not type aliases
 - [ ] No bare `Int`, `Text`, `String` or `Bool` in a top-level signature
+- [ ] Newtyped `Map` keys where a bare `Text` or `Int` is the key
 - [ ] Smart constructors for validated types; raw constructor unexported
 - [ ] Sum types where a `String` is standing in for a closed set
+- [ ] Record syntax at record sites — `Con{}`, puns, or `{..}`; positional only where
+      the Action grants it (small non-record constructors, records of two fields or fewer)
 - [ ] `RecordWildCards` where a record is destructured, names matching fields
 - [ ] A type parameter (`DataKinds`, a GADT index) wherever it retires a runtime check
+- [ ] Type indices over stored ranks; generated singletons; injective families;
+      phantom-typed namespaces
+- [ ] One rank-2 traversal per recursive type, with the folds derived from it
 - [ ] No partial function, no incomplete pattern match
-- [ ] `foldl'`, strict accumulators, strict `Map` and `State`
+- [ ] `foldl'`, strict accumulators, strict `Map` and `State`, `StrictData` on as the
+      module default
 - [ ] IO isolated from pure logic
 - [ ] `DerivingStrategies` on every `deriving` clause — `stock`/`newtype`/`anyclass`/`via`
 - [ ] `DerivingVia` wherever a codec shape is shared across types
+- [ ] `Generically` for a product `Semigroup` or `Monoid`, and no package for it
 - [ ] `GeneralizedNewtypeDeriving` on every newtype, not hand-written delegations
 - [ ] No standalone `deriving instance` — derive in the data declaration
-- [ ] Every hand-written instance backed by a property test
+- [ ] Every hand-written instance backed by a `quickcheck-classes-base` battery,
+      superclass coherence included
 - [ ] Efficient structures where indexing matters (`Vector`/`Seq` over `[]`)
 - [ ] Fusion-friendly patterns in stream processing
 - [ ] No orphan-instance findings (see above)
