@@ -19,20 +19,25 @@ A test is vacuous when it does any of these.
 Search every test file in the tree, and read the recorded golden outputs beside
 them for trivial or empty expected content.
 
-Then prove each suspicion, in three steps, and report the experiment.
+Then specify, for each suspicion, the experiment that settles it. You audit
+without editing the tree, so the experiment is the finding's protocol for the
+fixer to run, not an action you take — spell out all three steps, exactly.
 
-1. **Reproduce.** Run the test filtered to itself. It must pass.
-2. **Sabotage.** Break the production code the test claims to cover. Flip a
-   condition, return an empty value, swap one branch of the emitter it
-   exercises. Run the test again. A test that still passes is confirmed
-   vacuous. A test that fails is doing its job, and you drop the suspicion.
-3. **Revert.** Put the production code back exactly as it was, and say in the
-   finding that you did.
+1. **Reproduce.** The command that runs the test filtered to itself. It must
+   pass.
+2. **Sabotage.** The one production edit that breaks what the test claims to
+   cover — the condition to flip, the value to empty, the emitter branch to
+   swap — and the same command again. A test that still passes is confirmed
+   vacuous. A test that fails is doing its job, and the suspicion is dropped.
+3. **Revert.** The production code goes back exactly as it was, and the fix
+   says so.
 
-For every confirmed test, write the replacement: the assertion or the recorded
-case that catches the sabotage you just performed. A verdict with no
-replacement is half the work, because the next reader has to redo the
-experiment to know what to write.
+For every suspect, write the replacement: the assertion or the recorded case
+that catches the sabotage the experiment names. A verdict with no replacement
+is half the work, because the next reader has to redo the experiment to know
+what to write.
 
-Report a test you suspect but cannot break as suspicious rather than vacuous,
-and say what you tried. Never report a test as vacuous on a reading alone.
+Call a test vacuous on reading alone only where the reading is a proof — a
+tautology passes for any implementation at all. Everything else is suspected
+until the experiment runs: report it as suspicious, with the protocol that
+settles it.

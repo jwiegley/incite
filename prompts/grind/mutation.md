@@ -3,10 +3,10 @@ mutations that changed production code and broke no test. A survived mutation
 is a proof, not a suspicion — the suite is blind to that change, and a bug of
 exactly that shape ships unseen.
 
-Read the recorded mutation reports the project facts name before you run
-anything. A mutation run is expensive; the record of the last one is the
-evidence, and re-running the tool is for confirming a fix, not for finding the
-gap.
+Read the recorded mutation reports the project facts name. A mutation run is
+expensive and writes to the tree, and you audit without touching it: the
+record of the last run is the evidence, and re-running the tool is the fixer's
+confirmation step, never yours.
 
 Focus on survived mutations in the paths where blindness costs the most: state
 transitions, access control checks, data validation, cryptographic helpers,
@@ -21,8 +21,9 @@ For each survived mutation worth acting on, report:
    mistake a person makes at the same site; name that mistake and the input
    that triggers it.
 3. **The killing test.** The test body whose assertion fails under the
-   mutation and passes on the real code. Run it against the real code to prove
-   the second half; say that you did.
+   mutation and passes on the real code, with the one command that runs it —
+   the fixer proves the second half by running that command against the real
+   code.
 
 Where a whole module's mutations survive together, the finding is the module's
 test file, not each mutation alone — say what the file fails to constrain and

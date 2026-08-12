@@ -38,6 +38,12 @@ import Incite.Feature
   , grindTestsChecks
   , grindTestsGrant
   , grindTestsRule
+  , grindLiveView
+  , grindLiveViewChecks
+  , grindLiveViewGrant
+  , grindLiveViewRanking
+  , grindLiveViewRule
+  , grindLiveViewSpec
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
@@ -66,7 +72,6 @@ import Incite.Feature
   , stackContinuation
   , stackFuel
   , blockedMarker
-  , stackPin
   , stackGrant
   , stackPRs
   , stackPlanLenses
@@ -85,6 +90,8 @@ import Incite.Prompts
   , fixAll
   , paradoxFacts
   , testsFacts
+  , liveViewFacts
+  , liveViewAuth
   , stackDisciplines
   , stackFacts
   , stackPromote
@@ -122,6 +129,8 @@ import Incite.Review
   , grindSynthesis
   , grindSynthesisOver
   , grindTestsLenses
+  , grindLiveViewLenses
+  , grindLiveViewName
   , toTree
   , architectureOfChange
   , disciplineOfPanel
@@ -554,7 +563,7 @@ documentTests =
       -- The bullet's trailing prose is deliberately not fed in: the brief says
       -- the status line stands alone, so the contract is about the token.
       testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
+        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
         let decorated = "`" <> continueMarker <> "`"
         assertBool
           "the brief does not show the marker in the decoration this asserts"
@@ -564,7 +573,7 @@ documentTests =
       -- @implement@ sits, after @steer@ and inside the loop. Findings are
       -- 'Incite.Feature.remediate'\'s input, downstream of the panel.
       testCase "hands the plan to the worker" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
+        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
         assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
     , -- The same contract on the fixer that runs under an orchestrator, and the
       -- same failure if it drifts. 'grindParadox' wraps @remediate@ in
@@ -594,7 +603,7 @@ documentTests =
       -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
       -- the sentence being gone is.
       testCase "forbids editing code to make a sentence true" $ do
-        [leafText] <- flowLeafPrompts "document" document "THE PLAN"
+        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
         assertBool
           "the brief does not forbid correcting the code instead of the prose"
           ( T.isInfixOf
@@ -638,7 +647,7 @@ remediateTests =
       -- separator change or one reworded sentence all fail it.
       testCase "with no closing clause it is byte-for-byte what it was before the clause existed" $ do
         recorded <- TIO.readFile remediateGolden
-        [leafText] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
+        leafText <- onlyFlowLeafPrompt "remediate" (remediate codeRule mempty) "THE FINDINGS"
         leafText
           @?= promptText ponytailLadder
             <> "\n\n"
@@ -652,8 +661,8 @@ remediateTests =
       -- — which is why the empty case has its own branch, and why the law above
       -- is stated separately from this one.
       testCase "a closing clause is appended below the findings paragraph" $ do
-        [bare] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
-        [closed] <- flowLeafPrompts "remediate" (remediate codeRule closeWithChanges) "THE FINDINGS"
+        bare <- onlyFlowLeafPrompt "remediate" (remediate codeRule mempty) "THE FINDINGS"
+        closed <- onlyFlowLeafPrompt "remediate" (remediate codeRule closeWithChanges) "THE FINDINGS"
         closed
           @?= T.replace
             "\n\nTHE FINDINGS"
@@ -665,40 +674,39 @@ remediateTests =
       -- which is what lets both acting workflows and the grind fixer share this
       -- leaf.
       testCase "the artifact rule is the only thing its argument changes" $ do
-        [underCode] <- flowLeafPrompts "remediate" (remediate codeRule mempty) "THE FINDINGS"
-        [underDocs] <- flowLeafPrompts "remediate" (remediate docsRule mempty) "THE FINDINGS"
+        underCode <- onlyFlowLeafPrompt "remediate" (remediate codeRule mempty) "THE FINDINGS"
+        underDocs <- onlyFlowLeafPrompt "remediate" (remediate docsRule mempty) "THE FINDINGS"
         T.count (promptText codeRule) underCode @?= 1
         underDocs @?= T.replace (promptText codeRule) (promptText docsRule) underCode
-    , -- The grind fixer's rule carries the tree's facts as well, and that is
-      -- the only route by which they reach it: the audit half gets them from
-      -- the workflow input, which is long out of scope by the time a fixer runs
-      -- on a ranked list of findings.
-      testCase "the grind fixer stands under the code rule and the tree's facts" $ do
-        [leafText] <- flowLeafPrompts "remediate" (remediate paradoxRule fixerContinuation) "THE FINDINGS"
-        report
-          [ "the grind fixer does not carry " <> label
-          | (label, needle) <-
-              [ ("codeRule", promptText codeRule)
-              , ("the facts file", promptText paradoxFacts)
-              , ("the continuation clause", promptText fixerContinuation)
+    , -- Each derived rule carries its tree's own splice as well as the code
+      -- rule, and this leaf is the only route by which the splice reaches a
+      -- fixer: the audit half gets the facts from the workflow input, which is
+      -- long out of scope by the time a fixer runs on a ranked list of
+      -- findings. The fix hierarchy each facts file states — source-of-truth
+      -- first, proof layer second, direct code last — travels only here, and a
+      -- red gate is cheapest to defeat by ignoring exactly that. One row per
+      -- rule a fixer stands under, so the next grind's fixer is fenced by
+      -- joining the table.
+      testGroup
+        "each fixer stands under the code rule and its tree's own splice"
+        [ testCase ruleLabel $ do
+            leafText <- onlyFlowLeafPrompt "remediate" (remediate rule fixerContinuation) "THE FINDINGS"
+            report
+              [ T.pack ruleLabel <> "'s fixer does not carry " <> label
+              | (label, needle) <-
+                  [ ("codeRule", promptText codeRule)
+                  , ("its tree's splice", promptText spliced)
+                  , ("the continuation clause", promptText fixerContinuation)
+                  ]
+              , not (T.isInfixOf needle leafText)
               ]
-          , not (T.isInfixOf needle leafText)
-          ]
-    , -- The same route for the test-suite grind: its fixers learn the fix
-      -- hierarchy — source-of-truth first, proof layer second, direct code
-      -- last — only through this splice, and a red gate is cheapest to defeat
-      -- by ignoring exactly that.
-      testCase "the tests-grind fixer stands under the code rule and the suite's facts" $ do
-        [leafText] <- flowLeafPrompts "remediate" (remediate grindTestsRule fixerContinuation) "THE FINDINGS"
-        report
-          [ "the tests-grind fixer does not carry " <> label
-          | (label, needle) <-
-              [ ("codeRule", promptText codeRule)
-              , ("the facts file", promptText testsFacts)
-              , ("the continuation clause", promptText fixerContinuation)
-              ]
-          , not (T.isInfixOf needle leafText)
-          ]
+        | (ruleLabel, rule, spliced) <-
+            [ ("paradoxRule", paradoxRule, paradoxFacts)
+            , ("grindTestsRule", grindTestsRule, testsFacts)
+            , ("grindLiveViewRule", grindLiveViewRule, liveViewFacts)
+            , ("stackRule", stackRule, stackDisciplines)
+            ]
+        ]
     ]
 
 -- | The merge between the work and the retrospective, read off the flow's
@@ -802,9 +810,22 @@ orientTests =
       -- later edit that drops the clause fails here, in CI — nothing else
       -- reads these bytes, so nothing else can.
       testCase "the change orientation carries the no-change-to-audit clause" $
-        assertBool
-          "preambleOf AtChange does not say `no change to audit`"
-          ("no change to audit" `T.isInfixOf` preambleOf AtChange)
+        report
+          [ "preambleOf AtChange does not say " <> tshow needle
+          | needle <-
+              [ "no change to audit"
+              , -- And the run's own synthesis report is not the change. The
+                -- audit stage writes a dated report under `docs/audits/`
+                -- before any fixer runs, so a fixer that touched nothing still
+                -- leaves a dirty tree — without these bytes the panel reviews
+                -- the report (or any unrelated pre-existing edit beside it) as
+                -- the fixer's delta, and a no-op fix walks around the
+                -- no-change clause above.
+                "A dated report under `docs/audits/` is this run's own artifact"
+              , "leave it out of the no-change decision"
+              ]
+          , not (needle `T.isInfixOf` preambleOf AtChange)
+          ]
     , -- What keeps 'reframings' honest. Golden coverage is only as good as the
       -- list naming the goldens, and that list is hand-written: a fourth
       -- orientation would ship with its bytes unfenced and every existing test
@@ -1434,6 +1455,16 @@ grindPanelTests =
                   , [ "the roster count is not derived from the roster"
                     | not ("These 3 lenses were sent" `T.isInfixOf` T.unwords (T.words rendered))
                     ]
+                  , -- The wrong-checkout refusal, which only the brief's bytes
+                    -- carry: the facts probe's "stop" is prompt text a static
+                    -- flow cannot obey, so a run outside the target checkout
+                    -- still reaches this synthesis — and without this
+                    -- instruction it ranks twelve probe refusals as findings
+                    -- and sends the fixer, the review pass and the gate to
+                    -- work in a tree the audit never read.
+                    [ "the brief does not refuse on " <> tshow factsRefusalLine
+                    | not (factsRefusalLine `T.isInfixOf` rendered)
+                    ]
                   ]
               )
     , -- __The rule derivation, on facts no shipped grind has.__ 'paradoxRule'
@@ -1452,9 +1483,12 @@ grindPanelTests =
       -- seam the next grind's ranking clause needs, or repaired under facts the
       -- audit never read, would ship green there. Read off the flow's own
       -- leaves: the synthesis brief is 'grindSynthesisOver' at the spec's name
-      -- and lens table, a suffix lands appended below it and moves nothing
-      -- else, the fixer stands under 'grindRule' at the same facts, and the
-      -- facts sit above the caller's steer.
+      -- and lens table, a suffix lands below it as the brief's final paragraph
+      -- under exactly one blank-line seam and moves nothing else, the fixer
+      -- stands under 'grindRule' at the same facts, and the facts sit above
+      -- the caller's steer. The seam is what keeps a ranking clause from
+      -- fusing onto the derived brief's closing sentence — a paragraph the
+      -- model reads as one sentence's tail is a rule it never applies.
       testCase "grindFlow derives its synthesis and its fixer's rule from the spec" $ do
         let lenses = [("alpha-lens", "ALPHA?"), ("beta-lens", "BETA?")] :: [(LeafName, Prompt)]
             specWith suffix =
@@ -1472,16 +1506,60 @@ grindPanelTests =
           "the synthesis brief is not derived from the spec's name and lens table"
           (derived `T.isInfixOf` synthesisOf bare)
         synthesisOf suffixed
-          @?= T.replace derived (derived <> "THE RANKING CLAUSE") (synthesisOf bare)
+          @?= T.replace derived (derived <> "\n\nTHE RANKING CLAUSE") (synthesisOf bare)
         assertBool
           "the fixer's rule is not derived from the spec's facts"
           (promptText (grindRule "THE SYNTHETIC FACTS") `T.isInfixOf` last bare)
         assertBool
           "the facts are not prepended to the caller's steer"
           ("THE SYNTHETIC FACTS\n\nSTEER" `T.isInfixOf` head bare)
+    , -- __The shipped spec, not a copy assembled here.__ The synthetic case
+      -- above pins the seam mechanics for any spec; this pins that
+      -- @grind-live-view@ actually rides them — its suffix IS the ranking
+      -- clause, over the same lens table its panel runs. Field equality on the
+      -- named binding, so a spec quietly rebuilt inline with @mempty@ (which
+      -- renders identically in every plan and cost) goes red here.
+      testCase "grind-live-view's spec carries the ranking clause over its own lens table" $ do
+        promptText (gsSynthesisSuffix grindLiveViewSpec) @?= promptText grindLiveViewRanking
+        gsName grindLiveViewSpec @?= grindLiveViewName
+        map fst (gsLenses grindLiveViewSpec) @?= map fst grindLiveViewLenses
+    , -- The severity vocabulary, asserted from both sides — 'synthesisAdmits'\'s
+      -- shape, for its reason: the auth lens writes the words and the ranking
+      -- clause matches on them, and they live in two files nothing else reads
+      -- together. Drop the demand from the lens and auth findings arrive
+      -- wordless; drop the words from the clause and the ranking rule reads
+      -- nothing — either way an authorization finding sinks below UX noise,
+      -- which is exactly the silent failure the clause exists to prevent.
+      testCase "the auth lens and the ranking clause share the severity vocabulary" $
+        report
+          ( concat
+              [ [ "liveViewAuth does not demand the severity word " <> tshow w
+                | w <- severityWords
+                , not (says liveViewAuth w)
+                ]
+              , [ "the ranking clause does not carry the severity word " <> tshow w
+                | w <- severityWords
+                , not (says grindLiveViewRanking w)
+                ]
+              , [ "the ranking clause does not put authorization above performance and UX"
+                | not (saysLoosely grindLiveViewRanking "every authorization finding ranks above every performance and UX finding")
+                ]
+              , [ "the ranking clause does not keep the word on the finding's line"
+                | not (saysLoosely grindLiveViewRanking "keep that word on the finding's line")
+                ]
+              ]
+          )
     , grindFenceTests paradoxGrindFence
     , grindFenceTests testsGrindFence
+    , grindFenceTests liveViewGrindFence
     ]
+
+-- | The three severity words 'Incite.Prompts.liveViewAuth' opens findings with
+-- and 'Incite.Feature.grindLiveViewRanking' orders them by — literals here,
+-- for 'grindContract'\'s reason: derived from either binding, the law would be
+-- @x@ contains @x@.
+severityWords :: [Text]
+severityWords = ["`critical`", "`high`", "`medium`"]
 
 -- | One grind's whole fence, as data: the laws every grind must pin, applied
 -- per instantiation by 'grindFenceTests'. A record rather than a per-grind
@@ -1493,10 +1571,10 @@ grindPanelTests =
 -- reassignment it is supposed to catch; the whole point of these fields is
 -- that a human wrote down which model audits which lens and which leaves act.
 data GrindFence = GrindFence
-  { gfLabel :: String
-  -- ^ The workflow's name, as the test group's.
-  , gfWorkflow :: Workflow
-  -- ^ The shipped workflow whose skeleton the tables are read against.
+  { gfWorkflow :: Workflow
+  -- ^ The shipped workflow whose skeleton the tables are read against, and
+  -- whose 'wfName' names the test group — derived, where a label field held a
+  -- second copy of the same name.
   , gfLenses :: [(LeafName, Prompt)]
   -- ^ The lens table the grind hands to @spread@, imported from the module
   -- that ships it.
@@ -1518,7 +1596,10 @@ data GrindFence = GrindFence
   -- segment does.
   , gfGrant :: Grant
   , gfGrantLabel :: Text
-  -- ^ How the grant's failures are reported, so a red case names the binding.
+  -- ^ How the grant's failures are reported, so a red case names the Haskell
+  -- binding somebody has to edit. A field where 'gfWorkflow'\'s label is
+  -- derived, because the binding names are not derivable: @grind-paradox@\'s
+  -- grant is 'Incite.Feature.grindGrant', not @grindParadoxGrant@.
   , gfChecks :: [(LeafName, NE.NonEmpty Text)]
   }
 
@@ -1528,7 +1609,7 @@ data GrindFence = GrindFence
 grindFenceTests :: GrindFence -> TestTree
 grindFenceTests gf =
   testGroup
-    (gfLabel gf)
+    (T.unpack (wfName (gfWorkflow gf)))
     [ -- Two lenses rendering the same text are two leaves doing one leaf's
       -- work on two different models, which reads as agreement in the
       -- synthesis.
@@ -1661,8 +1742,7 @@ grindFenceTests gf =
 paradoxGrindFence :: GrindFence
 paradoxGrindFence =
   GrindFence
-    { gfLabel = "grind-paradox"
-    , gfWorkflow = grindParadox
+    { gfWorkflow = grindParadox
     , gfLenses = grindLenses
     , gfWidth = 14
     , gfPanelFull =
@@ -1719,8 +1799,7 @@ paradoxGrindFence =
 testsGrindFence :: GrindFence
 testsGrindFence =
   GrindFence
-    { gfLabel = "grind-tests"
-    , gfWorkflow = grindTests
+    { gfWorkflow = grindTests
     , gfLenses = grindTestsLenses
     , gfWidth = 12
     , gfPanelFull =
@@ -1751,22 +1830,71 @@ testsGrindFence =
         , "selectors@claude-agent"
         , "isolation@codex"
         ]
-    , gfActingTailFull =
-        ["synthesis", "remediate"]
-          <> reviewAuditPanelFull
-          <> ("regroup:units" : reviewAuditPanelFull)
-          <> ("regroup:sequence" : reviewAuditPanelFull)
-          <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
-    , gfActingTailBlocked =
-        ["synthesis", "remediate"]
-          <> reviewAuditPanelBlocked
-          <> ("regroup:units" : reviewAuditPanelBlocked)
-          <> ("regroup:sequence" : reviewAuditPanelBlocked)
-          <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
+    , gfActingTailFull = testsGrindTail reviewAuditPanelFull
+    , gfActingTailBlocked = testsGrindTail reviewAuditPanelBlocked
     , gfGrant = grindTestsGrant
     , gfGrantLabel = "grindTestsGrant"
     , gfChecks = grindTestsChecks
     }
+
+-- | @grind-live-view@'s fence: the 11-lens table, the plain
+-- audit-synthesize-fix-gate tail, and the grant derived from its two checks.
+--
+-- Both tables put @auth@ on claude-agent — position seven is the claude slot
+-- under either roster, and holding the severity-word lens there is a choice
+-- the lens table's own haddock argues for. These rows are where that choice
+-- is pinned: reorder the table and the live column goes red.
+liveViewGrindFence :: GrindFence
+liveViewGrindFence =
+  GrindFence
+    { gfWorkflow = grindLiveView
+    , gfLenses = grindLiveViewLenses
+    , gfWidth = 11
+    , gfPanelFull =
+        [ "css-hardening@claude-agent"
+        , "componentize@codex"
+        , "liveness@opencode"
+        , "rerender@claude-agent"
+        , "pubsub@codex"
+        , "best-practices@opencode"
+        , "auth@claude-agent"
+        , "page-load@codex"
+        , "dom-keying@opencode"
+        , "assign-bloat@claude-agent"
+        , "ts-hooks@codex"
+        ]
+    , gfPanelBlocked =
+        [ "css-hardening@claude-agent"
+        , "componentize@codex"
+        , "liveness@claude-agent"
+        , "rerender@codex"
+        , "pubsub@claude-agent"
+        , "best-practices@codex"
+        , "auth@claude-agent"
+        , "page-load@codex"
+        , "dom-keying@claude-agent"
+        , "assign-bloat@codex"
+        , "ts-hooks@claude-agent"
+        ]
+    , gfActingTailFull = ["synthesis", "remediate", "compile", "tests", "repair"]
+    , gfActingTailBlocked = ["synthesis", "remediate", "compile", "tests", "repair"]
+    , gfGrant = grindLiveViewGrant
+    , gfGrantLabel = "grindLiveViewGrant"
+    , gfChecks = grindLiveViewChecks
+    }
+
+-- | @grind-tests@'s acting tail over one hand-written statement of the
+-- review-audit panel. The shape is the same on either roster — only the panel
+-- block differs — so 'testsGrindFence' passes each literal block through this
+-- one assembly rather than spelling the concatenation twice, where the two
+-- copies could disagree about the shape they claim to share.
+testsGrindTail :: [Text] -> [Text]
+testsGrindTail panel =
+  ["synthesis", "remediate"]
+    <> panel
+    <> ("regroup:units" : panel)
+    <> ("regroup:sequence" : panel)
+    <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
 
 -- | One view's worth of the review-audit panel, as literals: nine change
 -- lenses, every backend answering each, in @panelAcross@'s reading order.
@@ -2534,6 +2662,7 @@ mirrorWorkflows =
   , stackPRs
   , grindParadox
   , grindTests
+  , grindLiveView
   , fessAudit
   , retro
   , reviewLite
@@ -2626,6 +2755,22 @@ docsInventoryTests =
         let named = tableFirstColumn (sectionBody "Exposed inventory" doc)
         assertBool "no workflow names read from the table" (not (null named))
         named @?= map wfName mirrorWorkflows
+    , -- @worstCaseCost@ sums a sequence, and an unbounded orchestrator loop
+      -- costs @maxBound `div` 2@ — so a workflow chaining TWO of them
+      -- overflows and reports a NEGATIVE worst case: the number an operator
+      -- reads before spending anything, going backwards. @grind-tests@
+      -- shipped exactly that (its 'grindFlow' fixer plus its post-review
+      -- fixer) and only a person running @cost@ by hand noticed. Quantified
+      -- over the whole inventory, so the next second-loop workflow cannot.
+      testCase "no exposed workflow reports a negative worst case" $
+        report
+          [ wfName wf <> " reports a non-positive worst case: " <> renderCost c
+          | wf <- mirrorWorkflows
+          , let c = worstCaseCost (toSkeleton (wfFlow wf))
+          , case c of
+              Finite n -> n <= 0
+              Unbounded -> False
+          ]
     , -- Every row this reads is either checked or turned into a named failure —
       -- never silently skipped. Two rows used to vanish before 'report' ever
       -- saw them: a row naming a workflow absent from 'mirrorWorkflows' (the old
@@ -2971,13 +3116,22 @@ flowOutput name flow input =
 -- under two scopes, so a second leaf appearing is a change to what it sends and
 -- belongs in the failure, not silently outside the fence.
 onlyLeafPrompt :: Workflow -> IO Text
-onlyLeafPrompt wf = do
-  sent <- workflowLeafPrompts wf
+onlyLeafPrompt wf =
+  onlyFlowLeafPrompt (T.unpack (wfName wf)) (wfFlow wf) (fromMaybe "" (wfInput wf))
+
+-- | 'onlyLeafPrompt' for a bare 'Flow', for 'flowLeafPrompts'\'s reason — and
+-- the binding every one-leaf assertion goes through instead of a
+-- @[leafText] <- …@ pattern bind, whose failure is a bare 'MonadFail' pattern
+-- error naming a source line and nothing else. A flow that grew a second leaf
+-- is a change to what it sends, and the failure should say whose.
+onlyFlowLeafPrompt :: String -> Flow Text Text -> Text -> IO Text
+onlyFlowLeafPrompt name flow input = do
+  sent <- flowLeafPrompts name flow input
   case sent of
     [one] -> pure one
     _ ->
       assertFailure $
-        T.unpack (wfName wf) <> " sends " <> show (length sent) <> " prompts, expected 1"
+        name <> " sends " <> show (length sent) <> " prompts, expected 1"
 
 promptLintTests :: TestTree
 promptLintTests =
@@ -3390,24 +3544,69 @@ factDisciplines =
   , "final gate"
   ]
 
--- | Every grind facts file, labelled: the roster the structural law below
--- folds over. A new grind's facts file joins the law by joining this list.
-grindFactsFiles :: [(String, Prompt)]
-grindFactsFiles = [("paradox", paradoxFacts), ("tests", testsFacts)]
+-- | 'factDisciplines' for @prompts\/grind\/tests-facts.md@, under the same
+-- exactly-one-section law. Its own list, not a shared one: each file's
+-- disciplines are its own, and a needle checked against a file that never
+-- states it would hold vacuously and fence nothing.
+testsFactDisciplines :: [Text]
+testsFactDisciplines =
+  [ "regenerated"
+  , "Never weaken"
+  , "half a fix"
+  , "compile lock"
+  ]
+
+-- | 'factDisciplines' for @prompts\/grind\/live-view-facts.md@, under the same
+-- exactly-one-section law and with the same own-list reasoning.
+liveViewFactDisciplines :: [Text]
+liveViewFactDisciplines =
+  [ "repaired in its source"
+  , "half a registration"
+  , "Never weaken"
+  , "half a fix"
+  , "compile lock"
+  ]
+
+-- | The opening words of every facts file's probe refusal, and the line the
+-- derived synthesis brief refuses on. One binding read by both fences, so the
+-- probe's cry and the synthesis's ear for it cannot drift apart.
+factsRefusalLine :: Text
+factsRefusalLine = "FACTS PATHS UNRESOLVED"
+
+-- | Every grind facts file, labelled and carrying its own discipline needles:
+-- the roster the structural laws below fold over. A new grind's facts file
+-- joins the laws by joining this list — with a needle list of its own, because
+-- the dedup law can only fence disciplines somebody wrote down for that file.
+grindFactsFiles :: [(String, Prompt, [Text])]
+grindFactsFiles =
+  [ ("paradox", paradoxFacts, factDisciplines)
+  , ("tests", testsFacts, testsFactDisciplines)
+  , ("live-view", liveViewFacts, liveViewFactDisciplines)
+  ]
 
 -- | The identifiers that pin a lens body to one repository — hand-listed from
 -- the projects the grinds point at, matched case-insensitively. A lens body
 -- carrying one belongs in that project's facts file instead.
+--
+-- @operation@ (the OTP app) subsumes @OperationWeb@ under the case-insensitive
+-- infix match, and it is deliberately this broad: one day it will trip on an
+-- innocuous English sentence, and that is a fair price, because the failure is
+-- read by a human — who either moves a real identifier into the facts file or
+-- rewords the sentence.
 projectIdentifiers :: [Text]
 projectIdentifiers =
-  [ "OperationWeb"
-  , "operation"
+  [ "operation"
   , "muex"
   , ".dox"
   , "Wallaby"
   , "excoveralls"
   , "Stryker"
   , "fstar"
+  , -- The LiveView project's set. @ui.dox@ needs no entry of its own — the
+    -- @.dox@ needle above already matches it.
+    "topics.ex"
+  , "PhxHook"
+  , "assets/ts/hooks"
   ]
 
 -- | The facts files the grinds prepend to every lens and splice into their
@@ -3427,13 +3626,13 @@ factsFileTests =
       -- path it is meant to check. First section, and nothing before it.
       testCase "every facts file opens with the probe, and holds the refusal line" $
         mapM_
-          ( \(label, facts) -> do
+          ( \(label, facts, _) -> do
               assertEqual
                 (label <> ": section order")
                 ["Probe first", "Project facts", "Repair disciplines"]
                 (map fst (sections (promptText facts)))
               assertBool (label <> ": the refusal line is not inside the probe section") $
-                T.isInfixOf "FACTS PATHS UNRESOLVED:" (sectionBody "Probe first" (promptText facts))
+                T.isInfixOf (factsRefusalLine <> ":") (sectionBody "Probe first" (promptText facts))
           )
           grindFactsFiles
     , -- The separation law: a grind lens body is repo-agnostic by
@@ -3446,29 +3645,53 @@ factsFileTests =
       testCase "no repo-agnostic grind lens names a project identifier" $
         report
           [ leafNameText name <> " names " <> tshow ident
-          | (name, body) <- grindTestsLenses
+          | (name, body) <- grindTestsLenses <> grindLiveViewLenses
           , ident <- projectIdentifiers
           , T.isInfixOf (T.toLower ident) (T.toLower (promptText body))
           ]
-    , -- One home per fact. The repair section restated the golden-reset
-      -- ordering, the never-hand-edit rule, the interface-constructor ban and
-      -- the test-filtering rule, all of which the facts above it already said —
-      -- so a discipline could be revised in one section and left stale in the
-      -- other, inside one file that a fixer reads whole.
-      -- Whitespace-normalised on both sides, for 'saysLoosely'\'s reason: this
-      -- file is hard-wrapped markdown, so a needle is a phrase in the prose and
-      -- not necessarily a substring of the bytes. Rewrapping a paragraph moved
-      -- "final gate" across a line break and this went red for it — which is a
-      -- fence crying wolf, and a fence that cries wolf gets regenerated.
+    , -- One home per fact, in every file. The paradox repair section restated
+      -- the golden-reset ordering, the never-hand-edit rule, the
+      -- interface-constructor ban and the test-filtering rule, all of which
+      -- the facts above it already said — and the tests file stated the
+      -- regenerate-never-hand-patch discipline in both its facts and its
+      -- repair sections until this fence folded over it. Revised in one
+      -- section, a two-home discipline goes stale in the other, inside one
+      -- file that a fixer reads whole; each file carries its own needles,
+      -- because a needle a file never states holds vacuously.
+      -- Whitespace-normalised on both sides, for 'saysLoosely'\'s reason: these
+      -- files are hard-wrapped markdown, so a needle is a phrase in the prose
+      -- and not necessarily a substring of the bytes. Rewrapping a paragraph
+      -- moved "final gate" across a line break and this went red for it — which
+      -- is a fence crying wolf, and a fence that cries wolf gets regenerated.
       testCase "no discipline is stated in two sections" $
         let norm = T.unwords . T.words
-            secs = sections (promptText paradoxFacts)
          in report
-              [ "the facts file states " <> tshow needle <> " in " <> tshow (map fst hits)
-              | needle <- factDisciplines
-              , let hits = [s | s@(_, body) <- secs, T.isInfixOf (norm needle) (norm body)]
+              [ T.pack label <> " states " <> tshow needle <> " in " <> tshow (map fst hits)
+              | (label, facts, needles) <- grindFactsFiles
+              , needle <- needles
+              , let hits =
+                      [ s
+                      | s@(_, body) <- sections (promptText facts)
+                      , T.isInfixOf (norm needle) (norm body)
+                      ]
               , length hits /= 1
               ]
+    , -- The gate's argv and the facts file's command guidance are two
+      -- statements of one fact for two consumers: the harness runs the argv
+      -- ('Incite.Feature.grindTestsChecks') and the agent reads the prose, and
+      -- the markdown-on-disk convention keeps them in two homes on purpose.
+      -- This is the drift fence between the homes — a gate command changed on
+      -- one side goes red until the facts say the same thing. The tests grind
+      -- only: paradox's test check carries an env-var prefix its facts file
+      -- states as prose rather than verbatim, so a fold would demand bytes
+      -- that file rightly does not hold.
+      testCase "the tests grind's facts state every command its gate runs" $
+        report
+          [ leafNameText n <> "'s gate command is not a stated fact: " <> tshow inner
+          | (n, cmd) <- grindTestsChecks
+          , let inner = NE.last cmd
+          , not (inner `T.isInfixOf` promptText testsFacts)
+          ]
     ]
 
 -- | Every file in this repository whose PROSE names the prompt renderer: the

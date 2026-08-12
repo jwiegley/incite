@@ -27,7 +27,9 @@ For each finding, report the file and line, the class, the evidence — the
 global touch, the missing teardown, the absent checkout — and the fix as code:
 the parallel opt-in, the teardown block, the checkout, the moved tag.
 
-Prove the promotions before proposing them: run the promoted module in
-parallel with the rest of the suite at least twice. A flake you caused in the
-audit is a finding prevented; a flake you shipped in the fix is a week of
-somebody else's time.
+Every promotion carries its own proof step: name the one command that runs the
+promoted module in parallel with the rest of the suite, and state that the
+fixer must run it at least twice before the fix ships. You audit without
+touching the tree, so that run is the finding's verification step, never an
+action you take. A flake the command catches is a finding prevented; a flake
+shipped without it is a week of somebody else's time.

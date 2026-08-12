@@ -272,6 +272,8 @@
           ./prompts/stack
           ./commands/fess.md
           ./commands/grind-paradox.md
+          ./commands/grind-tests.md
+          ./commands/grind-live-view.md
           ./commands/post-commit-audit.md
           ./commands/wiggum.md
           ./skills/fix-all.md
@@ -555,7 +557,7 @@
         {
           type = "command";
           name = "grind-live-view";
-          description = "Phoenix LiveView quality grinder — fans out 11 parallel audit agents, produces ranked findings report, then remediates everything";
+          description = "Phoenix LiveView quality grinder — launches the grind-live-view workflow: eleven lenses over the LiveView layer, a ranked report with authorization findings first, remediation, and a real compile/test gate";
           body = builtins.readFile ./commands/grind-live-view.md;
         }
 
@@ -569,7 +571,7 @@
         {
           type = "command";
           name = "grind-tests";
-          description = "Comprehensive test suite grinder — fans out 12+ parallel audit agents, remediates every finding";
+          description = "Test suite grinder — launches the grind-tests workflow: twelve lenses over the whole suite, a ranked report, remediation, a full review-audit pass over the fix, and a real compile/test gate";
           body = builtins.readFile ./commands/grind-tests.md;
         }
 

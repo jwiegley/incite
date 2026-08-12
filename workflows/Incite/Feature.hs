@@ -65,7 +65,14 @@ module Incite.Feature
   , grindTests
   , grindTestsChecks
   , grindTestsGrant
+  , grindTestsReviewFuel
   , grindTestsRule
+  , grindLiveView
+  , grindLiveViewChecks
+  , grindLiveViewGrant
+  , grindLiveViewRanking
+  , grindLiveViewRule
+  , grindLiveViewSpec
   , paradoxRule
   , stackPRs
   , stackPlanLenses
@@ -121,6 +128,8 @@ import Incite.Review
   , grindSynthesisOver
   , grindTestsLenses
   , grindTestsName
+  , grindLiveViewLenses
+  , grindLiveViewName
   , lensesOf
   , retroFlow
   , reviewAuditFlow
@@ -151,7 +160,8 @@ import Incite.Prompts
       stackTooling,
       stackTriage,
       steRules,
-      testsFacts )
+      testsFacts,
+      liveViewFacts )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
 -- worktree, no git, no PR; 'shipFeature' and 'shipDocs' are the acting halves.
@@ -613,7 +623,9 @@ grindGrant = grindGrantFor grindChecks
 -- named rules ('paradoxRule', 'grindTestsRule') are the same application —
 -- kept as bindings because a grind's second fixer and its 'greenGate' consume
 -- them outside 'grindFlow'. Two spellings of the splice would drift silently,
--- one grind at a time.
+-- one grind at a time. 'stackRule' is the same splice outside any grind —
+-- what it splices is disciplines rather than tree facts, and the shared shape
+-- is the point of it being one binding.
 grindRule :: Prompt -> Prompt
 grindRule facts =
   [__i|
@@ -715,7 +727,7 @@ data Orientation
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. A dated report under `docs/audits/` is this run's own artifact, not part of the change: leave it out of the review, and leave it out of the no-change decision — a tree whose only edit is that report has no change to audit. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
@@ -1009,7 +1021,20 @@ grindFlow GrindSpec {..} =
     >>> refineWith "synthesis" (brief synthesis) id
     >>> orchestrate (remediate (grindRule gsFacts) fixerContinuation)
   where
-    synthesis = grindSynthesisOver gsName (map fst gsLenses) <> gsSynthesisSuffix
+    base = grindSynthesisOver gsName (map fst gsLenses)
+    -- An own branch for the empty clause, for 'remediate'\'s reason: the seam
+    -- is exactly one blank line, so the suffix lands as the brief's final
+    -- paragraph rather than fusing onto its closing sentence — and a grind
+    -- with nothing to add leaves the derived brief byte-identical, with no
+    -- trailing separator that no other check could see.
+    synthesis
+      | T.null (T.strip (promptText gsSynthesisSuffix)) = base
+      | otherwise =
+          [__i|
+            #{base}
+
+            #{gsSynthesisSuffix}
+          |]
     withFacts steerText = promptText gsFacts <> "\n\n" <> steerText
 
 -- | The checks the test-suite grind gates on: the target project's own compile
@@ -1076,8 +1101,108 @@ grindTests =
         , gsSynthesisSuffix = mempty
         }
       >>> dimap' asReviewSubject id reviewAuditFlow
-      >>> orchestrate (remediate grindTestsRule fixerContinuation)
+      >>> orchestrateWith grindTestsReviewFuel (remediate grindTestsRule fixerContinuation)
       >>> greenGate grindTestsRule grindTestsChecks
+
+-- | The ceiling on @grind-tests@'s second fixer — the one acting on the
+-- review panel's findings. Finite for 'stackFuel'\'s cost reason: this
+-- workflow already runs one unbounded fixer loop inside 'grindFlow', and
+-- @worstCaseCost@ sums a sequence, so a second unbounded loop pushed the sum
+-- past 'maxBound' and @cost grind-tests@ reported a NEGATIVE worst case — the
+-- number an operator reads before spending anything, going backwards.
+--
+-- And finite is right on its own terms: the first fixer faces a whole
+-- suite's findings and the worker decides its trips, but this one faces the
+-- review of ONE change — a finding set that outlives twelve trips wants a
+-- person reading the panel's report, not a thirteenth trip. Exhaustion
+-- yields ('orchestrateWith'), so the gate still runs over whatever landed.
+grindTestsReviewFuel :: Maybe Int
+grindTestsReviewFuel = Just 12
+
+-- | The checks the LiveView grind gates on: the target project's own compile
+-- (warnings as errors) and its test suite, each through 'grindCheckCmd', run
+-- by us with the exit code read. No TypeScript suite here: the retired driver
+-- gated on these two alone, and a hook this grind writes is proved by the
+-- compile and the registration the facts demand.
+grindLiveViewChecks :: [(LeafName, NonEmpty Text)]
+grindLiveViewChecks =
+  [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")
+  , ("tests", grindCheckCmd "mix test")
+  ]
+
+-- | 'grindGrantFor' at 'grindLiveViewChecks', for 'grindGrant'\'s reason.
+grindLiveViewGrant :: Grant
+grindLiveViewGrant = grindGrantFor grindLiveViewChecks
+
+-- | 'grindRule' at 'Incite.Prompts.liveViewFacts': what the LiveView grind's
+-- fixer and its gate's repair leaf stand under. Splicing the facts is how a
+-- fixer learns the registration convention a half-landed hook silently
+-- breaks.
+grindLiveViewRule :: Prompt
+grindLiveViewRule = grindRule liveViewFacts
+
+-- | The one thing the LiveView grind adds to the derived synthesis brief, and
+-- the reason 'GrindSpec' has a suffix seam at all.
+--
+-- __It rides on the severity words 'Incite.Prompts.liveViewAuth' demands.__
+-- That lens opens every finding with @critical@, @high@ or @medium@; this
+-- clause matches on those words to hold every authorization finding above
+-- every performance and UX finding, whatever the consequence ranking says.
+-- The coupling is fenced in @test\/Spec.hs@ — drop the words from either side
+-- and the case goes red, because an auth finding that sinks below UX noise is
+-- exactly the silent failure the clause exists to prevent.
+grindLiveViewRanking :: Prompt
+grindLiveViewRanking =
+  [__i|
+    ONE RANKING RULE on top of the ranking above: every authorization finding
+    ranks above every performance and UX finding, whatever their consequences
+    score. The auth lens opens each of its findings with a severity word —
+    `critical`, `high` or `medium` — keep that word on the finding's line, and
+    order the authorization findings by it among themselves.
+  |]
+
+-- | Everything the LiveView grind supplies for itself, named at the top level
+-- so the fences in @test\/Spec.hs@ read the shipped spec rather than a copy:
+-- the suffix really is 'grindLiveViewRanking', over the same lens table the
+-- panel runs.
+grindLiveViewSpec :: GrindSpec
+grindLiveViewSpec =
+  GrindSpec
+    { gsName = grindLiveViewName
+    , gsFacts = liveViewFacts
+    , gsLenses = grindLiveViewLenses
+    , gsSynthesisSuffix = grindLiveViewRanking
+    }
+
+-- | Audit a LiveView layer with eleven lenses, rank what they found with
+-- authorization on top, fix every finding, and prove the tree still compiles
+-- and its tests still pass — 'grindParadox'\'s shape at a different subject,
+-- plus the ranking clause riding in through the spec's suffix seam.
+--
+-- No review-audit segment: 'grindTests' pays that price because a test-suite
+-- remediation's cheapest failure is a weakened assertion, and this grind's
+-- edits stand under the same compile and test gate that catches a LiveView
+-- regression the cheap way.
+grindLiveView :: Workflow
+grindLiveView =
+  workflowG
+    grindLiveViewName
+    [iii|
+      Audit a Phoenix LiveView layer with eleven lenses spread one per backend
+      (component CSS hardening, componentization, liveness gaps, needless
+      re-renders, spammy PubSub, framework best practices, per-event
+      authorization, page load cost, DOM keying, assign bloat, client-hook
+      round trips), write a dated ranked report with authorization findings
+      above every performance and UX finding, fix every finding under an
+      orchestrated fixer, then gate on the project's real compile and tests
+    |]
+    [iii|
+      Audit the LiveView layer in the current working directory. No focus:
+      read what the lenses point you at.
+    |]
+    grindLiveViewGrant
+    $ grindFlow grindLiveViewSpec
+      >>> greenGate grindLiveViewRule grindLiveViewChecks
 
 -- | Run @checks@ __ourselves__ until they pass, doing @repair@ between trips,
 -- and keep the account that came in under a @## heading@ of its own.
@@ -1283,26 +1408,22 @@ stackPlanLenses =
   , ("simple-english", simpleEnglishLens)
   ]
 
--- | What a stacking run's fixers stand under: the code rule, plus the
--- disciplines that only a stack has.
---
--- Built the way 'paradoxRule' is, and for the same reason. 'codeRule' answers
--- which side gives when the code and the record disagree, and it is silent about
--- everything a stack can lose that a single change cannot: a review thread
--- destroyed by recreating a branch, an approval dismissed by a force-push, a fix
--- applied at the top of the stack that becomes a conflict, a merge that ends the
--- review before it starts.
+-- | What a stacking run's fixers stand under: 'grindRule' at
+-- 'Incite.Prompts.stackDisciplines' — the code rule, plus the disciplines that
+-- only a stack has. Not a grind, and what is spliced is disciplines rather
+-- than tree facts, but the splice is the same splice for the same reason:
+-- 'codeRule' answers which side gives when the code and the record disagree,
+-- and it is silent about everything a stack can lose that a single change
+-- cannot — a review thread destroyed by recreating a branch, an approval
+-- dismissed by a force-push, a fix applied at the top of the stack that
+-- becomes a conflict, a merge that ends the review before it starts. A second
+-- spelling of the splice would drift from the first silently.
 --
 -- __Spliced into every acting leaf, not only the fixers.__ 'stackWorker' puts it
 -- above each worker's own brief, because the leaf most able to destroy review
 -- history is the one cutting branches, and it runs long before any fixer does.
 stackRule :: Prompt
-stackRule =
-  [__i|
-    #{codeRule}
-
-    #{stackDisciplines}
-  |]
+stackRule = grindRule stackDisciplines
 
 -- | The check that proves a stack builds: the script the bootstrap leaf writes,
 -- run by __us__, over every branch in @.stack-branches@.

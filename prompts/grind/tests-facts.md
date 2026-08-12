@@ -52,9 +52,8 @@ relative to the working directory you just probed.
   policy and HTML sanitization. Elixir calls them through `apply/3`.
 - Code generation: `.dox` files under `domain/` are the source of truth.
   Paradox generates Elixir under `.dox/lib/` and TypeScript under `.dox/ts/`,
-  in the `Dox.*` namespace. Never audit generated output for style, and never
-  edit it by hand — a change that generated code needs is a change to the
-  `.dox` source, regenerated.
+  in the `Dox.*` namespace. Never audit generated output for style; the fix
+  hierarchy under Repair disciplines says where a change to it goes.
 - Wire strings such as `"pending"`, `"running"`, `"succeeded"`, `"failed"`,
   `"cancelled"`, `"evaluating"` and `"evaluated"` are generated from `domain/`
   union types. A hand-written copy of one of those unions, or a constant map

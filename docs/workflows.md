@@ -30,6 +30,7 @@ text.
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
 | `grind-tests` | world-acting | 12-lens test-suite audit over the shared `grindFlow` prefix (spread panel, dated report, orchestrated fixer), then a `reviewAuditFlow` pass over the fixer's change with a second orchestrated fixer, then a real-exit-code green gate on the project's compile and test suites |
+| `grind-live-view` | world-acting | 11-lens LiveView audit over the shared `grindFlow` prefix, with a ranking clause that puts authorization findings above every performance and UX finding, then a real-exit-code green gate on the project's compile and tests |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
 | `review-lite` | prompt-only | six per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode, haskell on claude-agent — behind a triage leaf that skips it when the diff touches no Haskell source or cabal file), pure fold reduction |
@@ -89,8 +90,10 @@ backends instead of three:
   is forced rather than chosen.
 
 `ship-feature` and `ship-docs` use `workflowGReq` with `actingGrant`, currently
-`execGrant ["nix*"]`. `grind-paradox` and `stack-prs` use grants derived from
-their own check lists — `grindGrant` from `grindChecks`, `stackGrant` from
+`execGrant ["nix*"]`. The grinds and `stack-prs` use grants derived from
+their own check lists — every grind's through `grindGrantFor` (`grindGrant`
+from `grindChecks`, `grindTestsGrant` from `grindTestsChecks`,
+`grindLiveViewGrant` from `grindLiveViewChecks`), `stackGrant` from
 `stackChecks` and `budgetCheck` — so a check added without a permission is a
 build-time fact rather than a run-time denial nobody reads.
 
@@ -218,7 +221,28 @@ stated and the suite checks whichever one is live where it runs.
 ## Grinding a whole tree
 
 `grind-paradox` is the same acting shape pointed at a source tree instead of a
-change, and at another checkout instead of this one. Four things distinguish it.
+change, and at another checkout instead of this one. It is the first of three
+grinds — `grind-tests` audits a test suite and `grind-live-view` audits a
+LiveView layer — and all three share one skeleton: `grindFlow` takes a
+`GrindSpec` (the grind's name, its facts file, its lens table, and a synthesis
+suffix) and runs the facts-prepended `spread` panel, one synthesis derived
+from the spec's own name and lens table, then an orchestrated fixer under
+`grindRule` at the same facts. What a grind adds after that prefix is its own:
+`grind-paradox` and `grind-live-view` go straight to their green gates, and
+`grind-live-view`'s ranking clause rides in as the synthesis suffix, appended
+below the derived brief so authorization findings outrank performance and UX
+noise without replacing the roster the synthesis refuses on.
+
+`grind-tests` splices one more stage between its fixer and its gate: the full
+`reviewAuditFlow` panel reads the fixer's change through `asReviewSubject`,
+and a second orchestrated fixer acts on what it raised. A test-suite
+remediation's cheapest failure mode is a weakened assertion — invisible to a
+green gate, exactly what a review panel reads diffs for — so the ~84-leaf
+pass is spent there and nowhere else. The `AtChange` preamble's
+no-change-to-audit clause is what keeps that stage honest when the first
+fixer touched nothing.
+
+What distinguishes the paradox grind:
 
 - **`spread`, not `panel`.** One backend per lens, cycling, so 14 lenses cost 14
   leaves. A panel over the same lenses costs 42. Coverage rather than agreement:

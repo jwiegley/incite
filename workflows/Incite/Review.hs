@@ -37,6 +37,8 @@ module Incite.Review
   , grindSynthesisOver
   , grindTestsName
   , grindTestsLenses
+  , grindLiveViewName
+  , grindLiveViewLenses
     -- * Rescopings
     --
     -- | The two independent adjustments a grind lens stands under, and their
@@ -1195,6 +1197,36 @@ grindTestsLenses =
   , ("isolation", reporting grindIsolation)
   ]
 
+-- | The slug of the LiveView grind, bound for 'grindName'\'s reason.
+grindLiveViewName :: Text
+grindLiveViewName = "grind-live-view"
+
+-- | The lenses the LiveView grind fans out, each under the 'reporting' output
+-- contract, in the order their blocks are read — the same laws, order
+-- semantics and separation fence as 'grindTestsLenses'.
+--
+-- __The @auth@ row sits seventh on purpose.__ Position is backend assignment
+-- ('spread' pairs positionally), and the seventh slot lands on claude-agent
+-- under BOTH rosters — the full three-backend cycle and the blocked
+-- alternation. The auth lens is the one whose findings carry load-bearing
+-- severity words the synthesis ranks on, so its slot is chosen rather than
+-- inherited from the thematic order; the ordered @lens\@backend@ tables in
+-- @test\/Spec.hs@ are what hold it there.
+grindLiveViewLenses :: [(LeafName, Prompt)]
+grindLiveViewLenses =
+  [ ("css-hardening", reporting liveViewCssHardening)
+  , ("componentize", reporting liveViewComponentize)
+  , ("liveness", reporting liveViewLiveness)
+  , ("rerender", reporting liveViewRerender)
+  , ("pubsub", reporting liveViewPubsub)
+  , ("best-practices", reporting liveViewBestPractices)
+  , ("auth", reporting liveViewAuth)
+  , ("page-load", reporting liveViewPageLoad)
+  , ("dom-keying", reporting liveViewDomKeying)
+  , ("assign-bloat", reporting liveViewAssignBloat)
+  , ("ts-hooks", reporting liveViewTsHooks)
+  ]
+
 -- | 'reviewSynthesis' plus the two things a grind run needs of it, parameterised
 -- on the run's own name in the style of 'promptLintBrief'.
 --
@@ -1209,6 +1241,13 @@ grindTestsLenses =
 -- \"nothing found\" and is indistinguishable from a clean tree. Naming the
 -- blocks it received, and stopping when one is missing, is what turns a
 -- backend outage into a failure instead of a clean bill of health.
+--
+-- __The same refusal covers a wrong checkout.__ Every facts file opens with a
+-- probe that answers @FACTS PATHS UNRESOLVED@ outside its target root, and a
+-- static 'Flow' has no data-dependent skip — so the stop the probe asks for
+-- has to happen here, where the whole panel is in hand. Ranking twelve copies
+-- of that line would send the fixer, the review pass and the gate to work in
+-- a checkout the audit never read.
 --
 -- No separate TODO file. Upstream wrote one because its fixers ran in a later
 -- phase and needed a hand-off; here the fixer is the next stage of the same
@@ -1254,6 +1293,12 @@ grindSynthesisOver name lensNames =
     is unavailable returns nothing, and nothing folded into a ranked list reads
     exactly like a tree with no debt in it. Refusing is the only way a reader
     can tell those apart.
+
+    Refuse the same way if any block carries the line `FACTS PATHS UNRESOLVED`:
+    the panel ran outside the target checkout, so its blocks describe no tree
+    at all. Name the blocks that carry it, say the run must start again from
+    the checkout root, and do not rank anything — a page of refusals ranked as
+    findings sends a fixer to repair a tree nobody read.
   |]
 
 -- | The mid-run honesty auditor: one read-only leaf over a worker's session.

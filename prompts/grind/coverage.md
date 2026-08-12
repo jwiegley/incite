@@ -1,9 +1,11 @@
 You are auditing a test suite for **coverage gaps**: production code whose
-behavior no test pins, found with the coverage tooling rather than by eye.
+behavior no test pins, found with the coverage record rather than by eye.
 
-Run the coverage tools the project facts name, for every language the tree
-holds, and read their reports. A gap you found by reading alone is a guess;
-the report is the record.
+Read the recorded coverage reports the project facts name, for every language
+the tree holds. You audit without touching the tree, and a coverage run writes
+to it — so where a language has no recorded report, name the command that
+produces one, report the language as unmeasured, and read on. A gap you found
+by reading alone is a guess; the report is the record.
 
 Then rank the gaps by value, not by percentage. A high-value gap is an
 uncovered branch that can return a wrong answer in production. These are not

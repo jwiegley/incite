@@ -53,6 +53,7 @@ module Incite.Prompts
     -- * Grind lenses
   , paradoxFacts
   , testsFacts
+  , liveViewFacts
   , grindStubs
   , grindVacuous
   , grindDry
@@ -70,6 +71,17 @@ module Incite.Prompts
   , grindProofs
   , grindSelectors
   , grindIsolation
+  , liveViewCssHardening
+  , liveViewComponentize
+  , liveViewLiveness
+  , liveViewRerender
+  , liveViewPubsub
+  , liveViewBestPractices
+  , liveViewDomKeying
+  , liveViewPageLoad
+  , liveViewAuth
+  , liveViewAssignBloat
+  , liveViewTsHooks
     -- * Stacked pull requests
   , stackFacts
   , stackDisciplines
@@ -240,6 +252,13 @@ paradoxFacts = [promptFile|prompts/grind/paradox-facts.md|]
 testsFacts :: Prompt
 testsFacts = [promptFile|prompts/grind/tests-facts.md|]
 
+-- | 'paradoxFacts' for the LiveView grind: where the views, components,
+-- centralized topics, stable ids and client hooks live, the hook-registration
+-- convention, and the repair disciplines. Same three-section shape, same
+-- probe-first discipline, under the same structural law.
+liveViewFacts :: Prompt
+liveViewFacts = [promptFile|prompts/grind/live-view-facts.md|]
+
 -- | The four whole-tree grind lenses: unfinished work, tests that cannot fail,
 -- one decision written three times, and values baked in where they must be
 -- derived.
@@ -296,6 +315,40 @@ grindTestability = [promptFile|prompts/grind/testability.md|]
 grindProofs = [promptFile|prompts/grind/proofs.md|]
 grindSelectors = [promptFile|prompts/grind/selectors.md|]
 grindIsolation = [promptFile|prompts/grind/isolation.md|]
+
+-- | The eleven grind lenses that only a __LiveView application__ admits:
+-- component attribute hardening, markup repeated past a component's threshold,
+-- data with nothing keeping it live, renders nobody can see, broadcast shapes
+-- that flood mailboxes, the framework's own primitives unused, DOM identity
+-- across patches, the mount path's cost, authorization re-checked per event,
+-- per-socket memory, and round trips a client hook retires.
+--
+-- LiveView-specific on purpose, repo-agnostic by the same law as the rest:
+-- framework vocabulary is the lens's own subject, and every PROJECT identifier
+-- — module names, paths, the topics file, the hook-registration convention —
+-- lives in 'liveViewFacts' instead, under the fenced separation law in
+-- @test\/Spec.hs@.
+--
+-- 'liveViewAuth' is load-bearing beyond its rubric: it demands a severity word
+-- on every finding, and the LiveView grind's ranking clause matches on that
+-- word to keep authorization findings above performance and UX noise. A Spec
+-- case pins the demand.
+liveViewCssHardening, liveViewComponentize, liveViewLiveness, liveViewRerender :: Prompt
+liveViewCssHardening = [promptFile|prompts/grind/live-view-css-hardening.md|]
+liveViewComponentize = [promptFile|prompts/grind/live-view-componentize.md|]
+liveViewLiveness = [promptFile|prompts/grind/live-view-liveness.md|]
+liveViewRerender = [promptFile|prompts/grind/live-view-rerender.md|]
+
+liveViewPubsub, liveViewBestPractices, liveViewDomKeying, liveViewPageLoad :: Prompt
+liveViewPubsub = [promptFile|prompts/grind/live-view-pubsub.md|]
+liveViewBestPractices = [promptFile|prompts/grind/live-view-best-practices.md|]
+liveViewDomKeying = [promptFile|prompts/grind/live-view-dom-keying.md|]
+liveViewPageLoad = [promptFile|prompts/grind/live-view-page-load.md|]
+
+liveViewAuth, liveViewAssignBloat, liveViewTsHooks :: Prompt
+liveViewAuth = [promptFile|prompts/grind/live-view-auth.md|]
+liveViewAssignBloat = [promptFile|prompts/grind/live-view-assign-bloat.md|]
+liveViewTsHooks = [promptFile|prompts/grind/live-view-ts-hooks.md|]
 
 -- Stacked pull requests -------------------------------------------------------
 
