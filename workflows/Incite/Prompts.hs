@@ -251,10 +251,34 @@ docsStructure = [promptFile|prompts/review/docs-structure.md|]
 paradoxFacts :: Prompt
 paradoxFacts = [promptFile|prompts/grind/paradox-facts.md|]
 
--- | 'paradoxFacts' for the test-suite grind: the Elixir\/Phoenix\/TypeScript\/F*
--- application's runners, coverage and mutation tooling, generated-code layout,
--- and the fix hierarchy a repair stands under. Same three-section shape, same
--- probe-first discipline, fenced by the same structural law in @test\/Spec.hs@.
+-- | 'paradoxFacts' for the test-suite grind, and the one facts file that states
+-- no project's facts: @grind-tests@ runs on any checkout, so this file is the
+-- protocol for ESTABLISHING the runners, the coverage and mutation tooling, the
+-- generated-code layout and the proof layer from the tree, plus the fix
+-- hierarchy a repair stands under. Same three-section shape, same probe-first
+-- discipline, fenced by the same structural law in @test\/Spec.hs@.
+--
+-- __Its probe is the generic one__, and it has to be: the sibling files prove
+-- two named directories, which is the sharpest check available when you know
+-- the target. Here it is a checkout root (@.git@) holding a @flake.nix@ and at
+-- least one tracked test path. That admits a tree whose suite is somewhere
+-- unusual, and it still refuses the failure the probe exists for — a leaf
+-- started outside a checkout, resolving every path to nothing and reporting the
+-- clean tree it never read.
+--
+-- __The flake is probed for the gate's sake, not the audit's.__ Nothing in the
+-- twelve lenses needs one; 'Incite.Feature.grindTestsChecks' does. Without a
+-- flake @nix flake check@ cannot run at all, so the gate is red on every run
+-- for a reason no repair leaf could fix — 'Incite.Feature.grindCheckCmd'
+-- argues at length that a permanently red gate is worse than none. Probing for
+-- it turns that into a refusal in the run's first second, before twelve audit
+-- turns and two fixers are spent reaching a gate that was never going to pass.
+--
+-- __And absence is an answer here, not a gap.__ Nine of the twelve lenses ask
+-- about a layer a given project may simply not have. The file tells them to
+-- report that in one line with the evidence for it, because the derived
+-- synthesis brief refuses on a lens whose block arrived empty — silence about a
+-- missing mutation runner would stop the run as a backend outage.
 testsFacts :: Prompt
 testsFacts = [promptFile|prompts/grind/tests-facts.md|]
 
