@@ -54,8 +54,11 @@ module Incite.Feature
   , checkLoop
   , greenGate
   , repairLeaf
+  , grindCheckCmd
   , grindChecks
+  , grindFlow
   , grindGrant
+  , grindGrantFor
   , paradoxRule
   , stackPRs
   , stackPlanLenses
@@ -503,11 +506,13 @@ workerFuel = Nothing
 -- grant derived from this list and a grant that agrees with it today.
 grindChecks :: [(LeafName, NonEmpty Text)]
 grindChecks =
-  [ ("build", devShell "cabal build")
-  , ("tests", devShell "export paradox_datadir=$PWD/lib; cabal test")
+  [ ("build", grindCheckCmd "cabal build")
+  , ("tests", grindCheckCmd "export paradox_datadir=$PWD/lib; cabal test")
   ]
 
--- | A check, run inside the __target project's own dev shell__.
+-- | What a grind check's argv MEANS, decided once for every grind: the command,
+-- run inside the __target project's own dev shell__, with @bash -c@ innermost
+-- so metacharacters and exports survive the wrapper.
 --
 -- __This is not ceremony, and a rehearsal is what proved it.__ 'execStep' runs
 -- argv directly: no shell, no profile, no @nix develop@. Paradox's @test.sh@
@@ -522,9 +527,18 @@ grindChecks =
 -- then abort. A permanently red gate is worse than none: it teaches a reader
 -- that the gate means nothing.
 --
--- @nix@ as every check's head also lines the derived 'grindGrant' up with
--- 'actingGrant'\'s @nix*@, which is the same bargain the other acting workflows
--- already make: we run nothing ourselves that the project cannot reproduce.
+-- The Elixir grinds make the same bet on the same evidence: their own retired
+-- driver gated on @nix develop -c mix compile@, so that project too keeps its
+-- toolchain in a dev shell. Only a dry run in the target checkout can prove the
+-- wrapper — execute every rendered argv verbatim there before the first paid
+-- run, and reopen this choice if a check dies environment-shaped
+-- (@command not found@, a missing env var, a nix eval error) rather than on its
+-- own content.
+--
+-- @nix@ as every check's head also lines each derived grant ('grindGrantFor')
+-- up with 'actingGrant'\'s @nix*@, which is the same bargain the other acting
+-- workflows already make: we run nothing ourselves that the project cannot
+-- reproduce.
 --
 -- __And @cabal test@ rather than the project's @test.sh@.__ That script takes
 -- ONE suite name, and the name every document about this project reaches for —
@@ -534,11 +548,11 @@ grindChecks =
 -- package's tests gets all nine without this file keeping a tenth copy of that
 -- list. @paradox_datadir@ is the one thing @test.sh@ exports that the suites
 -- genuinely need, so it is exported here too.
-devShell :: Text -> NonEmpty Text
-devShell cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
+grindCheckCmd :: Text -> NonEmpty Text
+grindCheckCmd cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
 
--- | The exec policy 'grindParadox' runs under, __derived from 'grindChecks'__
--- rather than written beside it.
+-- | The exec policy a grind derives from its own check list, rather than
+-- writing beside it.
 --
 -- A grant and a check list are two statements of one fact, and the failure when
 -- they drift is silent in the direction that matters: an ungranted check is
@@ -546,13 +560,26 @@ devShell cmd = "nix" :| ["develop", "--command", "bash", "-c", cmd]
 -- still reads like a gate ran. Deriving it means the check list is the only
 -- place either can change.
 --
+-- __It permits by head-glob__ — @'NE.head' cmd <> \"*\"@ per check — never by
+-- rendered check line. The stricter reading would deny the very argv the gate
+-- runs (the fences in @test\/Spec.hs@ run 'Agent.Grant.permitExec' over each
+-- whole rendered line, and a line is not its own head), and a grant that
+-- denies its own gate invites editing the fence to match wrong prose.
+--
 -- @date@ and @mkdir@ are the synthesis leaf's, not a check's — it reads the day
 -- and creates @docs\/audits\/@ before writing the report. They are named here
--- because this is the workflow's whole exec policy, and a leaf whose write
+-- because this is a grind's whole exec policy, and a leaf whose write
 -- fails still returns the full ranked report, so the run would report success
 -- with no file on disk.
+grindGrantFor :: [(LeafName, NonEmpty Text)] -> Grant
+grindGrantFor checks =
+  execGrant ([NE.head cmd <> "*" | (_, cmd) <- checks] <> ["date*", "mkdir*"])
+
+-- | 'grindGrantFor' at 'grindChecks': the exec policy 'grindParadox' runs
+-- under, and the specialization the derivation is pinned by — the grant fences
+-- in @test\/Spec.hs@ read this binding through the runtime's own matcher.
 grindGrant :: Grant
-grindGrant = execGrant ([NE.head cmd <> "*" | (_, cmd) <- grindChecks] <> ["date*", "mkdir*"])
+grindGrant = grindGrantFor grindChecks
 
 -- | What a grind fixer stands under: the code rule, plus the tree's own facts
 -- and repair disciplines.
@@ -858,11 +885,7 @@ fixerContinuation =
 --
 -- __The subject is another checkout.__ Every path, build command and repair
 -- discipline lives in 'Incite.Prompts.paradoxFacts', prepended to whatever the
--- caller passes. A pure prepend rather than @workflowG@\'s default input,
--- because a caller's @input@ REPLACES that default — which would drop the facts
--- the moment somebody steered the run — and rather than a wrap per lens,
--- because one 'dimap'' covers all fourteen leaves and leaves the caller's text
--- as a genuine focus steer.
+-- caller passes — 'grindFlow' owns the prepend and says why it is a prepend.
 --
 -- __One backend per lens, not every backend on every lens.__ 'Incite.Review.spread'
 -- buys coverage where 'Incite.Review.panel' buys confidence: 14 leaves against
@@ -897,12 +920,34 @@ grindParadox =
       read what the lenses point you at.
     |]
     grindGrant
-    $ dimap' withFacts id (spread backends (lensesOf OfTree <> emissionLenses))
-      >>> refineWith "synthesis" (brief (grindSynthesis grindName)) id
-      >>> orchestrate (remediate paradoxRule fixerContinuation)
+    $ grindFlow paradoxFacts (lensesOf OfTree <> emissionLenses) (grindSynthesis grindName) paradoxRule
       >>> greenGate paradoxRule grindChecks
+
+-- | The shared grind prefix: the tree's facts prepended to the caller's steer,
+-- a 'spread' panel over the lenses, one synthesis, then an orchestrated fixer
+-- under the artifact rule. Every grind is this flow plus whatever it gates on —
+-- one binding, so a second grind cannot drift from 'grindParadox' in the shape
+-- they share.
+--
+-- The facts arrive as a __pure prepend, not as @workflowG@\'s default input__,
+-- because a caller's @input@ REPLACES that default — which would drop the facts
+-- the moment somebody steered the run — and rather than a wrap per lens,
+-- because one 'dimap'' covers every leaf of the panel and leaves the caller's
+-- text as a genuine focus steer.
+--
+-- What a grind supplies for itself: its facts file, its lens table (whose ORDER
+-- is semantic — 'spread' pairs backends positionally), its synthesis brief
+-- (derive it with 'Incite.Review.grindSynthesisOver' over the same table), and
+-- the rule its fixer stands under. The unchanged 'grindParadox' fences in
+-- @test\/Spec.hs@ and the render recorded at the hoist are what pin this
+-- binding to the shape that workflow always had.
+grindFlow :: Prompt -> [(LeafName, Prompt)] -> Prompt -> Prompt -> Flow Text Text
+grindFlow facts lenses synthesis rule =
+  dimap' withFacts id (spread backends lenses)
+    >>> refineWith "synthesis" (brief synthesis) id
+    >>> orchestrate (remediate rule fixerContinuation)
   where
-    withFacts steerText = promptText paradoxFacts <> "\n\n" <> steerText
+    withFacts steerText = promptText facts <> "\n\n" <> steerText
 
 -- | Run @checks@ __ourselves__ until they pass, doing @repair@ between trips,
 -- and keep the account that came in under a @## heading@ of its own.

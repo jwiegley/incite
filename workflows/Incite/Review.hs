@@ -15,6 +15,7 @@ module Incite.Review
   , reviewHeavy
   , reviewHeavyFlow
   , reviewAudit
+  , reviewAuditFlow
   , reviewDocs
   , reviewDocsFlow
   , fessAudit
@@ -309,13 +310,29 @@ reviewAudit =
       The working change in the current working directory. Run `git diff` (or
       `git show` for the last commit) and read it before reporting anything.
     |]
-    $ exploreFlows
-      [ ("full", panel auditLenses)
-      , ("units", regroup "units" reviewUnits)
-      , ("sequence", regroup "sequence" reviewSequence)
-      ]
-      unionFindings
-      >>> refineWith "synthesis" (brief reviewSynthesis) id
+    reviewAuditFlow
+
+-- | 'reviewAudit' as a plain 'Flow', so an acting workflow can run the same
+-- exhaustive panel inline as a stage instead of copying it — the reason
+-- 'reviewHeavyFlow' and 'reviewDocsFlow' are bindings.
+--
+-- __Exactly the flow 'reviewAudit' runs__, hoisted without a byte of change:
+-- the 'OfChange' panel at three granularities, with each regrouped view
+-- answered by the __full__ panel — not the @panelAcross [claudeAgentBackend]@
+-- narrowing 'reviewHeavyFlow' makes, which is what keeps this the 84-leaf tier
+-- and that one firable after a commit. The law is
+-- @reviewAudit ≡ workflow … reviewAuditFlow@; the render diff recorded when
+-- this was hoisted and the 84\/57 leaf-count row in @docs\/workflows.md@ are
+-- what pin it.
+reviewAuditFlow :: Flow Text Text
+reviewAuditFlow =
+  exploreFlows
+    [ ("full", panel auditLenses)
+    , ("units", regroup "units" reviewUnits)
+    , ("sequence", regroup "sequence" reviewSequence)
+    ]
+    unionFindings
+    >>> refineWith "synthesis" (brief reviewSynthesis) id
   where
     auditLenses = lensesOf OfChange
     regroup name how = refineWith ("regroup:" <> name) (brief how) id >>> panel auditLenses

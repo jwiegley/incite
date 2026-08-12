@@ -4,6 +4,7 @@ import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (find, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -28,6 +29,7 @@ import Incite.Feature
   , paradoxRule
   , grindChecks
   , grindGrant
+  , grindGrantFor
   , grindParadox
   , asRetroSubject
   , asDocsSubject
@@ -110,6 +112,7 @@ import Incite.Review
   , forbiddenPairings
   , grindName
   , grindSynthesis
+  , grindSynthesisOver
   , toTree
   , architectureOfChange
   , disciplineOfPanel
@@ -1504,6 +1507,70 @@ grindPanelTests =
           | line <- ["rm -rf /", "git push origin master", "curl example.com"]
           , permitExec grindGrant line
           ]
+    , -- __The generalization, on a check list no shipped grind has.__ Every
+      -- grant case above evaluates 'grindGrantFor' only at 'grindChecks', so a
+      -- 'grindGrantFor' that ignored its argument and returned 'grindGrant'
+      -- would pass them all — and would hand the next grind a gate whose every
+      -- check is denied inside the run. Synthetic heads that are not @nix@ are
+      -- what refute that: the derived grant must permit them, keep the
+      -- synthesis leaf's two, deny the trio, and NOT permit the paradox heads
+      -- its argument never named.
+      testCase "grindGrantFor derives its grant from the checks it is given" $
+        let checks =
+              [ ("fmt", "gofmt" :| ["-l", "."])
+              , ("lint", "golangci-lint" :| ["run", "./..."])
+              ] ::
+                [(LeafName, NonEmpty Text)]
+            grant = grindGrantFor checks
+         in report
+              ( concat
+                  [ [ "denied by the derived grant: " <> tshow line
+                    | (_, cmd) <- checks
+                    , let line = T.unwords (NE.toList cmd)
+                    , not (permitExec grant line)
+                    ]
+                  , [ "denied by the derived grant: " <> tshow line
+                    | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
+                    , not (permitExec grant line)
+                    ]
+                  , [ "the derived grant permits " <> tshow line
+                    | line <-
+                        [ "rm -rf /"
+                        , "git push origin master"
+                        , "curl example.com"
+                        , -- The paradox check head. Permitting it here means the
+                          -- derivation read 'grindChecks' instead of its argument.
+                          "nix develop --command bash -c 'cabal build'"
+                        ]
+                    , permitExec grant line
+                    ]
+                  ]
+              )
+    , -- __The roster interpolation, on a roster no shipped grind has.__ The
+      -- paradox fences only ever evaluate 'grindSynthesisOver' at the shipped
+      -- specialization, so a body that interpolated a hard-wired roster — or
+      -- dropped a lens, or doubled one — ships green there and surfaces two
+      -- steps later attributed to the wrong change. Distinctive synthetic names
+      -- pin that the render names the grind's report path and every roster
+      -- lens exactly once, and counts the roster it was given.
+      testCase "grindSynthesisOver names the grind and every roster lens exactly once" $
+        let roster = ["alpha-lens", "beta-lens", "gamma-lens"] :: [LeafName]
+            rendered = promptText (grindSynthesisOver "grind-synthetic" roster)
+         in report
+              ( concat
+                  [ [ "the report path does not name the grind"
+                    | T.count "docs/audits/grind-synthetic-<YYYY-MM-DD>.md" rendered /= 1
+                    ]
+                  , [ "roster lens " <> leafNameText n <> " listed " <> tshow k <> " times"
+                    | n <- roster
+                    , let k = T.count ("- " <> leafNameText n) rendered
+                    , k /= 1
+                    ]
+                  , [ "the roster count is not derived from the roster"
+                    | not ("These 3 lenses were sent" `T.isInfixOf` T.unwords (T.words rendered))
+                    ]
+                  ]
+              )
     ]
 
 -- | The acting leaves of 'stackPRs', in the order the workflow runs them.
