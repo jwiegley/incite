@@ -36,11 +36,13 @@ import Incite.Feature
   , grindGrant
   , grindGrantFor
   , grindParadox
+  , grindParadoxSpec
   , grindRule
   , grindTests
   , grindTestsChecks
   , grindTestsGrant
   , grindTestsRule
+  , grindTestsSpec
   , grindLiveView
   , grindLiveViewChecks
   , grindLiveViewGrant
@@ -50,6 +52,7 @@ import Incite.Feature
   , asRetroSubject
   , asDocsSubject
   , asReviewSubject
+  , asReviewSubjectIgnoring
   , asStackSubject
   , codeRule
   , continueMarker
@@ -135,6 +138,7 @@ import Incite.Review
   , grindSynthesis
   , grindSynthesisOver
   , grindTestsLenses
+  , grindTestsName
   , grindLiveViewLenses
   , grindLiveViewName
   , toTree
@@ -834,29 +838,42 @@ orientTests =
       -- account as though it were the diff and call it a completed pass. A
       -- later edit that drops the clause fails here, in CI — nothing else
       -- reads these bytes, so nothing else can.
-      testCase "the change orientation carries the no-change-to-audit clause" $
+      --
+      -- And the GENERIC orientation carries no artifact exclusion, asserted
+      -- from the negative side: a categorical @docs/audits/@ exclusion here
+      -- dismissed a legitimate change whose ONLY file was an audit report as
+      -- `no change to audit`, and an account-claims-scoped one was dead at
+      -- the one call site that needed it (the fixer's summary never claims
+      -- the synthesis's report). The run's own artifacts are excluded at the
+      -- call site instead — the case below reads that frame.
+      testCase "the change orientation carries the no-change-to-audit clause and no exclusion" $ do
         report
           [ "preambleOf AtChange does not say " <> tshow needle
-          | needle <-
-              [ "no change to audit"
-              , -- And the run's own synthesis report is not the change. The
-                -- audit stage writes a dated report under `docs/audits/`
-                -- before any fixer runs, so a fixer that touched nothing still
-                -- leaves a dirty tree — without these bytes the panel reviews
-                -- the report (or any unrelated pre-existing edit beside it) as
-                -- the fixer's delta, and a no-op fix walks around the
-                -- no-change clause above.
-                "A dated report under `docs/audits/` that the account below claims as its own output is this run's own artifact"
-              , "leave it out of the no-change decision"
-              , -- The exclusion's own limit, in bytes: it is scoped by the
-                -- account's claim, not by the path. A categorical exclusion
-                -- dismissed a legitimate change whose ONLY file was an audit
-                -- report as `no change to audit` — valid review input,
-                -- answered with a refusal to review.
-                "A `docs/audits/` file the account does not claim is part of the change like any other file"
-              ]
+          | needle <- ["no change to audit"]
           , not (needle `T.isInfixOf` preambleOf AtChange)
           ]
+        assertBool
+          "preambleOf AtChange excludes docs/audits/ — an audit-report-only change would go unreviewed everywhere"
+          (not ("docs/audits" `T.isInfixOf` preambleOf AtChange))
+    , -- The own-artifacts frame @grind-tests@ reframes its review pass
+      -- through, in both directions: it names the report directory as the
+      -- run's own product and keeps it out of the no-change decision, and it
+      -- is exactly the generic frame above the exclusion — so the exclusion
+      -- exists nowhere except where a run says its own artifacts are.
+      testCase "asReviewSubjectIgnoring names the run's own artifacts above the generic frame" $ do
+        let framed = asReviewSubjectIgnoring ("docs/audits/" :| []) "ACCOUNT"
+        report
+          [ "the ignoring frame does not say " <> tshow needle
+          | needle <-
+              [ "files under `docs/audits/` are the run's own product"
+              , "out of the no-change decision"
+              , "a tree whose only edits are its own artifacts has no change to audit"
+              ]
+          , not (needle `T.isInfixOf` framed)
+          ]
+        assertBool
+          "the exclusion does not sit ABOVE the untouched generic frame"
+          (("\n\n" <> asReviewSubject "ACCOUNT") `T.isSuffixOf` framed)
     , -- What keeps 'reframings' honest. Golden coverage is only as good as the
       -- list naming the goldens, and that list is hand-written: a fourth
       -- orientation would ship with its bytes unfenced and every existing test
@@ -1673,6 +1690,28 @@ grindPanelTests =
         map (promptText . snd) (gsLenses grindLiveViewSpec)
           @?= map (promptText . snd) grindLiveViewLenses
         gsPins grindLiveViewSpec @?= [("auth", "claude-agent")]
+    , -- The other two shipped specs, under the same all-fields law and for
+      -- the same reason: until these were named top-level bindings the specs
+      -- lived inline in their workflows, where a quiet rebuild — another
+      -- tree's facts, a same-named lens with a swapped body — shipped green
+      -- while every plan and cost render stayed identical. One fold, so the
+      -- next grind's spec joins the law by joining the list.
+      testCase "grind-paradox's and grind-tests' specs are exactly their named ingredients" $
+        mapM_
+          ( \(label, spec, name, facts, lenses) -> do
+              assertEqual (label <> ": gsName") name (gsName spec)
+              assertEqual (label <> ": gsFacts") (promptText facts) (promptText (gsFacts spec))
+              assertEqual (label <> ": lens names") (map fst lenses) (map fst (gsLenses spec))
+              assertEqual
+                (label <> ": lens bodies")
+                (map (promptText . snd) lenses)
+                (map (promptText . snd) (gsLenses spec))
+              assertEqual (label <> ": suffix") "" (promptText (gsSynthesisSuffix spec))
+              assertEqual (label <> ": pins") [] (gsPins spec)
+          )
+          [ ("grind-paradox", grindParadoxSpec, grindName, paradoxFacts, grindLenses)
+          , ("grind-tests", grindTestsSpec, grindTestsName, testsFacts, grindTestsLenses)
+          ]
     , -- The severity vocabulary, asserted from both sides — 'synthesisAdmits'\'s
       -- shape, for its reason: the auth lens writes the words and the ranking
       -- clause matches on them, and they live in two files nothing else reads

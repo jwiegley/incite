@@ -33,6 +33,7 @@ module Incite.Review
   , emissionLenses
   , spread
   , spreadPinned
+  , auditReportDir
   , factsRefusalLine
   , grindName
   , grindSynthesis
@@ -1188,6 +1189,15 @@ paired (name, lens) (backendTag, scope) = reviewer scope (name <> "@" <> backend
 factsRefusalLine :: Text
 factsRefusalLine = "FACTS PATHS UNRESOLVED"
 
+-- | Where every grind synthesis writes its dated report, relative to the
+-- target checkout — spliced into 'grindSynthesisOver', and passed by
+-- @grind-tests@ to @Incite.Feature.asReviewSubjectIgnoring@ so its review
+-- pass reads the report as the run's own artifact rather than as the fixer's
+-- delta. One binding, so the stage that writes there and the stage that
+-- excludes it cannot come to name different directories.
+auditReportDir :: Text
+auditReportDir = "docs/audits/"
+
 -- | The slug of the grind workflow, in one place. @workflowG@ names the tool
 -- with it and 'grindSynthesis' writes the report under it, so the file on disk
 -- and the tool that produced it cannot come to be called different things.
@@ -1313,8 +1323,8 @@ grindSynthesisOver name lensNames =
     TWO ADDITIONS, and neither replaces anything above.
 
     **Write the report down.** First run `date +%Y-%m-%d`. Then create the
-    directory `docs/audits/` if it is absent, and write the ranked list you just
-    produced to `docs/audits/#{name}-<YYYY-MM-DD>.md`, substituting the date you
+    directory `#{auditReportDir}` if it is absent, and write the ranked list you just
+    produced to `#{auditReportDir}#{name}-<YYYY-MM-DD>.md`, substituting the date you
     just read. Return the ranked list itself as your answer as well — the file
     is a copy for a person, and the answer is what the next stage acts on.
 

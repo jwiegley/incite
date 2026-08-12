@@ -255,3 +255,60 @@ factored out of the existing grind-paradox / review-audit machinery.
   `Just 12` positivity story that the fourth pass had deliberately
   superseded, and its live-view plan shape predated the vitest row. Renders
   re-verified fresh, per the entry.
+- FIFTH PASS (the operator session's own fix-all subagent, reconciling on
+  `32a0c28` in worktree `wg-fix5-reconcile` as designated sole writer; the
+  verified branch is handed to the operator for review — nothing here touches
+  master). What it changed, and why:
+  - AtChange audit-report exclusion, third and final shape: the fourth pass's
+    claims-scoped clause is REPLACED by a call-site parameter. The account
+    reaching grind-tests' review pass is the FIXER's closing summary, which
+    never claims the synthesis's report as its own output — so the
+    claims-scoped clause was dead at the one call site that needed an
+    exclusion, and the run's own report would again have polluted the fixer's
+    review (or been reviewed in place of `no change to audit` after a no-op
+    fix). Now: `preambleOf AtChange` carries NO exclusion (fenced from the
+    negative side — a change whose only file is an audit report is audited by
+    every generic consumer, which was the recovered seventh finding);
+    `asReviewSubjectIgnoring` names the run's own artifact paths, and
+    grind-tests passes `auditReportDir` — one binding shared with the
+    synthesis brief's report path, so the writer and the excluder cannot name
+    different directories. Golden re-recorded from the code; both directions
+    fenced ("the change orientation carries the no-change-to-audit clause and
+    no exclusion", "asReviewSubjectIgnoring names the run's own artifacts
+    above the generic frame").
+  - The shipped-spec fence now covers all three grinds: `grindTestsSpec` and
+    `grindParadoxSpec` hoisted to named bindings the workflows consume, with
+    `grindTestsRule`/`paradoxRule` derived through `gsFacts` like
+    grind-live-view's, and an all-fields equality case folding over both —
+    the same quiet-inline-rebuild hole the live-view fence closed.
+  - STE red trials, re-run by this pass with the evidence captured: planting
+    `robust` in commands/grind-tests.md failed checks.ste-prompts with
+    "ste-gate: FAILED / commands/grind-tests.md: slop_word x1"; the same word
+    in commands/grind-live-view.md failed with "commands/grind-live-view.md:
+    slop_word x1"; both reverted byte-exactly (git checkout), after which
+    "ste-gate: 69 prompt files clean on latin_abbrev, contraction, slop_word"
+    (the linter self-test ran first: 12 violations in the slop fixture, 0 in
+    the clean one).
+  - Verified on this tree: nix flake check green; 233/233 in BOTH roster
+    modes; `cost` positive for all three grinds; `plan grind-live-view`
+    carries the `exec vitest` leaf; each grind's plan carries exactly one
+    fuel-1 stop node. grind-paradox plan+cost diffed against a
+    SHA256-guarded copy of the step-1 baseline: the delta is EXACTLY the
+    stop node (`loop Fuel 1` over `pure-adapter`/`id`, plus the one `seq`
+    its insertion re-brackets) and the skeleton-count line (103 -> 107);
+    worst case and dominating bound identical, every leaf identical.
+  - Baseline bookkeeping: the step-1 `plan-grind-tests.txt` capture NEVER
+    matched 7edd211 — it shows the second fixer's loop at the unbounded
+    sentinel where the shipped `Just 12` renders `fuelMax = 12` — so that
+    half of the baseline was stale before any stop node existed. Fresh
+    captures for BOTH mix grinds (plan+cost) were re-recorded from this
+    reconciled tree into /tmp/grind-baseline; the paradox pair is untouched
+    (mtimes 02:21, sums match the operator's guard) and stays the step-1
+    record, with the stop-node delta above as its documented offset.
+  - Arbitration record, final: the operator first ruled the stop leaf and
+    `spreadPinned`/`gsPins` stripped (54f650d's conservative line, protecting
+    the baseline identity), then reversed on the committed evidence — the
+    stop is red-trialed, fenced and disclosed, the baseline break is a
+    recorded deliberate decision, and the grind-tests half of the protected
+    baseline was stale anyway. Both stay. The fourth pass's AtChange bullet
+    above is the one item that pass got wrong, superseded here.

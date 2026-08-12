@@ -37,6 +37,7 @@ module Incite.Feature
   , decideRed
   , decideFactsResolved
   , asReviewSubject
+  , asReviewSubjectIgnoring
   , asRetroSubject
   , asDocsSubject
   , asStackSubject
@@ -63,12 +64,14 @@ module Incite.Feature
   , grindFlow
   , grindGrant
   , grindGrantFor
+  , grindParadoxSpec
   , grindRule
   , grindTests
   , grindTestsChecks
   , grindTestsGrant
   , grindTestsReviewFuel
   , grindTestsRule
+  , grindTestsSpec
   , grindLiveView
   , grindLiveViewChecks
   , grindLiveViewGrant
@@ -124,6 +127,7 @@ import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 import Incite.Backend (backends, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
+  , auditReportDir
   , docsStrategyOfPlan
   , emissionLenses
   , factsRefusalLine
@@ -664,10 +668,13 @@ grindRule facts =
     #{facts}
   |]
 
--- | 'grindRule' at 'Incite.Prompts.paradoxFacts': what 'grindParadox'\'s fixer
--- and its gate's repair leaf stand under.
+-- | 'grindRule' at the paradox grind's own facts: what 'grindParadox'\'s
+-- fixer and its gate's repair leaf stand under. Derived through
+-- @'gsFacts' 'grindParadoxSpec'@ for 'grindLiveViewRule'\'s reason: the audit
+-- half reads the spec's facts and the gate repairs under this rule, and two
+-- independent spellings of one set of facts drift silently.
 paradoxRule :: Prompt
-paradoxRule = grindRule paradoxFacts
+paradoxRule = grindRule (gsFacts grindParadoxSpec)
 
 -- | Run @worker@ under the orchestrator every acting workflow uses: each trip
 -- is one worker turn taking the previous trip's own summary as its input, and
@@ -757,16 +764,19 @@ data Orientation
 -- Total in 'Orientation', so a new constructor cannot be added without saying
 -- where its evidence lives.
 --
--- 'AtChange'\'s @docs\/audits\/@ exclusion is scoped by the account beneath
--- it, not by the path alone: only a report the account claims as its own
--- output sits outside the change. A categorical exclusion was tried first and
--- dismissed a legitimate review whose whole change WAS an audit-report edit
--- as @no change to audit@ — the account is the one thing every consumer of
--- this orientation already has in hand that tells the two apart.
+-- 'AtChange' carries no exclusion for a run's own artifacts, on purpose:
+-- which files are a run's own product is a fact about one caller's chain, not
+-- about change review. A categorical @docs\/audits\/@ exclusion was tried
+-- here first and dismissed a legitimate review whose whole change WAS an
+-- audit-report edit as @no change to audit@; scoping it by the account's
+-- claim was tried next and died where it was needed most, because the account
+-- reaching @grind-tests@'s review pass is the FIXER's summary, which never
+-- claims the synthesis's report. The stage that writes such artifacts names
+-- them itself, through 'asReviewSubjectIgnoring'.
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. A dated report under `docs/audits/` that the account below claims as its own output is this run's own artifact, not part of the change: leave it out of the review, and leave it out of the no-change decision — a tree whose only edit is that artifact has no change to audit. A `docs/audits/` file the account does not claim is part of the change like any other file. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
@@ -821,6 +831,30 @@ preambleViolations ps =
 -- written for a diff and this is the one place that says which diff.
 asReviewSubject :: Text -> Text
 asReviewSubject = orient AtChange
+
+-- | 'asReviewSubject' for a stage whose own run has ALREADY written artifacts
+-- into the tree it points the panel at, naming the directories those
+-- artifacts live under. A parameter at the call site rather than a clause in
+-- 'preambleOf', because which files are a run's own product is a fact about
+-- one caller's chain, not about change review — with the exclusion in the
+-- shared preamble, a legitimate change whose ONLY file was an audit report
+-- was dismissed as @no change to audit@ by every consumer at once, and
+-- scoping the shared clause by the account's claim left it dead here (see
+-- 'preambleOf').
+--
+-- @grind-tests@ passes 'Incite.Review.auditReportDir': its synthesis writes
+-- the dated report there before any fixer runs, so the review pass over the
+-- fixer's change would otherwise read the run's own report as part of the
+-- fixer's delta — or, when the fixer touched nothing, review it in place of
+-- reporting no change.
+asReviewSubjectIgnoring :: NonEmpty Text -> Text -> Text
+asReviewSubjectIgnoring paths summary =
+  ownArtifacts <> "\n\n" <> asReviewSubject summary
+  where
+    ownArtifacts =
+      "This run has already written its own artifacts into the tree under review: files under "
+        <> T.intercalate ", " ["`" <> p <> "`" | p <- NE.toList paths]
+        <> " are the run's own product, not part of the change. Leave them out of the review, and out of the no-change decision — a tree whose only edits are its own artifacts has no change to audit."
 
 -- | 'orient' at 'AtRecord'.
 --
@@ -1000,15 +1034,23 @@ grindParadox =
       read what the lenses point you at.
     |]
     grindGrant
-    $ grindFlow
-      GrindSpec
-        { gsName = grindName
-        , gsFacts = paradoxFacts
-        , gsLenses = lensesOf OfTree <> emissionLenses
-        , gsSynthesisSuffix = mempty
-        , gsPins = []
-        }
+    $ grindFlow grindParadoxSpec
       >>> greenGate paradoxRule grindChecks
+
+-- | Everything the paradox grind supplies for itself, at the top level for
+-- 'grindLiveViewSpec'\'s reason: the shipped-spec fence in @test\/Spec.hs@
+-- reads the named binding, so a spec quietly rebuilt inline — another tree's
+-- facts, a same-named lens with a swapped body — cannot ship green while
+-- every plan and cost render stays identical.
+grindParadoxSpec :: GrindSpec
+grindParadoxSpec =
+  GrindSpec
+    { gsName = grindName
+    , gsFacts = paradoxFacts
+    , gsLenses = lensesOf OfTree <> emissionLenses
+    , gsSynthesisSuffix = mempty
+    , gsPins = []
+    }
 
 -- | Everything one grind supplies for itself, by name. A record with one
 -- constructor rather than positional arguments, because the positional form
@@ -1128,13 +1170,15 @@ grindTestsChecks =
 grindTestsGrant :: Grant
 grindTestsGrant = grindGrantFor grindTestsChecks
 
--- | 'grindRule' at 'Incite.Prompts.testsFacts': what the test-suite grind's
--- fixers stand under — the one inside 'grindFlow', the second one acting on
--- the review panel's findings, and the gate's repair leaf. Splicing the facts
--- is how a fixer learns the fix hierarchy (source-of-truth first, proof layer
--- second, direct code last) that a red gate is cheapest to defeat by ignoring.
+-- | 'grindRule' at the test-suite grind's own facts: what its fixers stand
+-- under — the one inside 'grindFlow', the second one acting on the review
+-- panel's findings, and the gate's repair leaf. Derived through
+-- @'gsFacts' 'grindTestsSpec'@ for 'grindLiveViewRule'\'s reason. Splicing the
+-- facts is how a fixer learns the fix hierarchy (source-of-truth first, proof
+-- layer second, direct code last) that a red gate is cheapest to defeat by
+-- ignoring.
 grindTestsRule :: Prompt
-grindTestsRule = grindRule testsFacts
+grindTestsRule = grindRule (gsFacts grindTestsSpec)
 
 -- | Audit a test suite with twelve lenses, rank and fix what they found, audit
 -- the FIX with the exhaustive review panel, fix what that found, then prove
@@ -1142,14 +1186,17 @@ grindTestsRule = grindRule testsFacts
 --
 -- 'grindParadox'\'s shape over 'grindFlow', plus the one segment that workflow
 -- does not run: a full 'Incite.Review.reviewAuditFlow' pass over the fixer's
--- change, reframed through 'asReviewSubject', with a second orchestrated fixer
--- acting on what the panel raised. A test-suite remediation is the change most
--- worth that price — its cheapest failure mode is a fix that weakens what a
--- test asserts, which is invisible to a green gate and exactly what a review
--- panel reads diffs for. 'asReviewSubject'\'s own no-change clause is what
--- keeps the pass honest when the fixer touched nothing: the panel reports
--- @no change to audit@ rather than reviewing the account as though it were a
--- diff.
+-- change, reframed through 'asReviewSubjectIgnoring' at
+-- 'Incite.Review.auditReportDir' (the synthesis has already written its dated
+-- report there, and the report is the run's own product, not the fixer's
+-- delta), with a second orchestrated fixer acting on what the panel raised. A
+-- test-suite remediation is the change most worth that price — its cheapest
+-- failure mode is a fix that weakens what a test asserts, which is invisible
+-- to a green gate and exactly what a review panel reads diffs for. The
+-- no-change clause plus the own-artifacts exclusion is what keeps the pass
+-- honest when the fixer touched nothing: the panel reports
+-- @no change to audit@ rather than reviewing the report — or the account —
+-- as though either were a diff.
 grindTests :: Workflow
 grindTests =
   workflowG
@@ -1169,17 +1216,23 @@ grindTests =
       what the lenses point you at.
     |]
     grindTestsGrant
-    $ grindFlow
-      GrindSpec
-        { gsName = grindTestsName
-        , gsFacts = testsFacts
-        , gsLenses = grindTestsLenses
-        , gsSynthesisSuffix = mempty
-        , gsPins = []
-        }
-      >>> dimap' asReviewSubject id reviewAuditFlow
+    $ grindFlow grindTestsSpec
+      >>> dimap' (asReviewSubjectIgnoring (auditReportDir :| [])) id reviewAuditFlow
       >>> orchestrateWith grindTestsReviewFuel (remediate grindTestsRule fixerContinuation)
       >>> greenGate grindTestsRule grindTestsChecks
+
+-- | Everything the test-suite grind supplies for itself, at the top level for
+-- 'grindLiveViewSpec'\'s reason: the shipped-spec fence in @test\/Spec.hs@
+-- reads the named binding rather than a copy.
+grindTestsSpec :: GrindSpec
+grindTestsSpec =
+  GrindSpec
+    { gsName = grindTestsName
+    , gsFacts = testsFacts
+    , gsLenses = grindTestsLenses
+    , gsSynthesisSuffix = mempty
+    , gsPins = []
+    }
 
 -- | The ceiling on @grind-tests@'s second fixer — the one acting on the
 -- review panel's findings. Finite for 'stackFuel'\'s cost reason: this
