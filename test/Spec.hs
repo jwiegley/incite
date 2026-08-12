@@ -35,6 +35,7 @@ import Incite.Feature
   , asDocsSubject
   , asReviewSubject
   , asStackSubject
+  , codeChecks
   , codeRule
   , continueMarker
   , decideContinue
@@ -1873,10 +1874,21 @@ liteTests =
       -- a loop-free 'Incite.Feature.orchestrateWith' would get wrong: the fuel
       -- is a ceiling, not a schedule, and a job finished on trip two costs two
       -- turns.
+      --
+      -- __The stopping trip is derived from the fuel, not written as 2.__ A
+      -- literal here is an assertion about @'Just' 3@ and nothing else: lower
+      -- 'Incite.Feature.liteFuel' to @'Just' 2@ and the case is back on the cap,
+      -- where a fuel-as-schedule loop passes it again. One below the cap is
+      -- short of it at every fuel, and the margin itself is asserted — a cap of
+      -- one leaves no room to converge early and makes this case unstatable
+      -- rather than false.
       testCase "a converged loop stops on the trip that said so, short of the cap" $ do
-        let doneOnTwo n = if n >= 2 then "WORK COMPLETE" else continueMarker
-        converged <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker doneOnTwo)) "THE PLAN"
-        converged @?= tripSummary 2 "WORK COMPLETE"
+        let cap = fromMaybe 0 liteFuel
+            stopAt = cap - 1
+            doneThen n = if n >= stopAt then "WORK COMPLETE" else continueMarker
+        assertBool ("liteFuel is " <> show cap <> ", which leaves no trip short of the cap") (stopAt >= 1)
+        converged <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker doneThen)) "THE PLAN"
+        converged @?= tripSummary stopAt "WORK COMPLETE"
         decideContinue converged @?= Right converged
     , -- __Where the marker is legible, and where it is not.__ The two cases
       -- above fence what the LOOP yields. This one fences what becomes of that
@@ -1893,34 +1905,73 @@ liteTests =
       -- marker. Both halves are asserted, and the second is what a relay added
       -- later would fail — which is the day the docs sentence changes.
       --
-      -- 'runByLeaf' rather than 'flowOutput' because the question needs two
-      -- different answers in one run: an implement leaf that never converges,
-      -- and every other leaf answering as itself. One uniform answer proves
-      -- nothing here — it would be both the marker's source and the fixer's
-      -- output.
+      -- 'runByLeaf' rather than 'flowOutput' because the question needs every
+      -- leaf's answer told apart: one uniform answer is both the marker's source
+      -- and the fixer's output, so an assertion about the final artifact would
+      -- hold whichever leaf wrote it. Each leaf answers @\<\<its own name\>\>@,
+      -- which is what makes @final@ below name the leaf that produced it.
+      --
+      -- __The relayed text is the whole summary, not the marker.__ Matching the
+      -- bare phrase is satisfied by the first post-loop brief that QUOTES the
+      -- marker — 'Incite.Feature.preambleOf' does not, but a lens rewritten to
+      -- explain the status line would — and that passes with the relay broken,
+      -- which is the exact failure this case was written after.
       testCase "the marker reaches the panel and never the final artifact" $ do
-        let exhaustedWorker n
-              | n == "implement" = "edited three files\n" <> continueMarker
-              | otherwise = leafAnswer
-        (final, sent) <- runByLeaf shipFeatureLite exhaustedWorker "THE PLAN"
+        let yielded = "edited three files\n" <> continueMarker
+            byLeaf n = if n == "implement" then yielded else "<<" <> n <> ">>"
+        (final, sent) <- runByLeaf shipFeatureLite byLeaf "THE PLAN"
         assertBool
           "no leaf after the loop was shown the summary the loop yielded"
-          (any (\(n, rendered) -> n /= "implement" && T.isInfixOf continueMarker rendered) sent)
-        -- The final artifact is the fixer's own answer with the gate's verdict
-        -- under its heading: nothing appends the LOOP's status to it, which is
-        -- why @docs/operations.md@ sends an operator to the transcript instead.
-        -- The @✓@ line is upstream's @decodeOutcome@ spelling, written out for
-        -- the reason the @ask:gate:@ fragment below is.
-        final @?= leafAnswer <> "\n\n## gate\n\n✓ flake-check (exit 0)"
+          (any (\(n, rendered) -> n /= "implement" && T.isInfixOf yielded rendered) sent)
+        -- And it reaches them ORIENTED. Nothing else fences the
+        -- @dimap' asReviewSubject id@ around the panel: delete it and all five
+        -- lenses review the worker's prose as though it were the change, with
+        -- every other case here still green.
+        report
+          [ "the " <> n <> " lens was not pointed at the change"
+          | n <- ["correctness", "fess", "complexity", "ponytail", "qa"]
+          , not (any (\(leaf, rendered) -> leaf == n && T.isInfixOf (preambleOf AtChange) rendered) sent)
+          ]
+        -- The final artifact is the FIXER's own paragraph plus the gate's
+        -- verdict under its heading — the loop's status is nowhere in it, which
+        -- is why @docs/operations.md@ sends an operator to the transcript
+        -- instead. The @✓@ line is upstream's @decodeOutcome@ spelling, written
+        -- out for the reason the @ask:gate:@ fragment below is: the coupling is
+        -- to another repository's literals and a rename there would otherwise
+        -- weaken this to an assertion about nothing.
+        final @?= "<<remediate>>\n\n## gate\n\n✓ flake-check (exit 0)"
     , -- __The grant, pinned to the binding the prose names.__ Every other case
       -- here reads 'Agent.Run.wfFlow'; this reads 'Agent.Run.wfGrant', which
       -- nothing else does for this workflow. README, AGENTS.md and
       -- @docs\/workflows.md@ all state that @ship-feature-lite@ runs under
       -- 'Incite.Feature.actingGrant' — swapping @workflowGReq@ for
-      -- @workflowReq@, or widening the grant here, leaves every one of those
-      -- claims false and the rest of the suite green.
+      -- @workflowReq@ leaves every one of those claims false and the rest of the
+      -- suite green.
       testCase "runs under actingGrant, which is what every document says" $
         wfGrant shipFeatureLite @?= actingGrant
+    , -- __And what that grant contains__, which the case above cannot see: it
+      -- pins the BINDING, so redefining 'Incite.Feature.actingGrant' as
+      -- @execGrant [\"*\"]@ keeps it green while falsifying the @nix*@ claim in
+      -- README, AGENTS.md and both documents. 'grindGrant' and 'stackGrant'
+      -- carry this pair already; the shared grant had neither half.
+      --
+      -- Through 'permitExec' over @T.unwords@, which is what @Agent.Run@ applies
+      -- to an 'Agent.Op.Exec' leaf, and over the gate's own argv rather than a
+      -- transcription of it: a check the grant denies is refused inside the run
+      -- (exit 126), so the gate reads a red no repair leaf can fix.
+      testCase "actingGrant permits the gate's check as the runtime spells it" $
+        report
+          [ "denied by actingGrant: " <> tshow line
+          | (_, cmd) <- codeChecks
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec actingGrant line)
+          ]
+    , testCase "actingGrant denies what no check asked for" $
+        report
+          [ "actingGrant permits " <> tshow line
+          | line <- ["rm -rf /", "git push origin master", "gh pr merge 1", "curl example.com"]
+          , permitExec actingGrant line
+          ]
     , -- __What the run ends on, stated as an order and as an absence.__
       --
       -- The order first: the last agent to touch the tree is the fixer, and a
@@ -1971,7 +2022,16 @@ liteTests =
         -- One question, and it is the steer BEFORE the work — the gate that
         -- costs nothing to auto-answer, because answering it wrong spends a
         -- planning turn rather than opening a pull request.
+        --
+        -- __Which side of the work it sits on is the whole safety argument__,
+        -- and the identity of the single ask cannot state it: move the steer
+        -- below the loop and it is still one @ask:steer:@, still auto-answered,
+        -- and now it asks for guidance on work already done.
         map (T.takeWhile (/= ':') . T.drop 4) asks @?= ["steer"]
+        assertBool "the flow has no implement leaf" ("implement" `elem` names)
+        assertBool
+          "the steer does not precede the implementation it steers"
+          (any (T.isPrefixOf "steer:") (takeWhile (/= "implement") names))
         report
           [ "ship-feature-lite carries a " <> what <> " leaf"
           | (what, present) <-
