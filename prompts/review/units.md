@@ -11,6 +11,9 @@ Output, and nothing else:
 <the hunks belonging to it, verbatim>
 ```
 
+If the change has no hunks at all, write `## no change` and stop. An empty
+change is a result. Do not report it as a change with one unit in it.
+
 Rules that make the output usable downstream:
 
 - **Every hunk appears exactly once.** Not zero times, not twice. A hunk you

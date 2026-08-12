@@ -796,7 +796,9 @@ data Orientation
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.
+
+If those commands show no change at all, report `Nothing to review.` and stop. An empty tree is a result, and it is not the same result as a change with nothing wrong in it. Do not review the account instead.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 

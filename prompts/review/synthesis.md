@@ -22,3 +22,7 @@ noticed it.
 
 End with a one-line verdict. Name the single thing to fix first. If no finding
 blocks the change, write `Nothing blocking.` instead.
+
+If the reports say there was no change to review, write `Nothing to review.`
+instead. An empty change and a clean change are different results, and
+`Nothing blocking.` tells the reader that work landed.

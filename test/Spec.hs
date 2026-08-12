@@ -101,7 +101,9 @@ import Incite.Prompts
   , ponytailLadder
   , ponytailReviewRubric
   , qaAgent
+  , reviewSequence
   , reviewSynthesis
+  , reviewUnits
   , reviewArchitecture
   , reviewComplexity
   , reviewCorrectness
@@ -159,6 +161,7 @@ tests =
     , reframingTests
     , preambleViolationsTests
     , orientTests
+    , emptyChangeTests
     , documentTests
     , remediateTests
     , retrospectiveTests
@@ -781,6 +784,40 @@ preambleViolationsTests =
           preambleViolations repaired @?= []
       ]
     | (law, broken, expected, repaired) <- preambleLaws
+    ]
+
+-- | The outcome the change-review path had no way to report: __there was no
+-- change__.
+--
+-- Every lens on that path is written for a diff, and each one has a clean-change
+-- ending it is told to fire — @Already sequential.@, @Nothing blocking.@ — so a
+-- panel handed an empty tree produces the same artifact as a panel handed a
+-- clean one. That is not a hypothetical: it is what most of the review of this
+-- very change did, pointed at a working tree with nothing in it, and the run
+-- read as a change with nothing wrong.
+--
+-- The fence is a token per stage, because the fix is prose and prose is what
+-- drifts. It cannot assert that a model obeys the sentence; what it can assert
+-- is that the sentence is still in the text the stage ships, which is the half
+-- that goes missing in an edit. The synthesis row is doubled — both verdicts —
+-- since naming one without the other leaves the reducer no way to keep them
+-- apart.
+emptyChangeTests :: TestTree
+emptyChangeTests =
+  testGroup
+    "the empty change"
+    [ testCase "every stage that reads a diff can say there was none" $
+        report
+          [ stage <> " does not state the empty-change outcome: " <> token
+          | (stage, body, token) <-
+              [ ("preambleOf AtChange", preambleOf AtChange, "Nothing to review.")
+              , ("prompts/review/units.md", promptText reviewUnits, "## no change")
+              , ("prompts/review/sequence.md", promptText reviewSequence, "## no change")
+              , ("prompts/review/synthesis.md", promptText reviewSynthesis, "Nothing to review.")
+              , ("prompts/review/synthesis.md", promptText reviewSynthesis, "Nothing blocking.")
+              ]
+          , not (T.isInfixOf token body)
+          ]
     ]
 
 orientTests :: TestTree
