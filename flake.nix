@@ -571,7 +571,7 @@
         {
           type = "command";
           name = "grind-tests";
-          description = "Test suite grinder — launches the grind-tests workflow: twelve lenses over the whole suite, a ranked report, remediation, a full review-audit pass over the fix, and a real gate over the compile and both the Elixir and TypeScript suites";
+          description = "Test suite grinder for any project — launches the grind-tests workflow: twelve lenses that establish the stack from the tree they are started in, a ranked report, remediation, a full review-audit pass over the fix, and a real gate over the target's own nix flake check";
           body = builtins.readFile ./commands/grind-tests.md;
         }
 

@@ -808,7 +808,7 @@ grindChecks =
 -- then abort. A permanently red gate is worse than none: it teaches a reader
 -- that the gate means nothing.
 --
--- The Elixir checks ('grindTestsChecks') make the same bet on the same
+-- The Elixir checks ('grindLiveViewChecks') make the same bet on the same
 -- evidence: the driver they retire gated on @nix develop -c mix compile@, so
 -- that project too keeps its toolchain in a dev shell. Only a dry run in the
 -- target checkout can prove the wrapper — execute every rendered argv verbatim
@@ -1386,15 +1386,32 @@ decideFactsResolved out
         . T.dropAround (`elem` ("`*_ ." :: String))
         . T.strip
 
--- | The checks the test-suite grind gates on: the target project's own compile
--- (warnings as errors), its Elixir suite, and its TypeScript suite — each
--- through 'grindCheckCmd', run by us with the exit code read.
+-- | The check the test-suite grind gates on: 'codeChecks', the same binding —
+-- @nix flake check@ over the target project, run by us with the exit code read.
+--
+-- __The one gate a project-agnostic grind can actually run.__ Every other grind
+-- names its target's own commands ('grindChecks', 'grindLiveViewChecks'),
+-- which it can only do because it points at one known checkout. This one points
+-- at whatever tree it is started in, so there is no @mix test@ to name — and a
+-- check list cannot be discovered at run time, because 'grindGrantFor' derives
+-- the exec policy from it at compile time. @nix flake check@ is the way out
+-- that keeps both halves static: one command, whatever the language, that the
+-- project itself defines as its build, its suite and its formatting.
+--
+-- __And it is a weaker gate than a named suite, on purpose.__ A flake whose
+-- check does not run the project's tests gates on less than the panel audited.
+-- That is a fact about the target tree rather than a defect here, so
+-- 'Incite.Prompts.testsFacts' tells the audit to say so in its report instead
+-- of this list pretending to a reach it does not have. The alternative — a
+-- discovered command — buys a real suite by giving up the derived grant, and an
+-- ungranted check is denied inside the run (exit 126), which is the failure
+-- 'grindGrantFor' exists to make impossible.
+--
+-- Shared with 'codeChecks' rather than spelled again for that binding's own
+-- reason: the flake already composes build, test and format into one exit code,
+-- and a second list here would be a second place for the two to disagree.
 grindTestsChecks :: [(LeafName, NonEmpty Text)]
-grindTestsChecks =
-  [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")
-  , ("tests", grindCheckCmd "mix test")
-  , ("vitest", grindCheckCmd "cd assets && npx vitest run")
-  ]
+grindTestsChecks = codeChecks
 
 -- | 'grindGrantFor' at 'grindTestsChecks', for 'grindGrant'\'s reason: the
 -- check list is the only place either statement of the policy can change.
@@ -1441,7 +1458,9 @@ grindTests =
       fragile browser selectors, async and isolation debt), write a dated
       ranked report, fix every finding under an orchestrated fixer, audit the
       fix with the exhaustive review panel and remediate what it finds, then
-      gate on the project's real compile and test suites
+      gate on the project's own `nix flake check`. Works on any checkout: the
+      lenses establish the stack, the runners and the tooling from the tree
+      they are started in
     |]
     [iii|
       Audit the test suite in the current working directory. No focus: read
@@ -1486,9 +1505,17 @@ grindTestsSpec =
 grindTestsReviewFuel :: Maybe Fuel
 grindTestsReviewFuel = Just (Fuel 12)
 
--- | The checks the LiveView grind gates on: 'grindTestsChecks', the same
--- binding — both grinds point at the same operation checkout, so its compile,
--- its Elixir suite and its TypeScript suite are one fact stated once.
+-- | The checks the LiveView grind gates on: the operation checkout's own
+-- compile (warnings as errors), its Elixir suite, and its TypeScript suite —
+-- each through 'grindCheckCmd', run by us with the exit code read.
+--
+-- __Spelled here rather than shared with 'grindTestsChecks'.__ It was that
+-- binding, back when both grinds pointed at the same operation checkout and its
+-- three commands were one fact stated once. @grind-tests@ is project-agnostic
+-- now and gates on @nix flake check@, so the sharing would silently retarget
+-- this gate at a command that knows nothing about mix — green on a flake with
+-- no Elixir in it. The LiveView grind is still pointed at one known project,
+-- which is exactly what entitles it to name that project's commands.
 --
 -- The TypeScript row is load-bearing here, not inherited decoration: the
 -- @ts-hooks@ lens exists to move round trips into hook code under
@@ -1499,7 +1526,11 @@ grindTestsReviewFuel = Just (Fuel 12)
 -- none has run in the target checkout yet, and the owed dry run
 -- (@HANDOFF.md@) rehearses all three argv before the first paid run.
 grindLiveViewChecks :: [(LeafName, NonEmpty Text)]
-grindLiveViewChecks = grindTestsChecks
+grindLiveViewChecks =
+  [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")
+  , ("tests", grindCheckCmd "mix test")
+  , ("vitest", grindCheckCmd "cd assets && npx vitest run")
+  ]
 
 -- | 'grindGrantFor' at 'grindLiveViewChecks', for 'grindGrant'\'s reason.
 grindLiveViewGrant :: Grant

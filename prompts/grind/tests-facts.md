@@ -1,84 +1,100 @@
 ## Probe first
 
-Before you read anything else, run these two commands from the current working
-directory:
+Before you read anything else, establish that you are standing in the target
+project's checkout root and that there is a suite here to grind:
 
 ```bash
-ls domain/
-ls test/
+ls -d .git flake.nix
+git ls-files
 ```
 
-Both paths must exist and must not be empty. If either one is absent, stop. Do
-not search for the tree somewhere else, and do not report that you found no
-problems. Emit this line, alone, as your whole answer:
+The first command must succeed for both paths. The second must list at least
+one path that marks a test: a `test/`, `tests/` or `spec/` directory, a file
+named `*_test.*`, `*_spec.*`, `*.test.*` or `*.spec.*`, or whatever suite path
+this project's own build configuration names. A missing `.git` means this is
+not a checkout root. No test path means there is no suite to audit. A missing
+`flake.nix` means the run's own gate — `nix flake check` — cannot run at all,
+so the whole grind would end red for a reason no repair could fix. On any of
+the three, stop. Do not search for the tree somewhere else, and do not report
+that you found no problems. Emit this line, alone, as your whole answer:
 
-`FACTS PATHS UNRESOLVED: domain/ or test/ is missing from the working directory. This is not a checkout root of the target project, so every path below names nothing and this audit cannot run.`
+`FACTS PATHS UNRESOLVED: the working directory is not a checkout root with a flake and a test suite in it, so every path below names nothing and this audit cannot run.`
 
 An audit that reads no files reports no findings, and a clean suite reports no
 findings too. That line is what tells the two apart.
 
 ## Project facts
 
-The project is an Elixir/Phoenix/TypeScript/F* application. The OTP app is
-`operation`, its web namespace is `OperationWeb`, and every path below is
-relative to the working directory you just probed.
+You are told nothing about this project. Every fact your lens needs — what the
+language is, what runs the suite, where the tests live, whether there is a
+coverage tool, a property library, a mutation runner, a browser driver, a
+proof layer, a code generator — you establish yourself from the tree you just
+probed, before you audit anything.
 
-- Every build and test command runs inside the project dev shell. Start it once
-  with `nix develop`, and work in that shell. If your tools give you no shell
-  that persists, put `nix develop --command bash -c '<command>'` around each
-  command instead.
-- Elixir tests: ExUnit, run with `mix test <path>` while you work and `mix
-  test` for the whole suite. Browser tests use Wallaby with `css()` selectors
-  and live under `test/operation_web/features/`; the `OperationWeb.Ids` module
-  supplies stable DOM ids, and `find lib -name ids.ex` locates it. Shared test
-  helpers, factories and case templates live under `test/support/`
-  (`OperationWeb.ConnCase`, `OperationWeb.FeatureCase`).
-- TypeScript tests: Vitest, run with `cd assets && npx vitest run <path>`.
-  TypeScript test files live under `assets/test/` and `frontend/test/`;
-  production TypeScript lives under `assets/ts/`.
-- Coverage: `excoveralls` on the Elixir side with a 90% minimum — `mix
-  coveralls.html` writes `cover/excoveralls.html` — and `@vitest/coverage-v8`
-  on the TypeScript side, via `npm run test:coverage` or `npx vitest run
-  --coverage`.
-- Property testing: `StreamData` with `use ExUnitProperties` and `check all` on
-  the Elixir side; `fast-check` with `fc.property` on the TypeScript side.
-- Mutation testing: `muex` on the Elixir side — read its recorded audit at
-  `muex-web-audit.json`, and the dated `muex` reports under `docs/audits/` —
-  and Stryker on the TypeScript side, via `npm run mutate`, with recorded
-  reports under `assets/`. A survived mutation is a code change no test
-  noticed.
-- Formal verification: F* modules in `fstar/*.fst` prove invariants for the
-  state machines (CI, dev sessions, group access), crypto helpers, the retry
-  policy and HTML sanitization. Elixir calls them through `apply/3`.
-- Code generation: `.dox` files under `domain/` are the source of truth.
-  Paradox generates Elixir under `.dox/lib/` and TypeScript under `.dox/ts/`,
-  in the `Dox.*` namespace. Never audit generated output for style; the fix
-  hierarchy under Repair disciplines says where a change to it goes.
-- Wire strings such as `"pending"`, `"running"`, `"succeeded"`, `"failed"`,
-  `"cancelled"`, `"evaluating"` and `"evaluated"` are generated from `domain/`
-  union types. A hand-written copy of one of those unions, or a constant map
-  keyed by its members, is drift waiting to happen.
-- Compile check: `mix compile --warnings-as-errors`. For a pure deletion, that
-  compile is the whole verification.
-- Async test replacement signals, in place of a sleep: `assert_receive` on a
-  Phoenix PubSub broadcast or a process message, a Wallaby `assert_has` retry
-  for a LiveView re-render, a mocked animation completion callback (GSAP
-  `onComplete`), or a `Repo.get` poll for a database write.
-- Style: well-typed, purely functional — a pure core, immutable data, side
-  effects at the edges. Avoid a new module where an existing one fits.
+Read the build configuration first. It names the language, the suite and the
+command that runs it: `mix.exs`, `package.json`, `*.cabal` or `stack.yaml`,
+`Cargo.toml`, `pyproject.toml`, `go.mod`, `pom.xml`, `Gemfile`, `flake.nix`,
+`Makefile`. A tree with several is several stacks, and each one owns a suite
+you must find separately.
+
+Settle these, in this order, and open your report with a short block saying
+what you found and which file told you:
+
+1. **The suite and its runner.** The exact command that runs one test file and
+   the exact command that runs everything, as this project spells them.
+2. **The dev shell, if any.** A `flake.nix` with a `devShells` output, a
+   `shell.nix`, a `.envrc` or a container definition means the toolchain is
+   not on your bare PATH. Run project commands inside it — `nix develop
+   --command bash -c '<command>'` around each one where the shell is a flake
+   and your tools give you no shell that persists.
+3. **Coverage, property, mutation.** Whether each exists, what invokes it, and
+   where it writes. A recorded report already in the tree is evidence; an
+   absent tool is a fact about the project, not a gap for you to fill.
+4. **Browser or integration tests.** The driver, where its tests live, and
+   whether the codebase supplies a stable-identifier module for them.
+5. **Generated code and its source of truth.** A generator's output directory,
+   the schema or IDL it comes from, and the namespace it emits into. Never
+   audit generated output for style.
+6. **A formal-proof layer.** Proof modules, what they already prove, and how
+   the application calls into them.
+7. **The compile check, and the gate behind you.** The command that fails on a
+   warning, where the project has one — for a pure deletion, that compile is
+   the whole verification. The run itself ends on `nix flake check`, which the
+   harness runs and reads the exit code of rather than taking your word for.
+   A project whose flake check does not run its suite gates on less than you
+   audited: say so in your report, because it is a fact about this tree that
+   changes what the run's green means.
+
+Two rules about the facts you establish.
+
+**Report what is absent as absent.** Your lens may ask about a layer this
+project does not have — no mutation runner, no browser tests, no proofs. Say
+so in one line, name the evidence that settles it, and stop. Do not propose
+adopting the tool, and do not substitute a different subject. An absent layer
+is a short block, and a short block is not an empty one: the synthesis refuses
+on a lens that returned nothing at all, so answering is not optional.
+
+**Cite what you read.** Every finding names a file and a line that exists in
+this tree. A finding whose path you inferred from a convention rather than
+read from the tree is the failure this probe exists to prevent.
+
+Style, everywhere: well-typed and purely functional — a pure core, immutable
+data, side effects at the edges. Prefer an existing module to a new one.
 
 ## Repair disciplines
 
-Every fact above holds while you repair this suite. These are additional, and
-none is a fact about the project.
+Every fact you established above holds while you repair this suite. These are
+additional, and none is a fact about the project.
 
-- The fix hierarchy is fixed: a finding about generated code is repaired in the
-  `.dox` source under `domain/` and regenerated; an invariant worth proving
-  goes into an `fstar/` module called through `apply/3`; direct Elixir or
-  TypeScript is for the cases neither covers.
+- The fix hierarchy follows the source of truth you found: a finding about
+  generated code is repaired in the schema it comes from and the output
+  regenerated, never hand-patched; an invariant worth proving goes into the
+  proof layer where the project has one; direct code is for the cases neither
+  covers.
 - Never weaken a test assertion to make it pass. Fix the code, or write the
   stronger test the finding asks for.
 - A fix without a test that pins it is half a fix. Write the pinning test, and
-  run the one command that proves it.
-- On a transient compile lock from a concurrent build, wait a moment and retry.
+  run the one command that proves it — the command you established above, not
+  one you assume.
+- On a transient build lock from a concurrent build, wait a moment and retry.
   Three attempts, then report the lock.

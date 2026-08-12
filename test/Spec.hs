@@ -2188,11 +2188,22 @@ grindFenceTests gf =
       -- it, and the grant case above passes either way — an ungranted command
       -- and an unrunnable one both fail, and only one of them is about the
       -- grant.
-      testCase "every check runs inside the target project's dev shell" $
+      --
+      -- __Two shapes satisfy it, and the second is not a loophole.__ A check
+      -- either enters the target's dev shell ('Incite.Feature.grindCheckCmd')
+      -- or IS nix building in a sandbox it constructs itself — @nix flake
+      -- check@ needs no dev shell for the same reason it needs no PATH from
+      -- one, and that self-sufficiency is exactly what lets
+      -- 'Incite.Feature.grindTestsChecks' gate a project it was never told the
+      -- language of. What stays forbidden is the shape the rehearsal caught: a
+      -- bare project command trusting an ambient toolchain.
+      testCase "every check brings its own toolchain" $
         report
           [ leafNameText n <> " runs bare: " <> tshow (T.unwords (NE.toList cmd))
           | (n, cmd) <- gfChecks gf
-          , take 3 (NE.toList cmd) /= ["nix", "develop", "--command"]
+          , let argv = NE.toList cmd
+          , take 3 argv /= ["nix", "develop", "--command"]
+          , take 3 argv /= ["nix", "flake", "check"]
           ]
     , -- The synthesis leaf's two, which are nobody's check. Without them its
       -- write fails inside the agent while it still returns the whole ranked
@@ -2318,9 +2329,14 @@ testsGrindFence =
 
 -- | @grind-live-view@'s fence: the 11-lens table, the plain
 -- audit-synthesize-fix-gate tail, and the grant derived from its three
--- checks — the same three as @grind-tests@, because both grinds gate the
--- same checkout and the @ts-hooks@ lens writes TypeScript the two mix
--- commands cannot see.
+-- checks — the operation checkout's compile, its Elixir suite and its
+-- TypeScript suite, the third because the @ts-hooks@ lens writes TypeScript
+-- the two mix commands cannot see.
+--
+-- These were @grind-tests@'s checks too, until that grind went
+-- project-agnostic and moved to @nix flake check@. This column is now the only
+-- place the three mix commands are pinned, which is the whole reason it spells
+-- them as literals rather than reading the binding it fences.
 --
 -- Both tables put @auth@ on claude-agent — the spec's own @gsPins@ states
 -- that policy as data, and position seven is the claude slot under either
@@ -2376,7 +2392,7 @@ testsGrindTail panel =
     <> panel
     <> ("regroup:units" : panel)
     <> ("regroup:sequence" : panel)
-    <> ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
+    <> ["synthesis", "remediate", "flake-check", "repair"]
 
 -- | One view's worth of the review-audit panel, as literals: nine change
 -- lenses, every backend answering each, in @panelAcross@'s reading order.
@@ -4525,7 +4541,7 @@ testsFactDisciplines =
   [ "regenerated"
   , "Never weaken"
   , "half a fix"
-  , "compile lock"
+  , "build lock"
   ]
 
 -- | 'factDisciplines' for @prompts\/grind\/live-view-facts.md@, under the same
@@ -4662,20 +4678,30 @@ factsFileTests =
       -- and the agent reads the prose, and the markdown-on-disk convention
       -- keeps them in two homes on purpose. This is the drift fence between
       -- the homes — a gate command changed on one side goes red until the
-      -- facts say the same thing. Both mix grinds, paradox excluded:
-      -- paradox's test check carries an env-var prefix its facts file states
-      -- as prose rather than verbatim, so a fold over it would demand bytes
-      -- that file rightly does not hold.
-      testCase "each mix grind's facts state every command its gate runs" $
+      -- facts say the same thing. Paradox is excluded: its test check carries
+      -- an env-var prefix its facts file states as prose rather than verbatim,
+      -- so a fold over it would demand bytes that file rightly does not hold.
+      --
+      -- What counts as "the command" differs by check shape, which is why the
+      -- needle is chosen rather than always 'NE.last'. A dev-shell check
+      -- ('Incite.Feature.grindCheckCmd') carries the real command as its last
+      -- argument, and the wrapper around it is this repository's business
+      -- rather than a fact about the target. A bare argv IS its own command, and
+      -- reading the last word of @nix flake check@ would demand the facts state
+      -- \"check\" — a needle every English paragraph satisfies, which is a
+      -- fence that has stopped fencing.
+      testCase "each grind's facts state every command its gate runs" $
         report
-          [ label <> ": " <> leafNameText n <> "'s gate command is not a stated fact: " <> tshow inner
+          [ label <> ": " <> leafNameText n <> "'s gate command is not a stated fact: " <> tshow stated
           | (label, checks, facts) <-
               [ ("tests", grindTestsChecks, testsFacts)
               , ("live-view", grindLiveViewChecks, liveViewFacts)
               ]
           , (n, cmd) <- checks
-          , let inner = NE.last cmd
-          , not (inner `T.isInfixOf` promptText facts)
+          , let stated
+                  | "develop" `elem` NE.toList cmd = NE.last cmd
+                  | otherwise = T.unwords (NE.toList cmd)
+          , not (stated `T.isInfixOf` promptText facts)
           ]
     ]
 

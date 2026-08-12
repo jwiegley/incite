@@ -1,6 +1,6 @@
-Grind the test suite: audit it with twelve lenses, fix every finding, review
-the fix with the exhaustive panel, fix what the review found, and gate on a
-compile and both test suites that actually ran.
+Grind the test suite of any project: audit it with twelve lenses, fix every
+finding, review the fix with the exhaustive panel, fix what the review found,
+and gate on a `nix flake check` that actually ran.
 
 This command is a launcher. The workflow it starts is `grind-tests`, an
 agent-functor tool — the audit, the ranking, both remediation passes, the
@@ -12,17 +12,32 @@ not spawn subagents to do any part of it.
 
 Run `pwd`. The working directory must be the **target project's checkout
 root** — the workflow reads the tree it is run in, and its facts prompt opens
-with a probe of `domain/` and `test/`. If either is missing every lens refuses
-with `FACTS PATHS UNRESOLVED`, and the synthesis opens its answer with that
-same line instead of ranking the twelve refusals. A stop in the flow reads
-exactly that line and fails the run at the synthesis — the fixers, the review
-panel and the gate never act on a refusal. The twelve audit turns are still
-spent, so the `pwd` check is still the cheap guard. If you are not in the
-project root, say so and stop rather than guessing at a path.
+with a probe for `.git`, for `flake.nix`, and for at least one tracked test
+path. If any is missing every lens refuses with `FACTS PATHS UNRESOLVED`, and
+the synthesis opens its answer with that same line instead of ranking the
+twelve refusals. A stop in the flow reads exactly that line and fails the run
+at the synthesis — the fixers, the review panel and the gate never act on a
+refusal. The twelve audit turns are still spent, so the `pwd` check is still
+the cheap guard. If you are not in the project root, say so and stop rather
+than guessing at a path.
 
-Nothing else needs passing. The project's runners, coverage and mutation
-tooling, generated-code layout and repair disciplines are all in
-`prompts/grind/tests-facts.md`, which the workflow prepends to its own input.
+**Any project.** This grind names no language and no runner. Each lens
+establishes the stack, the test command, the coverage, property and mutation
+tooling, the generated-code source of truth and the proof layer from the tree
+it was started in, and reports what it found and which file told it. A layer
+the project does not have is reported as absent in one line, not filled in
+with a proposal to adopt one. That protocol is
+`prompts/grind/tests-facts.md`, which the workflow prepends to its own input,
+and nothing else needs passing.
+
+**It gates on `nix flake check`.** That is the one command a project-agnostic
+grind can run without being told, which is why the probe demands a `flake.nix`
+before it demands anything else: without one the gate could only ever be red,
+and a run that spends twelve audit turns and two fixers to reach a gate that
+cannot pass is worse than one that refuses in its first second. A flake whose
+check does not run the suite is the remaining soft spot — it gates on less
+than the panel audited. The audit is told to say so in its report when that is
+the case, so read that line before you read the green.
 
 Pass an `input` only to steer the run — "concentrate on the browser tests",
 say. It arrives *below* the facts, not instead of them. With no `input` the
@@ -63,11 +78,10 @@ Five stages:
    stage, and it is the point: a test-suite remediation's cheapest failure is
    a weakened assertion, which only a review can see. A fixer that touched
    nothing leaves the panel reporting `no change to audit`.
-5. **Gate** — `mix compile --warnings-as-errors`, `mix test`, and the
-   TypeScript suite, each inside the project dev shell, run by agent-functor
-   with the exit codes read. A red tree goes back to a repair leaf up to three
-   times and then **fails the run** rather than reporting success over a red
-   suite.
+5. **Gate** — `nix flake check` over the target, run by agent-functor with the
+   exit code read rather than taken on an agent's word. A red tree goes back to
+   a repair leaf up to three times and then **fails the run** rather than
+   reporting success over a red suite.
 
 There is no separate TODO file. Each fixer is the next stage of the same run,
 so a hand-off document would have no reader.
