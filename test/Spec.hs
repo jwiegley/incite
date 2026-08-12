@@ -4,7 +4,7 @@ import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (find, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -1898,17 +1898,10 @@ liteTests =
       -- and where it does not — is the third case below, because a marker
       -- nobody can reach is not a distinction an operator has.
       --
-      -- __The worker numbers its own trips, and the assertion is on the
-      -- number.__ A @const@ stub makes every trip's output byte-identical, so
-      -- the assertion holds for a loop that ran three times, once, or not at
-      -- all: @orchestrateWith _ worker = worker@ passes it. 'tripWorker' reads
-      -- the trip off the summary it was handed and writes the next one — the
-      -- loop's own \"your previous summary is your next input\" contract is what
-      -- carries the count, so no 'Data.IORef.IORef' is needed and nothing but a
-      -- real loop can produce trip three.
-      --
-      -- Driven off 'Incite.Feature.liteFuel' rather than a literal, so this is
-      -- an assertion about the constant the workflow actually passes.
+      -- The trip number is the assertion, and 'tripWorker' is where that
+      -- mechanism is argued for. Driven off 'Incite.Feature.liteFuel' rather
+      -- than a literal, so this is an assertion about the constant the workflow
+      -- actually passes.
       testCase "an exhausted loop yields the LAST trip's summary, marker still on it" $ do
         exhausted <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker (const continueMarker))) "THE PLAN"
         exhausted @?= tripSummary (fromMaybe 0 liteFuel) continueMarker
@@ -2116,12 +2109,14 @@ tripSummary :: Int -> Text -> Text
 tripSummary n closing = "trip " <> tshow n <> "\n" <> closing
 
 -- | The trip number 'tripSummary' wrote, or 0 for text it did not write (the
--- loop's first input is the plan, not a summary).
+-- loop's first input is the plan, not a summary). Line one, because that is
+-- where 'tripSummary' puts it: scanning further would read a number out of a
+-- plan that happens to contain the word.
 tripOf :: Text -> Int
 tripOf prev =
-  case [n | l <- T.lines prev, Just r <- [T.stripPrefix "trip " l], [(n, "")] <- [reads (T.unpack r)]] of
-    n : _ -> n
-    [] -> 0
+  case reads . T.unpack =<< maybeToList (T.stripPrefix "trip " (T.takeWhile (/= '\n') prev)) of
+    (n, "") : _ -> n
+    _ -> 0
 
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
 -- adjustment, each paired with the rubric it is a delta against.

@@ -542,11 +542,8 @@ another, leaf by leaf. The terms the rest of this section uses:
   the next stage rather than aborting, so the edits already made are never
   stranded — and because that summary is the one that asked for another trip,
   it still ends on `WORK REMAINS`, in the transcript on that leaf; no later
-  stage relays it. The gate loops (`checkLoop`, under `greenGate`, `stackGate`,
-  `budgetGate` and `consentGate`) are the other user of `loopUntil` and take
-  the opposite policy — their own fuels, and exhaustion aborts rather than
-  yields, because reporting success over a failing check is worse than
-  stopping. See
+  stage relays it. The gate loops under `checkLoop` are a different combinator
+  with the opposite exhaustion policy:
   [`docs/workflows.md`](docs/workflows.md#grinding-a-whole-tree).
 - **Gate** — where a run blocks on a human: `steer` (before the work starts),
   `humanGate` (before the PR). An unattended run auto-answers them.

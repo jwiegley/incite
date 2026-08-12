@@ -144,10 +144,9 @@ Check that the lock is **complete**, not only that a check was green. A plain
 `nix` command amends `flake.lock` in place, without saying so, when `flake.nix`
 declares an input the lock has no entry for. A green `nix flake check` can
 therefore be a statement about a lock that is not the one in git, and an
-unlocked prompt input floats to whatever upstream last pushed. `nix-config` was
-in exactly that state: dropped from the lock, still read by `flake.nix`, so the
-`alexey-review` prompt bytes the tests fence were whatever the tip happened to
-be that day. Verify against the committed tree:
+unlocked prompt input floats to whatever upstream last pushed — which makes the
+prompt bytes the tests fence whatever the tip happened to be that day. Verify
+against the committed tree:
 
 ```bash
 nix flake metadata --no-update-lock-file
