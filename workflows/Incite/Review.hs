@@ -1190,11 +1190,18 @@ factsRefusalLine :: Text
 factsRefusalLine = "FACTS PATHS UNRESOLVED"
 
 -- | Where every grind synthesis writes its dated report, relative to the
--- target checkout — spliced into 'grindSynthesisOver', and passed by
--- @grind-tests@ to @Incite.Feature.asReviewSubjectIgnoring@ so its review
--- pass reads the report as the run's own artifact rather than as the fixer's
+-- target checkout — spliced into 'grindSynthesisOver', and the head of the
+-- report prefix @grind-tests@ passes to
+-- @Incite.Feature.asReviewSubjectIgnoring@ so its review pass reads the
+-- run's own report as the run's own artifact rather than as the fixer's
 -- delta. One binding, so the stage that writes there and the stage that
--- excludes it cannot come to name different directories.
+-- excludes it cannot come to name different paths.
+--
+-- The trailing slash is load-bearing: consumers splice this bare, as
+-- @#{auditReportDir}#{name}-…@, so the slash here is the only separator
+-- between directory and file name. Its fence is the rendered report path in
+-- @test\/Spec.hs@ (\"grindSynthesisOver names the grind and every roster
+-- lens exactly once\"), which counts the exact spelling.
 auditReportDir :: Text
 auditReportDir = "docs/audits/"
 

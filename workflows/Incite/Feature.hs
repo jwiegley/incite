@@ -833,28 +833,28 @@ asReviewSubject :: Text -> Text
 asReviewSubject = orient AtChange
 
 -- | 'asReviewSubject' for a stage whose own run has ALREADY written artifacts
--- into the tree it points the panel at, naming the directories those
--- artifacts live under. A parameter at the call site rather than a clause in
--- 'preambleOf', because which files are a run's own product is a fact about
--- one caller's chain, not about change review — with the exclusion in the
--- shared preamble, a legitimate change whose ONLY file was an audit report
--- was dismissed as @no change to audit@ by every consumer at once, and
--- scoping the shared clause by the account's claim left it dead here (see
--- 'preambleOf').
+-- into the tree it points the panel at, naming their path prefix. A parameter
+-- at the call site rather than a clause in 'preambleOf' — that haddock's
+-- 'AtChange' note is the canonical history of the two shared shapes that were
+-- tried here and died.
 --
--- @grind-tests@ passes 'Incite.Review.auditReportDir': its synthesis writes
--- the dated report there before any fixer runs, so the review pass over the
--- fixer's change would otherwise read the run's own report as part of the
--- fixer's delta — or, when the fixer touched nothing, review it in place of
--- reporting no change.
-asReviewSubjectIgnoring :: NonEmpty Text -> Text -> Text
-asReviewSubjectIgnoring paths summary =
+-- A PREFIX, not a directory: @grind-tests@ passes
+-- @'Incite.Review.auditReportDir' <> 'Incite.Review.grindTestsName' <> \"-\"@,
+-- which matches exactly the dated report its own synthesis writes and nothing
+-- else. A directory-wide exclusion would re-open the categorical dismissal
+-- one file at a time — a fixer's edit to a PRE-EXISTING report under the same
+-- directory is part of the change like any other file, and the frame says so
+-- outright. The prefix is spliced from the same bindings the synthesis brief
+-- writes through, so the writer and the excluder cannot come to name
+-- different paths.
+asReviewSubjectIgnoring :: Text -> Text -> Text
+asReviewSubjectIgnoring pathPrefix summary =
   ownArtifacts <> "\n\n" <> asReviewSubject summary
   where
     ownArtifacts =
-      "This run has already written its own artifacts into the tree under review: files under "
-        <> T.intercalate ", " ["`" <> p <> "`" | p <- NE.toList paths]
-        <> " are the run's own product, not part of the change. Leave them out of the review, and out of the no-change decision — a tree whose only edits are its own artifacts has no change to audit."
+      "This run has already written its own artifacts into the tree under review: files whose path starts with `"
+        <> pathPrefix
+        <> "` are the run's own product, not part of the change. Leave them out of the review, and out of the no-change decision — a tree whose only edits are its own artifacts has no change to audit. Any other file, including any other file in the same directory, is part of the change like any other."
 
 -- | 'orient' at 'AtRecord'.
 --
@@ -1186,10 +1186,11 @@ grindTestsRule = grindRule (gsFacts grindTestsSpec)
 --
 -- 'grindParadox'\'s shape over 'grindFlow', plus the one segment that workflow
 -- does not run: a full 'Incite.Review.reviewAuditFlow' pass over the fixer's
--- change, reframed through 'asReviewSubjectIgnoring' at
--- 'Incite.Review.auditReportDir' (the synthesis has already written its dated
--- report there, and the report is the run's own product, not the fixer's
--- delta), with a second orchestrated fixer acting on what the panel raised. A
+-- change, reframed through 'asReviewSubjectIgnoring' at this run's own report
+-- prefix — @'Incite.Review.auditReportDir' <> 'Incite.Review.grindTestsName'
+-- <> \"-\"@, the dated file the synthesis has already written, which is the
+-- run's own product and not the fixer's delta — with a second orchestrated
+-- fixer acting on what the panel raised. A
 -- test-suite remediation is the change most worth that price — its cheapest
 -- failure mode is a fix that weakens what a test asserts, which is invisible
 -- to a green gate and exactly what a review panel reads diffs for. The
@@ -1217,7 +1218,7 @@ grindTests =
     |]
     grindTestsGrant
     $ grindFlow grindTestsSpec
-      >>> dimap' (asReviewSubjectIgnoring (auditReportDir :| [])) id reviewAuditFlow
+      >>> dimap' (asReviewSubjectIgnoring (auditReportDir <> grindTestsName <> "-")) id reviewAuditFlow
       >>> orchestrateWith grindTestsReviewFuel (remediate grindTestsRule fixerContinuation)
       >>> greenGate grindTestsRule grindTestsChecks
 

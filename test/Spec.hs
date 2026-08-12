@@ -21,7 +21,7 @@ import Agent.Grant (Grant, permitExec)
 import Agent.Flow (Flow (Id), Mode (Plan), foldLeavesScoped, (>>>))
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
+import Agent.Op (ExecOutcome (..), LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
@@ -133,6 +133,7 @@ import Incite.Prompts
 import Incite.Review
   ( Subject (..)
   , admits
+  , auditReportDir
   , forbiddenPairings
   , grindName
   , grindSynthesis
@@ -840,34 +841,34 @@ orientTests =
       -- reads these bytes, so nothing else can.
       --
       -- And the GENERIC orientation carries no artifact exclusion, asserted
-      -- from the negative side: a categorical @docs/audits/@ exclusion here
-      -- dismissed a legitimate change whose ONLY file was an audit report as
-      -- `no change to audit`, and an account-claims-scoped one was dead at
-      -- the one call site that needed it (the fixer's summary never claims
-      -- the synthesis's report). The run's own artifacts are excluded at the
-      -- call site instead — the case below reads that frame.
+      -- from the negative side — 'preambleOf'\'s AtChange note is the
+      -- canonical history of the two shared exclusion shapes that died. The
+      -- run's own artifacts are excluded at the call site instead — the case
+      -- below reads that frame.
       testCase "the change orientation carries the no-change-to-audit clause and no exclusion" $ do
-        report
-          [ "preambleOf AtChange does not say " <> tshow needle
-          | needle <- ["no change to audit"]
-          , not (needle `T.isInfixOf` preambleOf AtChange)
-          ]
+        assertBool
+          "preambleOf AtChange does not say \"no change to audit\""
+          ("no change to audit" `T.isInfixOf` preambleOf AtChange)
         assertBool
           "preambleOf AtChange excludes docs/audits/ — an audit-report-only change would go unreviewed everywhere"
           (not ("docs/audits" `T.isInfixOf` preambleOf AtChange))
     , -- The own-artifacts frame @grind-tests@ reframes its review pass
-      -- through, in both directions: it names the report directory as the
-      -- run's own product and keeps it out of the no-change decision, and it
-      -- is exactly the generic frame above the exclusion — so the exclusion
-      -- exists nowhere except where a run says its own artifacts are.
+      -- through, in both directions: it names the report PREFIX as the run's
+      -- own product, keeps it out of the no-change decision, says outright
+      -- that every other file — same directory included — is part of the
+      -- change, and it is exactly the generic frame above the exclusion — so
+      -- the exclusion exists nowhere except where a run says its own
+      -- artifacts are. The shipped prefix is pinned where the workflow passes
+      -- it ("grind-tests' review pass reads through the own-artifacts frame").
       testCase "asReviewSubjectIgnoring names the run's own artifacts above the generic frame" $ do
-        let framed = asReviewSubjectIgnoring ("docs/audits/" :| []) "ACCOUNT"
+        let framed = asReviewSubjectIgnoring "docs/audits/grind-synthetic-" "ACCOUNT"
         report
           [ "the ignoring frame does not say " <> tshow needle
           | needle <-
-              [ "files under `docs/audits/` are the run's own product"
+              [ "files whose path starts with `docs/audits/grind-synthetic-` are the run's own product"
               , "out of the no-change decision"
               , "a tree whose only edits are its own artifacts has no change to audit"
+              , "including any other file in the same directory, is part of the change"
               ]
           , not (needle `T.isInfixOf` framed)
           ]
@@ -1738,6 +1739,38 @@ grindPanelTests =
                 ]
               ]
           )
+    , -- __The review-pass wiring is a pure adapter, and only a traversal can
+      -- see it.__ Revert grind-tests' reframing to plain 'asReviewSubject'
+      -- and every leaf name, plan skeleton, fence table and frame-unit test
+      -- stays green — the unit test calls the function with its own literal.
+      -- So the rendered prompts of the SHIPPED flow are asserted, with the
+      -- needle spliced from the same bindings the workflow passes — which
+      -- also pins which prefix the shipped review pass excludes.
+      testCase "grind-tests' review pass reads through the own-artifacts frame" $ do
+        sent <- actingWorkflowLeafPrompts grindTests
+        let needle =
+              "files whose path starts with `"
+                <> auditReportDir
+                <> grindTestsName
+                <> "-` are the run's own product"
+        assertBool "no rendered leaf carries the own-artifacts frame at the run's report prefix" $
+          any (needle `T.isInfixOf`) sent
+    , -- The shipped specs' CONSUMPTION, which the field-equality cases above
+      -- cannot prove: rebuild a spec inline in its workflow with another
+      -- tree's facts and every equality fence stays green while the panel
+      -- audits under facts the workflow never renders. So the facts must
+      -- reach a rendered leaf of each shipped flow.
+      testCase "each grind's leaves render the facts its spec names" $
+        mapM_
+          ( \(wf, facts) -> do
+              sent <- actingWorkflowLeafPrompts wf
+              assertBool (T.unpack (wfName wf) <> " never renders its facts in any leaf") $
+                any (promptText facts `T.isInfixOf`) sent
+          )
+          [ (grindParadox, paradoxFacts)
+          , (grindTests, testsFacts)
+          , (grindLiveView, liveViewFacts)
+          ]
     , grindFenceTests paradoxGrindFence
     , grindFenceTests testsGrindFence
     , grindFenceTests liveViewGrindFence
@@ -3311,6 +3344,28 @@ flowLeafPrompts name flow input = do
       )
       flow
       input
+  readIORef sent
+
+-- | 'workflowLeafPrompts' for an ACTING workflow, whose tail is a gate: exec
+-- leaves answer a green exit instead of failing the traversal, so the
+-- interpretation walks the same leaf sequence a clean run sends. What this
+-- fences that nothing else can: a pure reframing stage between two leaves is
+-- invisible to every skeleton reader ('flowOutput' says why), but its bytes
+-- surface here inside the NEXT leaf's rendered prompt.
+actingWorkflowLeafPrompts :: Workflow -> IO [Text]
+actingWorkflowLeafPrompts wf = do
+  sent <- newIORef []
+  _ <-
+    interpret
+      ( leafRunner
+          LeafHandlers
+            { lhPrompt = \rendered -> modifyIORef' sent (<> [rendered]) >> pure ""
+            , lhExec = \_ -> pure (ExecOutcome 0 "" "")
+            , lhAsk = \_ -> assertFailure (T.unpack (wfName wf) <> " reached an ask leaf")
+            }
+      )
+      (wfFlow wf)
+      (fromMaybe "" (wfInput wf))
   readIORef sent
 
 -- | What every prompt leaf answers under 'flowOutput'. Distinctive, so a merge

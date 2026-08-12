@@ -240,13 +240,16 @@ below the derived brief so authorization findings outrank performance and UX
 noise without replacing the roster the synthesis refuses on.
 
 `grind-tests` splices one more stage between its fixer and its gate: the full
-`reviewAuditFlow` panel reads the fixer's change through `asReviewSubject`,
-and a second orchestrated fixer acts on what it raised. A test-suite
+`reviewAuditFlow` panel reads the fixer's change through
+`asReviewSubjectIgnoring`, which names the run's own dated report — the path
+prefix `auditReportDir <> grindTestsName <> "-"`, already written by the
+synthesis — as the run's own product rather than part of the fixer's delta.
+A second orchestrated fixer acts on what the panel raised. A test-suite
 remediation's cheapest failure mode is a weakened assertion — invisible to a
 green gate, exactly what a review panel reads diffs for — so the ~84-leaf
 pass is spent there and nowhere else. The `AtChange` preamble's
-no-change-to-audit clause is what keeps that stage honest when the first
-fixer touched nothing.
+no-change-to-audit clause, plus that own-artifacts exclusion, is what keeps
+the stage honest when the first fixer touched nothing.
 
 What distinguishes the paradox grind:
 
