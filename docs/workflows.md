@@ -113,9 +113,12 @@ are still mediated by the backend's tool permission flow.
   plan;
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
-  `Just n` to cap at n trips after which the last summary yields to the
-  next stage rather than aborting the run — the next stage is a review panel
-  in `ship-feature-lite` and a gate, a fixer or a triage round in `stack-prs`.
+  `Just n` to cap at n trips after which the last summary yields to whatever
+  comes next rather than aborting the run. In `ship-feature-lite` that is the
+  review panel. In `stack-prs` it depends on which of the four loops ran out,
+  and the last one — promotion — has no next stage at all: an exhausted
+  promotion loop yields to the end of the workflow, so a stack left half
+  promoted is reported as a finished run. Read the transcript.
   `orchestrateWith` takes that ceiling as an argument and is what `orchestrate`
   is defined by, so a capped loop cannot drift from the default one. Every call
   site of `orchestrateWith` names a constant rather than a literal (the gate

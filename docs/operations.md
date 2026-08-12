@@ -155,8 +155,9 @@ git status --short flake.lock
 ```
 
 The first fails with `requires lock file changes but they're not allowed`
-exactly when an input is unlocked, rather than locking it behind your back; the
-second must print nothing after any `nix` command.
+exactly when the lock needs a change — an input with no entry, and equally an
+entry that is stale against a changed `flake.nix` — rather than locking it
+behind your back; the second must print nothing after any `nix` command.
 
 `agent-functor` is different. It comes over ssh from GitLab:
 

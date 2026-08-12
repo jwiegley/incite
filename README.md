@@ -578,10 +578,12 @@ Where the [upstream briefs](#upstream-prompts) land:
 - ponytail's **review** and **audit** rubrics — panel lenses, same tags and
   scoring, pointed at a diff (`review-lite` and the `review-heavy` panel) or at
   the whole change (`review-audit`).
-- **agentic-coder** — opens the brief for the implementer in `ship-feature`, the
-  first leaf in either workflow that writes to a file. That is where
-  read-before-editing and the security checklist have to land, not at the review
-  beats after it.
+- **agentic-coder** — opens `implement`, the leaf that writes code. One binding,
+  run by `ship-feature` and by `ship-feature-lite`, and in both it is the first
+  leaf that writes to a file. That is where read-before-editing and the security
+  checklist have to land, not at the review beats after it. `ship-docs` runs
+  `document` instead, which takes the ladder and `wiggum` but not this brief:
+  it is a document about writing code.
 
 The implementation brief is a three-document composition, each answering a
 different question — `agentic-coder` **how** to write it (plan first, read before

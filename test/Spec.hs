@@ -1640,6 +1640,14 @@ stackTests =
     "stack-prs"
     [ testCase "acts in the order its gates are worth anything in" $
         filter (`elem` stackActing) (leafNames (wfFlow stackPRs)) @?= stackActing
+    , -- __The tail, which the order above cannot see:__ it filters to the acting
+      -- roster, so a stage appended after promotion passes it. That the
+      -- promotion loop is LAST is a claim @docs\/workflows.md@ now makes in
+      -- prose — an exhausted promotion loop yields to nothing, so a stack left
+      -- half promoted ends the run looking like one that finished. Append a
+      -- stage there and the sentence is wrong; this is what says so.
+      testCase "the promotion loop is the last stage, which is why exhaustion there is silent" $
+        last (leafNames (wfFlow stackPRs)) @?= "promote"
     , -- The safety property the whole workflow exists to hold, stated on its
       -- own rather than left as a corollary of the order above. A budget check
       -- reached AFTER the first promotion is a check on a slot already spent.
@@ -2726,6 +2734,31 @@ docsInventoryTests =
           | (name, _) <- docsPlanLenses
           , let n = leafNameText name
           , not (T.isInfixOf n body)
+          ]
+    , -- __The bullet that says where an upstream brief lands, against the flows
+      -- that land it.__ README said @agentic-coder@ opens the implementer in
+      -- @ship-feature@ while 'Incite.Feature.implement' had been hoisted to
+      -- top-level for a second caller — so a reader of that bullet had no way to
+      -- know that the same 8 KB brief, and the same unsupervised write access,
+      -- is what the lite tier runs too.
+      --
+      -- The roster is DERIVED from the shipped flows rather than written here,
+      -- which is what makes this survive the next tier: a third workflow reusing
+      -- the leaf goes red on this case rather than on nothing.
+      testCase "README's agentic-coder bullet names every workflow that runs the brief" $ do
+        readme <- TIO.readFile "README.md"
+        -- The bullet, not the section: its neighbours name workflows of their
+        -- own, and a whole-section reader would pass on ponytail's line.
+        let bullet = case dropWhile (not . T.isInfixOf "**agentic-coder**") (T.lines readme) of
+              [] -> ""
+              l : rest -> T.unlines (l : takeWhile (T.isPrefixOf "  ") rest)
+            runners = [wfName wf | wf <- mirrorWorkflows, "implement" `elem` leafNames (wfFlow wf)]
+        assertBool "no agentic-coder bullet found in README.md" (not (T.null (T.strip bullet)))
+        assertBool "no workflow runs the implement leaf" (not (null runners))
+        report
+          [ "README's agentic-coder bullet does not name `" <> n <> "`"
+          | n <- runners
+          , not (T.isInfixOf ("`" <> n <> "`") bullet)
           ]
     ]
 
