@@ -11,6 +11,10 @@ dist-newstyle/
 # agent-functor run-record store (local run state, not source):
 .agent-functor/
 
+# Retrospectives the retro workflows write at the root: artifacts for a person,
+# deliberately untracked — read them, act on them, delete them.
+RETRO-*.md
+
 # Upstream prompt briefs (ponytail, awesome-prompts). NOT source: a symlink into
 # /nix/store, dropped here by the devShell shellHook so a plain `cabal build`
 # passes promptFile's compile-time check. `nix build` grafts the same store path

@@ -22,6 +22,8 @@ module Incite.Review
   , fessAudit
   , retro
   , retroFlow
+  , retroGrant
+  , retroReport
   , plannerAudit
   , promptLint
   , promptLintBrief
@@ -85,9 +87,10 @@ import qualified Data.Text as T
 import Agent.Backend (claudeAgent, defaultModel, withBackend)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
+import Agent.Grant (Grant, execGrant)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, promptText, __i)
-import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
+import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowGReq, workflowReq)
 
 import Incite.Backend (backends, claudeAgentBackend, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Prompts
@@ -1404,19 +1407,43 @@ fessAudit =
 --
 -- The columns are a wave, not a chain, for the reason a facilitator has people
 -- write cards before anyone speaks: a reader who has seen the cost column writes
--- a shorter good-news column. The synthesis is scoped 'Plan' explicitly because
--- this runs while the worker is still going.
+-- a shorter good-news column.
+--
+-- __The report leaf is not read-only, and that is a decision with a history.__
+-- It was scoped 'Plan' because a triggered retro runs while the worker is still
+-- going, and a read-only synthesis cannot collide with it. What that bought was
+-- retrospectives nobody could ever read again: both of the runs this repository
+-- has held live only in the gitignored run store, and the 2026-08-10 one closed
+-- with two \"next time\" changes that were never seen and never applied. A
+-- retro whose output nothing reads is the budget-file defect wearing a
+-- different hat. So the leaf now writes @RETRO-\<date\>.md@ — one additive
+-- file at the repository root, which is as narrow as a write gets — and the
+-- three reader columns stay read-only through 'reviewer', so the concurrent
+-- worker still cannot be edited under.
 retro :: Workflow
 retro =
   withCapturedTranscript
-    $ workflowReq
+    $ workflowGReq
       "retro"
       [iii|
         Hold a retrospective on a worker's session (input is its captured
         transcript): sentiment, what went well, what did not, then the changes
-        to make next time
+        to make next time — written to RETRO-<date>.md at the repository root
       |]
+      retroGrant
       retroFlow
+
+-- | The exec policy a retrospective runs under: @date@, and nothing else.
+--
+-- It exists because the report leaf reads the day before it writes
+-- @RETRO-\<date\>.md@, and 'grindGrant' already learned this lesson: a leaf
+-- whose @date@ is denied still returns the whole retrospective, so the run
+-- reports success with no file on disk, and only the filesystem can tell.
+-- Shared by the standalone workflow and by "Incite.Feature".@shipFeature@'s
+-- inline stage (composed there as @actingGrant <> retroGrant@), so the two
+-- consumers of 'retroFlow' cannot drift in what its report leaf may run.
+retroGrant :: Grant
+retroGrant = execGrant ["date*"]
 
 -- | 'retro' as a plain 'Flow', so 'Incite.Feature' can close a run with the same
 -- three columns instead of copying them. One definition, two consumers — the
@@ -1437,7 +1464,31 @@ retroFlow =
     , reviewer codexScope "went-wrong" retroWentWrong
     ]
     unionFindings
-    >>> withMode Plan (refineWith "retro" (brief retroSynthesis) id)
+    >>> refineWith "retro" (brief retroReport) id
+
+-- | 'retroSynthesis' plus the write, in the style of 'grindSynthesis' and for
+-- its reason: the ranked text IS this leaf's output, and the file is a copy for
+-- a person to find later. The one difference is the destination — a grind
+-- report describes a tree and lands beside its audits under @docs\/@; a
+-- retrospective describes a session of work on this repository, so it lands at
+-- the root where the next session's explore stances actually walk.
+retroReport :: Prompt
+retroReport =
+  [__i|
+    #{retroSynthesis}
+
+    ---
+
+    ONE ADDITION, and it replaces nothing above.
+
+    **Write the retrospective down.** First run `date +%Y-%m-%d`. Then write the
+    finished retrospective to `RETRO-<YYYY-MM-DD>.md` at the repository root,
+    substituting the date you just read. If that file already exists, append
+    under a `---` rule rather than overwriting: two retrospectives in one day
+    are two sessions, not one. Return the retrospective itself as your answer
+    as well — the file is a copy for a person, and the answer is what the run
+    reports.
+  |]
 
 -- | Audit an agent's __planner design__ against the lookahead rubric, defaulting
 -- to this repo's own @workflows\/@. Not a 'reviewAudit' lens: in a general repo

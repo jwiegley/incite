@@ -556,12 +556,12 @@ The inventory in `workflows/Main.hs` — each workflow is defined in
 The full table of all 13 workflows and what each does lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth repeating here: five workflows are **world-acting** and
-every other one is prompt-only. `ship-feature`, `ship-feature-lite` and
-`ship-docs` run under
-`actingGrant` (`execGrant ["nix*"]`); `grind-paradox` and `stack-prs` run under
-grants derived from their own check lists, so a check and its permission cannot
-drift apart. Whichever grant applies, it gates only the commands *we* run — the
+Two safety facts worth repeating here: eight workflows are **world-acting** and
+every other one is prompt-only. `ship-feature-lite` and `ship-docs` run under
+`actingGrant` (`execGrant ["nix*"]`); `ship-feature` composes it with
+`retroGrant`, which `retro` carries bare for its `RETRO-<date>.md` write; the
+three grinds and `stack-prs` run under grants derived from their own check
+lists, so a check and its permission cannot drift apart. Whichever grant applies, it gates only the commands *we* run — the
 agent's own `git`, `gh` and `gt` run as its own tools, behind its permission
 modal. Always run from the repository root, since `promptFile` resolves
 a path against the package root at compile time and the working directory at

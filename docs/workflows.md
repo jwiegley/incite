@@ -33,7 +33,7 @@ text.
 | `grind-tests` | world-acting | 12-lens test-suite audit over the shared `grindFlow` prefix (spread panel, dated report, orchestrated fixer), then a `reviewAuditFlow` pass over the fixer's change with a second orchestrated fixer, then a real-exit-code green gate on the project's compile and test suites |
 | `grind-live-view` | world-acting | 11-lens LiveView audit over the shared `grindFlow` prefix, with a ranking clause that puts authorization findings above every performance and UX finding, then a real-exit-code green gate on the project's compile, test and TypeScript suites |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
-| `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
+| `retro` | world-acting | retrospective over a captured transcript: sentiment, went-well, went-wrong, then a synthesis written to `RETRO-<date>.md` at the repository root |
 | `review-lite` | prompt-only | six per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode, haskell on claude-agent — behind a triage leaf that skips it when the diff touches no Haskell source or cabal file), pure fold reduction |
 | `review-heavy` | prompt-only | full-diff review by eight lenses on three backends, two regrouped views on claude-agent, then synthesis |
 | `review-audit` | prompt-only | nine-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
@@ -90,9 +90,11 @@ backends instead of three:
   stances already hold `claude-agent` and `claude-agent/fable`, so a collision
   is forced rather than chosen.
 
-`ship-feature`, `ship-feature-lite` and `ship-docs` use `workflowGReq` with
-`actingGrant`, currently `execGrant ["nix*"]`. The grinds and `stack-prs` use
-grants derived from their own check lists — every grind's through
+`ship-feature-lite` and `ship-docs` use `workflowGReq` with `actingGrant`,
+currently `execGrant ["nix*"]`; `ship-feature` composes it with `retroGrant`
+(`execGrant ["date*"]`), which its retrospective stage needs and which `retro`
+carries bare — the report leaf reads the day before writing `RETRO-<date>.md`.
+The grinds and `stack-prs` use grants derived from their own check lists — every grind's through
 `grindGrantFor` (`grindGrant` from `grindChecks`, `grindTestsGrant` from
 `grindTestsChecks`, `grindLiveViewGrant` from `grindLiveViewChecks`),
 `stackGrant` from

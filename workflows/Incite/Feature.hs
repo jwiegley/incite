@@ -138,6 +138,7 @@ import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 import Incite.Backend (backends, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
+  , retroGrant
   , auditReportDir
   , docsStrategyOfPlan
   , emissionLenses
@@ -211,7 +212,11 @@ shipFeature =
       worker until it reports the plan finished; review the result with the
       full 21-reviewer panel, remediate the findings, human gate, then a PR
     |]
-    actingGrant
+    -- 'actingGrant' plus the retro report's @date@: the retrospective stage
+    -- runs 'Incite.Review.retroFlow' inline, and its report leaf reads the day
+    -- before writing RETRO-<date>.md. Composed rather than widened in place —
+    -- 'shipDocs' holds no retrospective and keeps the narrower grant.
+    (actingGrant <> retroGrant)
     $ explorePlan
       >>> editPlan
       >>> steer "Review the plan — add any guidance before implementation begins"

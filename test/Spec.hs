@@ -128,6 +128,7 @@ import Incite.Prompts
   , ponytailReviewRubric
   , qaAgent
   , reviewSequence
+  , retroSynthesis
   , reviewSynthesis
   , reviewUnits
   , reviewArchitecture
@@ -171,6 +172,8 @@ import Incite.Review
   , qaSiblings
   , reporting
   , retro
+  , retroGrant
+  , retroReport
   , reviewAudit
   , reviewDocs
   , reviewHeavy
@@ -202,6 +205,7 @@ tests =
     , documentTests
     , remediateTests
     , retrospectiveTests
+    , retroReportTests
     , lensSetViolationsTests
     , lensesOfTests
     , codexFessTests
@@ -803,6 +807,50 @@ remediateTests =
             , ("stackRule", stackRule, stackDisciplines)
             ]
         ]
+    ]
+
+-- | The retro report leaf's two contracts: the file it writes, and the grant
+-- that lets it read the day first.
+--
+-- __The grant case is the grind lesson restated.__ A report leaf whose @date@
+-- is denied still returns the whole retrospective, so the run reports success
+-- with no file on disk — the failure is visible only to a person who goes
+-- looking for a file that is not there. 'permitExec' over the exact command the
+-- brief tells the leaf to run is what 'grindGrantTests' does, and for the same
+-- reason: a membership check on the glob set passes on globs that match
+-- nothing.
+retroReportTests :: TestTree
+retroReportTests =
+  testGroup
+    "the retro report"
+    [ testCase "the brief names the file, the root, and the append rule" $
+        report
+          [ "retroReport does not say " <> tshow needle
+          | needle <- ["RETRO-<YYYY-MM-DD>.md", "repository root", "append", "date +%Y-%m-%d"]
+          , not (says retroReport needle)
+          ]
+    , testCase "retroGrant permits the date read as the brief spells it" $
+        report
+          [ "denied by retroGrant: " <> tshow line
+          | line <- ["date +%Y-%m-%d"]
+          , not (permitExec retroGrant line)
+          ]
+    , testCase "retroGrant denies what no report asked for" $
+        report
+          [ "retroGrant permits " <> tshow line
+          | line <- ["rm -rf /", "mkdir -p docs", "git push origin master"]
+          , permitExec retroGrant line
+          ]
+    , -- Both consumers of 'retroFlow' must be able to run the leaf. The
+      -- standalone workflow carries 'retroGrant' bare; 'shipFeature' composes
+      -- it with 'actingGrant', and a composition that dropped either half is
+      -- exactly what a lattice join cannot catch on its own.
+      testCase "ship-feature's grant covers the retro report and the build" $
+        report
+          [ "denied by ship-feature's grant: " <> tshow line
+          | line <- ["date +%Y-%m-%d", "nix flake check"]
+          , not (permitExec (wfGrant shipFeature) line)
+          ]
     ]
 
 -- | The merge between the work and the retrospective, read off the flow's
@@ -2854,6 +2902,7 @@ reorientations =
     -- fine everywhere else in this suite.
     ("ponytailOfTree", ponytailAuditRubric, ponytailOfTree)
   , ("grindSynthesis", reviewSynthesis, grindSynthesis grindName)
+  , ("retroReport", retroSynthesis, retroReport)
   , -- One row per rescoping combinator, over a base each is actually applied to
     -- in `lensesOf OfTree`. 'ofTree' is 'reporting' after 'toTree', so its base
     -- must survive two adjustments rather than one.
@@ -3379,6 +3428,18 @@ scriptBody marker doc =
   where
     shebang = "#!/usr/bin/env bash"
 
+-- | A small count as English prose, for reading a sentence like "eight
+-- workflows are world-acting" back against the inventory. Past twenty the
+-- sentence should be rewritten, not this extended.
+numberWord :: Int -> Text
+numberWord n
+  | n >= 0 && n < length ws = ws !! n
+  | otherwise = tshow n
+  where
+    ws = ["zero","one","two","three","four","five","six","seven","eight","nine","ten"
+         ,"eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen"
+         ,"eighteen","nineteen","twenty"]
+
 -- | Fences 'docs/workflows.md' against the two things in it that only code can
 -- prove: which workflows exist (in order), and how many leaves a review tier
 -- costs. Neither is otherwise cross-validated — "Main".workflows and this file
@@ -3520,6 +3581,36 @@ docsInventoryTests =
               ]
           , let complaint = T.pack path <> " does not say " <> tshow needle
           , not (T.isInfixOf needle (proseNormal txt))
+          ]
+    , -- The Kind column, against the grants — and the counts in the prose,
+      -- against the Kind column. "Five workflows are world-acting" survived two
+      -- additions to the inventory because nothing read it: the grinds joined
+      -- the table as world-acting and the sentence in README and AGENTS stayed
+      -- at five. The ground truth is the grant: a workflow with a non-empty
+      -- grant acts on the world, and one with 'mempty' has nothing to act
+      -- with. Both halves are read back — each row's Kind cell, and the spelled
+      -- count in the two prose files.
+      testCase "the Kind column and the world-acting counts follow the grants" $ do
+        doc <- TIO.readFile "docs/workflows.md"
+        let rows = tableRows (sectionBody "Exposed inventory" doc)
+            acting = [wfName wf | wf <- mirrorWorkflows, wfGrant wf /= mempty]
+        assertBool "no inventory rows read" (not (null rows))
+        report
+          [ name <> ": the Kind cell says " <> tshow kind <> ", the grant says " <> tshow want
+          | (name, cells) <- rows
+          , kind <- take 1 (map T.strip cells)
+          , let want = if name `elem` acting then "world-acting" else "prompt-only" :: Text
+          , kind /= want
+          ]
+        readme <- TIO.readFile "README.md"
+        agents <- TIO.readFile "AGENTS.md"
+        let phrase = numberWord (length acting) <> " workflows are **world-acting**"
+        report
+          [ T.pack path <> " does not say \"" <> phrase <> "\""
+          | (path, txt) <- [("README.md", readme), ("AGENTS.md", agents)]
+          -- Whitespace-collapsed on both sides, as 'saysLoosely' does: both
+          -- files are hard-wrapped markdown and the phrase straddles a break.
+          , not (T.isInfixOf phrase (T.unwords (T.words txt)))
           ]
     , -- The "Documentation workflow" section is where this file says what
       -- distinguishes a docs run, and it said "it uses only the SimpleEnglish
