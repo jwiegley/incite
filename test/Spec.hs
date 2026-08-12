@@ -1672,6 +1672,12 @@ grindPanelTests =
           @?= ["alpha-lens@claude-agent", "beta-lens@codex", "gamma-lens@opencode"]
         leafNames (spreadPinned [] full lenses)
           @?= leafNames (spread full lenses)
+        -- And 'admits' has the last word: a pin cannot seat the fess rubric
+        -- on codex, so the pinned lens lands on the first backend that
+        -- admits it — a regression that let a pin override 'admits' would
+        -- ship the one pairing the panel is forbidden to build.
+        leafNames (spreadPinned [("fess", "codex")] full [("fess", fess)])
+          @?= ["fess@claude-agent"]
     , -- __The shipped spec, not a copy assembled here.__ The synthetic case
       -- above pins the seam mechanics for any spec; this pins that
       -- @grind-live-view@ actually rides them — its suffix IS the ranking
