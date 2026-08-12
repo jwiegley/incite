@@ -1477,7 +1477,7 @@ grindPanelTests =
                     , not (permitExec grant line)
                     ]
                   , [ "denied by the derived grant: " <> tshow line
-                    | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
+                    | line <- ["date +%Y-%m-%d", "mkdir -p " <> auditReportDir]
                     , not (permitExec grant line)
                     ]
                   , [ "the derived grant permits " <> tshow line
@@ -1948,7 +1948,9 @@ grindFenceTests gf =
       testCase "the grant permits the report write" $
         report
           [ "denied by " <> gfGrantLabel gf <> ": " <> tshow line
-          | line <- ["date +%Y-%m-%d", "mkdir -p docs/audits"]
+          | -- Derived from 'auditReportDir', so the tested line moves with
+            -- the directory the synthesis actually mkdirs.
+            line <- ["date +%Y-%m-%d", "mkdir -p " <> auditReportDir]
           , not (permitExec (gfGrant gf) line)
           ]
     , -- And it is not a blanket grant. Deriving from a list is only worth
