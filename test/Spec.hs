@@ -56,6 +56,7 @@ import Incite.Feature
   , asReviewSubject
   , asReviewSubjectIgnoring
   , asStackSubject
+  , auditedImplement
   , codeChecks
   , codeRule
   , continueMarker
@@ -170,6 +171,7 @@ import Incite.Review
   , qaOfCommit
   , qaOfCommitOver
   , qaSiblings
+  , fessOfTrip
   , reporting
   , retro
   , retroGrant
@@ -206,6 +208,7 @@ tests =
     , remediateTests
     , retrospectiveTests
     , retroReportTests
+    , shipFeatureRetroTests
     , lensSetViolationsTests
     , lensesOfTests
     , codexFessTests
@@ -807,6 +810,102 @@ remediateTests =
             , ("stackRule", stackRule, stackDisciplines)
             ]
         ]
+    ]
+
+-- | The three structural answers to the 2026-08-12 retrospective, held to the
+-- run that motivated them: a fixer closed with greens the tree could not show,
+-- the honesty audit had been deferred past the point a safeguard allowed it,
+-- and the person at the gate had nothing checkable to read.
+shipFeatureRetroTests :: TestTree
+shipFeatureRetroTests =
+  testGroup
+    "ship-feature after the 2026-08-12 retro"
+    [ -- The merge places the audit ABOVE the summary, and both arguments are
+      -- 'Text', so a flipped merge is not a type error — it would bury the
+      -- worker's status line under the audit and end every loop on trip one,
+      -- with no name, count or cost moving. Driven through the real interpreter
+      -- with the real briefs: the handler answers the trip-fess leaf (spotted
+      -- by the reorientation sentence its brief alone carries) with a report,
+      -- and the implement leaf with a marker-terminated summary.
+      testCase "the trip audit rides above the summary, and the marker survives it" $ do
+        out <-
+          fst
+            <$> interpret
+              ( leafRunner
+                  LeafHandlers
+                    { lhPrompt = \rendered ->
+                        pure $
+                          if T.isInfixOf "change of referent and of moment" rendered
+                            then "AUDIT REPORT"
+                            else "did the work\n" <> continueMarker
+                    , lhExec = \cmd -> assertFailure ("auditedImplement ran an exec leaf: " <> show cmd)
+                    , lhAsk = \_ -> assertFailure "auditedImplement reached an ask leaf"
+                    }
+              )
+              auditedImplement
+              "THE PLAN"
+        assertBool "the audit is not above the summary" $
+          T.isInfixOf ("## trip audit\n\nAUDIT REPORT" :: Text) out
+        decideContinue out @?= Left out
+    , -- The gate our harness runs sits between remediation and the human gate,
+      -- read off the shipped flow. A gate below the human gate verifies a
+      -- decision already taken; no leaf name, count or cost distinguishes the
+      -- two orders.
+      testCase "the flake check stands between the fixer and the person" $ do
+        let names = leafNames (wfFlow shipFeature)
+            beforeGate = takeWhile (not . T.isPrefixOf "gate:Open a pull request") names
+        assertBool "no PR gate leaf found" (any (T.isPrefixOf "gate:Open a pull request") names)
+        report
+          [ n <> " does not precede the PR gate"
+          | n <- ["implement", "trip-fess", "remediate", "flake-check", "repair"]
+          , n `notElem` beforeGate
+          ]
+    , -- Read-only and pinned, both read off the resolved scopes. Read-only
+      -- because an auditor that can edit can fix its own findings before
+      -- reporting them; pinned because the fess rubric is the pairing 'admits'
+      -- refuses on codex, and this leaf sits outside every fan-out, where
+      -- inheritance is exactly how it would get there.
+      testCase "trip-fess is read-only on claude-agent" $ do
+        lookup "trip-fess" (scopedLeaves (wfFlow shipFeature)) @?= Just "claude-agent"
+        assertBool
+          "trip-fess is not a plan-mode leaf"
+          ("trip-fess" `elem` readOnlyLeaves (wfFlow shipFeature))
+    , -- The brief's own contract: a clean token so the next trip is not taxed
+      -- by a clean audit, and no status line of its own — an auditor that ends
+      -- with a marker steals the loop's.
+      testCase "fessOfTrip names its clean token and forbids a status line" $
+        report
+          [ "fessOfTrip does not say " <> tshow needle
+          | needle <- ["Claims hold.", "never end with a status line", "log line"]
+          , not (saysLoosely fessOfTrip needle)
+          ]
+    , -- The close-out and claim disciplines, held in the rendered brief: the
+      -- run was lost to greens that existed only in a summary and to a
+      -- "terminated" whose own log showed the ceiling never fired. Needles on
+      -- the rendered leaf, whitespace-collapsed, so a rewrap is not a failure —
+      -- the rule being gone is.
+      testCase "the implement brief carries the close-out and claim disciplines" $ do
+        leafText <- onlyFlowLeafPrompt "implement" implement "THE PLAN"
+        report
+          [ "the implement brief does not say " <> tshow needle
+          | needle <-
+              [ "quotes the log line that shows the firing"
+              , "write the closing counts into the final commit body or the progress log"
+              , "any path `git status` still shows"
+              , "the closing counts are in the tree"
+              ]
+          , not (T.isInfixOf (T.unwords (T.words needle)) (T.unwords (T.words leafText)))
+          ]
+    , -- The person's half, held where it lives: the leaf NAMES carry the steer
+      -- and gate texts, so the ask for an acceptance bar and for a named defect
+      -- are properties of the shipped flow rather than of documentation.
+      testCase "the steer asks for the acceptance bar and the gate for a named defect" $ do
+        let names = leafNames (wfFlow shipFeature)
+        report
+          [ "no leaf name carries " <> tshow needle
+          | needle <- ["acceptance bar", "name the defect"]
+          , not (any (T.isInfixOf needle) names)
+          ]
     ]
 
 -- | The retro report leaf's two contracts: the file it writes, and the grant
@@ -2889,6 +2988,7 @@ tripOf prev =
 reorientations :: [(String, Prompt, Prompt)]
 reorientations =
   [ ("docsAccuracy", fess, docsAccuracy)
+  , ("fessOfTrip", fess, fessOfTrip)
   , ("ponytailOfDocs", ponytailAuditRubric, ponytailOfDocs)
   , ("architectureOfChange", reviewArchitecture, architectureOfChange)
   , ("haskellOfHouse", haskellReviewer, haskellOfHouse)

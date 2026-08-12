@@ -25,7 +25,7 @@ text.
 | Workflow | Kind | Shape |
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
-| `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
+| `ship-feature` | world-acting | `plan-feature`, steer (asks for the acceptance bar), orchestrated code implementation with a per-trip `trip-fess` claims audit, `reviewHeavyFlow`, remediation, a real-exit-code `nix flake check` gate, retrospective, human gate (a no should name the defect), PR |
 | `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation, then a real-exit-code `nix flake check` gate with `repairFuel` trips — and it stops there, with no human gate and no PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
@@ -170,9 +170,14 @@ it.
 - **It ends on a gate the harness runs.** `greenGate codeRule codeChecks` runs
   `nix flake check` itself and reads the exit code, so the last word on the tree
   is not the fixer's. A red gate costs `repairFuel` repair trips and then aborts
-  the run; it does not report success over a failing check. `ship-feature` needs
-  no such stage because it ends at a human gate and a pull request, where a
-  person and CI read the change. Nothing reads a lite run but the tree. The
+  the run; it does not report success over a failing check. `ship-feature` now
+  carries the same gate, between remediation and its human gate — this document
+  used to argue it needed none because a person and CI read the change, and the
+  2026-08-12 retrospective refuted that with a run: the fixer's closing greens
+  existed only in its summary, and the person, with nothing checkable to read,
+  answered no in 25 seconds over four-plus hours of work. What distinguishes the
+  lite tier now is only that the gate is where it *ends*: nothing reads a lite
+  run but the tree. The
   check is `nix flake check` and not `cabal test` because `actingGrant` is
   `execGrant ["nix*"]`: an ungranted check is denied inside the run and the gate
   reads a red no repair leaf can fix.
@@ -376,6 +381,36 @@ The continuation contract is intentionally narrow. `decideContinue` looks only
 at the last non-empty line, after stripping the small decoration alphabet tested
 in `test/Spec.hs`. A summary that says "no work remains" in prose must not keep
 the loop alive.
+
+## What the 2026-08-12 retrospective changed
+
+`ship-feature`'s shape answers a specific failed run — resumed, four-plus hours,
+ended by a `no` at its own PR gate 25 seconds after the run's retro impeached
+its closing summary. One change per mechanism finding:
+
+- *"the audit deferred to end-of-run instead of running per step"* — the
+  session-wide `fess-audit` had been safeguard-blocked because it was invoked
+  only after the session outgrew the tool. `auditedImplement` now runs
+  `fessOfTrip` at every trip boundary: the worker's own claims against the
+  tree, findings prepended to the summary the next trip reads. The merge puts
+  the audit *above* the summary because `decideContinue` reads the last line —
+  the flipped merge ends every loop on trip one, and `test/Spec.hs` holds the
+  round trip.
+- *"verification, if it ran, was never written into the tree"* — the closing
+  greens (369/0, hlint clean) existed only in the fixer's summary. The
+  `greenGate` before the human gate makes the ✓ lines the person reads the
+  harness's own exit codes, and the implement brief now requires the closing
+  counts written into the final commit body or progress log — plus a note for
+  any path `git status` still shows — before `WORK COMPLETE` may be claimed.
+- *"outcome observed, mechanism assumed"* — the "was terminated" claim whose
+  own log showed 5004 ms against a 1 s ceiling. The implement brief requires a
+  claim that a mechanism fired to quote the log line showing the firing, and
+  `fessOfTrip` checks for exactly that gap on every trip.
+- *the person's half* — the plan steer passed empty in 4 seconds and the gate
+  answer was a bare `no`. The steer now asks for the acceptance bar up front,
+  and the gate question asks that a refusal name the defect — `humanGate`
+  records the whole answer in the halt reason, so a named defect survives to
+  the next session.
 
 ## Documentation workflow
 
