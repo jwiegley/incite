@@ -3,10 +3,14 @@ mutations that changed production code and broke no test. A survived mutation
 is a proof, not a suspicion — the suite is blind to that change, and a bug of
 exactly that shape ships unseen.
 
-Read the recorded mutation reports the project facts name. A mutation run is
-expensive and writes to the tree, and you audit without touching it: the
-record of the last run is the evidence, and re-running the tool is the fixer's
-confirmation step, never yours.
+Establish whether this project has a mutation runner, and read whatever
+reports it keeps. If it has none, report that in one line, name the evidence
+that settles it, and stop: adopting a mutation runner is a decision for the
+project, not a finding for this lens.
+
+A mutation run is expensive and writes to the tree, and you audit without
+touching it: the record of the last run is the evidence, and re-running the
+tool is the fixer's confirmation step, never yours.
 
 Focus on survived mutations in the paths where blindness costs the most: state
 transitions, access control checks, data validation, cryptographic helpers,

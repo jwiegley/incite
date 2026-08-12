@@ -15,10 +15,12 @@ For each one, work out three things.
    async event: a broadcast, a process message, a re-render, an animation
    completion, a database write becoming visible. "Something async" is not an
    answer; the replacement depends on the event.
-2. **The right signal.** The project facts list the replacement signals the
-   codebase supports — the receive assertion, the retrying UI assertion, the
-   mocked completion callback, the poll on the store. Pick the one that fires
-   when the event happens rather than when a clock guesses it did.
+2. **The right signal.** Establish what the codebase already supports, from
+   the test framework and from waits the suite has written before — the
+   receive assertion, the retrying UI assertion, the mocked completion
+   callback, the poll on the store. Pick the one that fires when the event
+   happens rather than when a clock guesses it did, and name where you saw it
+   used.
 3. **The replacement code.** Write it. A finding that says "replace with a
    proper wait" leaves the next reader exactly where you started.
 
