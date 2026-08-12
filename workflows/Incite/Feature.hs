@@ -724,6 +724,11 @@ data Orientation
 --
 -- Total in 'Orientation', so a new constructor cannot be added without saying
 -- where its evidence lives.
+--
+-- 'AtChange'\'s @docs\/audits\/@ exclusion is deliberately categorical across
+-- every consumer of the orientation: it names only the dated reports a run
+-- writes for itself, and one preamble per orientation is the trade this type
+-- makes against per-call-site ignored-path parameters.
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
@@ -1121,9 +1126,11 @@ grindTestsReviewFuel = Just 12
 
 -- | The checks the LiveView grind gates on: the target project's own compile
 -- (warnings as errors) and its test suite, each through 'grindCheckCmd', run
--- by us with the exit code read. No TypeScript suite here: the retired driver
--- gated on these two alone, and a hook this grind writes is proved by the
--- compile and the registration the facts demand.
+-- by us with the exit code read. No TypeScript check, and that is a gap for a
+-- grind whose @ts-hooks@ lens writes hook code: the retired gate had none, and
+-- a command unverifiable without the target checkout risks the permanently-red
+-- gate 'grindCheckCmd'\'s haddock names — the owed dry run (see @HANDOFF.md@)
+-- is where a third row (vitest or tsc) earns its place.
 grindLiveViewChecks :: [(LeafName, NonEmpty Text)]
 grindLiveViewChecks =
   [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")

@@ -13,9 +13,10 @@ import System.Directory (listDirectory)
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Agent.Bounds (Fuel (fuelMax))
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (Grant, permitExec)
-import Agent.Flow (Flow, Mode (Plan), foldLeavesScoped)
+import Agent.Flow (Flow (Id), Mode (Plan), foldLeavesScoped, (>>>))
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
@@ -57,6 +58,7 @@ import Incite.Feature
   , docsPlanLenses
   , isRed
   , document
+  , orchestrateWith
   , orient
   , planFeature
   , preambleOf
@@ -1287,6 +1289,18 @@ synthesisAdmits =
 -- leaves without running them.
 leafNames :: Flow Text Text -> [Text]
 leafNames flow = [leafNameOf t | FLeaf t <- toList (skeleton (toSkeleton flow))]
+
+-- | How many of a 'Flow'\'s loops carry the unbounded sentinel fuel —
+-- @maxBound \`div\` 2@, the value 'orchestrateWith' assigns when its ceiling is
+-- 'Nothing'. Read off the skeleton the way 'leafNames' is, so it counts what
+-- ships rather than restating any source the flow was built from.
+unboundedLoopCount :: Flow Text Text -> Int
+unboundedLoopCount flow =
+  length
+    [ ()
+    | FLoop f _ <- toList (skeleton (toSkeleton flow))
+    , fuelMax f == maxBound `div` 2
+    ]
 
 -- | Every leaf as @\"kind:name\"@ — the run-graph identity, which is the only
 -- view that distinguishes a check WE run from a question we ask. A gate written
@@ -2760,8 +2774,15 @@ docsInventoryTests =
       -- overflows and reports a NEGATIVE worst case: the number an operator
       -- reads before spending anything, going backwards. @grind-tests@
       -- shipped exactly that (its 'grindFlow' fixer plus its post-review
-      -- fixer) and only a person running @cost@ by hand noticed. Quantified
-      -- over the whole inventory, so the next second-loop workflow cannot.
+      -- fixer) and only a person running @cost@ by hand noticed.
+      --
+      -- __A sign check, not an overflow fence.__ Two or three chained
+      -- unbounded loops wrap negative and land here, but FOUR wrap past
+      -- 'maxBound' twice and come back to a small POSITIVE number this
+      -- check waves through while the render is grossly wrong. It stays
+      -- because a wrong turn in the 'Cost' algebra itself still shows up
+      -- as a sign flip; the at-most-one-unbounded-loop law below is what
+      -- makes the wrap-to-positive case unreachable.
       testCase "no exposed workflow reports a negative worst case" $
         report
           [ wfName wf <> " reports a non-positive worst case: " <> renderCost c
@@ -2771,6 +2792,30 @@ docsInventoryTests =
               Finite n -> n <= 0
               Unbounded -> False
           ]
+    , -- The cause-level law behind the sign check: with at most ONE loop
+      -- carrying the unbounded sentinel, the cost sum cannot overflow — the
+      -- sentinel is @maxBound `div` 2@ and every other contribution is a
+      -- small finite fuel times a finite body, which sums nowhere near the
+      -- remaining half of 'maxBound'. Counted off each shipped skeleton the
+      -- way 'leafNames' reads leaves, so a second unbounded fixer added to
+      -- any chain goes red here whatever sign its cost happens to land on.
+      testCase "no exposed workflow carries two unbounded loops" $
+        report
+          [ wfName wf <> " carries " <> tshow k <> " unbounded loops"
+          | wf <- mirrorWorkflows
+          , let k = unboundedLoopCount (wfFlow wf)
+          , k > 1
+          ]
+    , -- The law's reader, refuted on the synthetic shape it exists to forbid
+      -- — two unbounded orchestrator loops in sequence, pointed at no shipped
+      -- workflow. A counter that missed 'FLoop' nodes, or matched a fuel the
+      -- sentinel does not spell, would leave the law above passing over
+      -- everything; a capped loop counting as unbounded would make it red on
+      -- flows the sum arithmetic handles fine.
+      testCase "the unbounded-loop reader sees a synthetic two-loop chain" $ do
+        unboundedLoopCount (orchestrateWith Nothing Id) @?= 1
+        unboundedLoopCount (orchestrateWith (Just 12) Id) @?= 0
+        unboundedLoopCount (orchestrateWith Nothing Id >>> orchestrateWith Nothing Id) @?= 2
     , -- Every row this reads is either checked or turned into a named failure —
       -- never silently skipped. Two rows used to vanish before 'report' ever
       -- saw them: a row naming a workflow absent from 'mirrorWorkflows' (the old
@@ -3678,19 +3723,24 @@ factsFileTests =
               ]
     , -- The gate's argv and the facts file's command guidance are two
       -- statements of one fact for two consumers: the harness runs the argv
-      -- ('Incite.Feature.grindTestsChecks') and the agent reads the prose, and
-      -- the markdown-on-disk convention keeps them in two homes on purpose.
-      -- This is the drift fence between the homes — a gate command changed on
-      -- one side goes red until the facts say the same thing. The tests grind
-      -- only: paradox's test check carries an env-var prefix its facts file
-      -- states as prose rather than verbatim, so a fold would demand bytes
+      -- ('Incite.Feature.grindTestsChecks', 'Incite.Feature.grindLiveViewChecks')
+      -- and the agent reads the prose, and the markdown-on-disk convention
+      -- keeps them in two homes on purpose. This is the drift fence between
+      -- the homes — a gate command changed on one side goes red until the
+      -- facts say the same thing. Both mix grinds, paradox excluded:
+      -- paradox's test check carries an env-var prefix its facts file states
+      -- as prose rather than verbatim, so a fold over it would demand bytes
       -- that file rightly does not hold.
-      testCase "the tests grind's facts state every command its gate runs" $
+      testCase "each mix grind's facts state every command its gate runs" $
         report
-          [ leafNameText n <> "'s gate command is not a stated fact: " <> tshow inner
-          | (n, cmd) <- grindTestsChecks
+          [ label <> ": " <> leafNameText n <> "'s gate command is not a stated fact: " <> tshow inner
+          | (label, checks, facts) <-
+              [ ("tests", grindTestsChecks, testsFacts)
+              , ("live-view", grindLiveViewChecks, liveViewFacts)
+              ]
+          , (n, cmd) <- checks
           , let inner = NE.last cmd
-          , not (inner `T.isInfixOf` promptText testsFacts)
+          , not (inner `T.isInfixOf` promptText facts)
           ]
     ]
 
