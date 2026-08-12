@@ -30,7 +30,7 @@ text.
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
-| `grind-tests` | world-acting | 12-lens test-suite audit over the shared `grindFlow` prefix (spread panel, dated report, orchestrated fixer), then a `reviewAuditFlow` pass over the fixer's change with a second orchestrated fixer, then a real-exit-code green gate on the project's compile and test suites |
+| `grind-tests` | world-acting | 12-lens test-suite audit over the shared `grindFlow` prefix (spread panel, dated report, orchestrated fixer), then a `reviewAuditFlow` pass over the fixer's change with a second orchestrated fixer, then a real-exit-code green gate on the target's own `nix flake check`. The one grind pointed at no particular project: its facts file is a discovery protocol rather than a statement of one tree's facts |
 | `grind-live-view` | world-acting | 11-lens LiveView audit over the shared `grindFlow` prefix, with a ranking clause that puts authorization findings above every performance and UX finding, then a real-exit-code green gate on the project's compile, test and TypeScript suites |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
@@ -311,6 +311,20 @@ green gate, exactly what a review panel reads diffs for — so the ~84-leaf
 pass is spent there and nowhere else. The `AtChange` preamble's
 no-change-to-audit clause, plus that own-artifacts exclusion, is what keeps
 the stage honest when the first fixer touched nothing.
+
+It is also the one grind that names no project. The other two point at a known
+checkout and so may name its directories, its runners and its build commands;
+this one runs wherever it is started, so `prompts/grind/tests-facts.md` states
+a protocol for *establishing* those facts instead of stating them, its probe
+proves a checkout root (`.git`) with a tracked test path in it rather than two
+named directories, and its gate is `nix flake check` — the only command a
+grind can run against a project it was never told the language of, because
+`grindGrantFor` derives the exec policy from the check list at compile time
+and a discovered command could not be granted. That gate is weaker than a
+named suite, and deliberately so: a flake whose check does not run the tests
+gates on less than the panel audited, which is a fact about the target tree,
+and the facts file tells the audit to report it rather than letting the check
+list pretend to a reach it has not got.
 
 What distinguishes the paradox grind:
 
