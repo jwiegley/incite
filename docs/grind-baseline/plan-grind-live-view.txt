@@ -1,0 +1,99 @@
+grind-live-view
+
+#96  seq
+├── #56  dimap
+│   └── #55  par
+│       ├── #2  scope agent:claude-agent/fable
+│       │   └── #1  scope mode:plan
+│       │       └── #0  prompt css-hardening@claude-agent
+│       └── #54  dimap
+│           └── #53  par
+│               ├── #5  scope agent:codex/gpt-5.5/xhigh
+│               │   └── #4  scope mode:plan
+│               │       └── #3  prompt componentize@codex
+│               └── #52  dimap
+│                   └── #51  par
+│                       ├── #8  scope agent:claude-agent/fable
+│                       │   └── #7  scope mode:plan
+│                       │       └── #6  prompt liveness@claude-agent
+│                       └── #50  dimap
+│                           └── #49  par
+│                               ├── #11  scope agent:codex/gpt-5.5/xhigh
+│                               │   └── #10  scope mode:plan
+│                               │       └── #9  prompt rerender@codex
+│                               └── #48  dimap
+│                                   └── #47  par
+│                                       ├── #14  scope agent:claude-agent/fable
+│                                       │   └── #13  scope mode:plan
+│                                       │       └── #12  prompt pubsub@claude-agent
+│                                       └── #46  dimap
+│                                           └── #45  par
+│                                               ├── #17  scope agent:codex/gpt-5.5/xhigh
+│                                               │   └── #16  scope mode:plan
+│                                               │       └── #15  prompt best-practices@codex
+│                                               └── #44  dimap
+│                                                   └── #43  par
+│                                                       ├── #20  scope agent:claude-agent/fable
+│                                                       │   └── #19  scope mode:plan
+│                                                       │       └── #18  prompt auth@claude-agent
+│                                                       └── #42  dimap
+│                                                           └── #41  par
+│                                                               ├── #23  scope agent:codex/gpt-5.5/xhigh
+│                                                               │   └── #22  scope mode:plan
+│                                                               │       └── #21  prompt page-load@codex
+│                                                               └── #40  dimap
+│                                                                   └── #39  par
+│                                                                       ├── #26  scope agent:claude-agent/fable
+│                                                                       │   └── #25  scope mode:plan
+│                                                                       │       └── #24  prompt dom-keying@claude-agent
+│                                                                       └── #38  dimap
+│                                                                           └── #37  par
+│                                                                               ├── #29  scope agent:codex/gpt-5.5/xhigh
+│                                                                               │   └── #28  scope mode:plan
+│                                                                               │       └── #27  prompt assign-bloat@codex
+│                                                                               └── #36  dimap
+│                                                                                   └── #35  par
+│                                                                                       ├── #32  scope agent:claude-agent/fable
+│                                                                                       │   └── #31  scope mode:plan
+│                                                                                       │       └── #30  prompt ts-hooks@claude-agent
+│                                                                                       └── #34  pure-adapter
+│                                                                                           └── #33  id
+└── #95  seq
+    ├── #57  prompt synthesis
+    └── #94  seq
+        ├── #60  loop Fuel {fuelMax = 1}
+        │   └── #59  pure-adapter
+        │       └── #58  id
+        └── #93  seq
+            ├── #67  dimap
+            │   └── #66  loop Fuel {fuelMax = 4611686018427387903}
+            │       └── #65  seq
+            │           ├── #62  second
+            │           │   └── #61  prompt remediate
+            │           └── #64  pure-adapter
+            │               └── #63  id
+            └── #92  dimap
+                └── #91  par
+                    ├── #68  id
+                    └── #90  loop Fuel {fuelMax = 3}
+                        └── #89  seq
+                            ├── #83  dimap
+                            │   └── #82  seq
+                            │       ├── #72  dimap
+                            │       │   └── #71  par
+                            │       │       ├── #69  id
+                            │       │       └── #70  exec compile
+                            │       └── #81  seq
+                            │           ├── #76  dimap
+                            │           │   └── #75  par
+                            │           │       ├── #73  id
+                            │           │       └── #74  exec tests
+                            │           └── #80  dimap
+                            │               └── #79  par
+                            │                   ├── #77  id
+                            │                   └── #78  exec vitest
+                            └── #88  seq
+                                ├── #85  pure-adapter
+                                │   └── #84  id
+                                └── #87  left
+                                    └── #86  prompt repair

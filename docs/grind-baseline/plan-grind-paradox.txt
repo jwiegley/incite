@@ -1,0 +1,105 @@
+grind-paradox
+
+#102  seq
+├── #71  dimap
+│   └── #70  par
+│       ├── #2  scope agent:claude-agent/fable
+│       │   └── #1  scope mode:plan
+│       │       └── #0  prompt correctness@claude-agent
+│       └── #69  dimap
+│           └── #68  par
+│               ├── #5  scope agent:codex/gpt-5.5/xhigh
+│               │   └── #4  scope mode:plan
+│               │       └── #3  prompt tests@codex
+│               └── #67  dimap
+│                   └── #66  par
+│                       ├── #8  scope agent:claude-agent/fable
+│                       │   └── #7  scope mode:plan
+│                       │       └── #6  prompt stubs@claude-agent
+│                       └── #65  dimap
+│                           └── #64  par
+│                               ├── #11  scope agent:codex/gpt-5.5/xhigh
+│                               │   └── #10  scope mode:plan
+│                               │       └── #9  prompt vacuous@codex
+│                               └── #63  dimap
+│                                   └── #62  par
+│                                       ├── #14  scope agent:claude-agent/fable
+│                                       │   └── #13  scope mode:plan
+│                                       │       └── #12  prompt dry@claude-agent
+│                                       └── #61  dimap
+│                                           └── #60  par
+│                                               ├── #17  scope agent:codex/gpt-5.5/xhigh
+│                                               │   └── #16  scope mode:plan
+│                                               │       └── #15  prompt hardcodings@codex
+│                                               └── #59  dimap
+│                                                   └── #58  par
+│                                                       ├── #20  scope agent:claude-agent/fable
+│                                                       │   └── #19  scope mode:plan
+│                                                       │       └── #18  prompt refactor@claude-agent
+│                                                       └── #57  dimap
+│                                                           └── #56  par
+│                                                               ├── #23  scope agent:codex/gpt-5.5/xhigh
+│                                                               │   └── #22  scope mode:plan
+│                                                               │       └── #21  prompt architecture@codex
+│                                                               └── #55  dimap
+│                                                                   └── #54  par
+│                                                                       ├── #26  scope agent:claude-agent/fable
+│                                                                       │   └── #25  scope mode:plan
+│                                                                       │       └── #24  prompt performance@claude-agent
+│                                                                       └── #53  dimap
+│                                                                           └── #52  par
+│                                                                               ├── #29  scope agent:codex/gpt-5.5/xhigh
+│                                                                               │   └── #28  scope mode:plan
+│                                                                               │       └── #27  prompt ponytail@codex
+│                                                                               └── #51  dimap
+│                                                                                   └── #50  par
+│                                                                                       ├── #32  scope agent:claude-agent/fable
+│                                                                                       │   └── #31  scope mode:plan
+│                                                                                       │       └── #30  prompt target-consistency@claude-agent
+│                                                                                       └── #49  dimap
+│                                                                                           └── #48  par
+│                                                                                               ├── #35  scope agent:codex/gpt-5.5/xhigh
+│                                                                                               │   └── #34  scope mode:plan
+│                                                                                               │       └── #33  prompt validator-calls@codex
+│                                                                                               └── #47  dimap
+│                                                                                                   └── #46  par
+│                                                                                                       ├── #38  scope agent:claude-agent/fable
+│                                                                                                       │   └── #37  scope mode:plan
+│                                                                                                       │       └── #36  prompt codegen-gaps@claude-agent
+│                                                                                                       └── #45  dimap
+│                                                                                                           └── #44  par
+│                                                                                                               ├── #41  scope agent:codex/gpt-5.5/xhigh
+│                                                                                                               │   └── #40  scope mode:plan
+│                                                                                                               │       └── #39  prompt emitted-code@codex
+│                                                                                                               └── #43  pure-adapter
+│                                                                                                                   └── #42  id
+└── #101  seq
+    ├── #72  prompt synthesis
+    └── #100  seq
+        ├── #79  dimap
+        │   └── #78  loop Fuel {fuelMax = 4611686018427387903}
+        │       └── #77  seq
+        │           ├── #74  second
+        │           │   └── #73  prompt remediate
+        │           └── #76  pure-adapter
+        │               └── #75  id
+        └── #99  dimap
+            └── #98  par
+                ├── #80  id
+                └── #97  loop Fuel {fuelMax = 3}
+                    └── #96  seq
+                        ├── #90  dimap
+                        │   └── #89  seq
+                        │       ├── #84  dimap
+                        │       │   └── #83  par
+                        │       │       ├── #81  id
+                        │       │       └── #82  exec build
+                        │       └── #88  dimap
+                        │           └── #87  par
+                        │               ├── #85  id
+                        │               └── #86  exec tests
+                        └── #95  seq
+                            ├── #92  pure-adapter
+                            │   └── #91  id
+                            └── #94  left
+                                └── #93  prompt repair

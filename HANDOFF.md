@@ -312,3 +312,30 @@ factored out of the existing grind-paradox / review-audit machinery.
     recorded deliberate decision, and the grind-tests half of the protected
     baseline was stale anyway. Both stay. The fourth pass's AtChange bullet
     above is the one item that pass got wrong, superseded here.
+- SIXTH PASS (the consolidated review of the fifth pass's commits, one fix-all
+  leaf). What it changed:
+  - The own-artifacts exclusion narrowed from a directory to the run's report
+    PREFIX: `asReviewSubjectIgnoring` takes one `Text` prefix (the `NonEmpty`
+    was one caller passing a singleton) and grind-tests passes
+    `auditReportDir <> grindTestsName <> "-"` — exactly the dated file its
+    synthesis writes. A fixer's edit to a PRE-EXISTING report under
+    `docs/audits/` is part of the change again, and the frame says so
+    outright. The fifth pass's directory-wide bullet above is superseded on
+    that one point; the call-site-parameter shape stands.
+  - The wiring is fenced where it lives: a leaf-prompt traversal over the
+    SHIPPED `grindTests` flow (exec leaves answered green) asserts the
+    rendered review-pass prompt carries the frame at that prefix — reverting
+    the `dimap'` to plain `asReviewSubject` is red now (trialed) — and a
+    companion case asserts each grind's leaves render `gsFacts`, closing the
+    inline-spec-rebuild hole the field-equality fences cannot see.
+  - Acceptance recorded for the b76abc7 agent-functor bump's OTHER behavior
+    change, which the arithmetic bullet above did not disclose: `resume`'s
+    run argument is now optional and defaults to the newest unarchived run
+    (explicit-run resume unchanged; nothing in this tree calls resume, so
+    nothing here consumes the default). Accepted as shipped.
+  - The step-1/step-13 baseline captures left `/tmp`: committed under
+    `docs/grind-baseline/` (all six plan/cost files, bytes identical to the
+    `/tmp/grind-baseline/` copies every earlier bullet cites). The
+    `/tmp/grind-residual/` renders stay ephemeral on purpose — they are
+    re-derivable from any checkout of the committed tree, unlike the
+    baseline, which is the diff anchor.

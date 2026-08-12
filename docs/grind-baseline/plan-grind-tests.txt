@@ -1,0 +1,404 @@
+grind-tests
+
+#401  seq
+├── #61  dimap
+│   └── #60  par
+│       ├── #2  scope agent:claude-agent/fable
+│       │   └── #1  scope mode:plan
+│       │       └── #0  prompt vacuous@claude-agent
+│       └── #59  dimap
+│           └── #58  par
+│               ├── #5  scope agent:codex/gpt-5.5/xhigh
+│               │   └── #4  scope mode:plan
+│               │       └── #3  prompt coverage@codex
+│               └── #57  dimap
+│                   └── #56  par
+│                       ├── #8  scope agent:claude-agent/fable
+│                       │   └── #7  scope mode:plan
+│                       │       └── #6  prompt property@claude-agent
+│                       └── #55  dimap
+│                           └── #54  par
+│                               ├── #11  scope agent:codex/gpt-5.5/xhigh
+│                               │   └── #10  scope mode:plan
+│                               │       └── #9  prompt mutation@codex
+│                               └── #53  dimap
+│                                   └── #52  par
+│                                       ├── #14  scope agent:claude-agent/fable
+│                                       │   └── #13  scope mode:plan
+│                                       │       └── #12  prompt stubs@claude-agent
+│                                       └── #51  dimap
+│                                           └── #50  par
+│                                               ├── #17  scope agent:codex/gpt-5.5/xhigh
+│                                               │   └── #16  scope mode:plan
+│                                               │       └── #15  prompt sleeps@codex
+│                                               └── #49  dimap
+│                                                   └── #48  par
+│                                                       ├── #20  scope agent:claude-agent/fable
+│                                                       │   └── #19  scope mode:plan
+│                                                       │       └── #18  prompt generated-copies@claude-agent
+│                                                       └── #47  dimap
+│                                                           └── #46  par
+│                                                               ├── #23  scope agent:codex/gpt-5.5/xhigh
+│                                                               │   └── #22  scope mode:plan
+│                                                               │       └── #21  prompt testability@codex
+│                                                               └── #45  dimap
+│                                                                   └── #44  par
+│                                                                       ├── #26  scope agent:claude-agent/fable
+│                                                                       │   └── #25  scope mode:plan
+│                                                                       │       └── #24  prompt dry@claude-agent
+│                                                                       └── #43  dimap
+│                                                                           └── #42  par
+│                                                                               ├── #29  scope agent:codex/gpt-5.5/xhigh
+│                                                                               │   └── #28  scope mode:plan
+│                                                                               │       └── #27  prompt proofs@codex
+│                                                                               └── #41  dimap
+│                                                                                   └── #40  par
+│                                                                                       ├── #32  scope agent:claude-agent/fable
+│                                                                                       │   └── #31  scope mode:plan
+│                                                                                       │       └── #30  prompt selectors@claude-agent
+│                                                                                       └── #39  dimap
+│                                                                                           └── #38  par
+│                                                                                               ├── #35  scope agent:codex/gpt-5.5/xhigh
+│                                                                                               │   └── #34  scope mode:plan
+│                                                                                               │       └── #33  prompt isolation@codex
+│                                                                                               └── #37  pure-adapter
+│                                                                                                   └── #36  id
+└── #400  seq
+    ├── #62  prompt synthesis
+    └── #399  seq
+        ├── #65  loop Fuel {fuelMax = 1}
+        │   └── #64  pure-adapter
+        │       └── #63  id
+        └── #398  seq
+            ├── #72  dimap
+            │   └── #71  loop Fuel {fuelMax = 4611686018427387903}
+            │       └── #70  seq
+            │           ├── #67  second
+            │           │   └── #66  prompt remediate
+            │           └── #69  pure-adapter
+            │               └── #68  id
+            └── #397  seq
+                ├── #363  dimap
+                │   └── #362  seq
+                │       ├── #360  dimap
+                │       │   └── #359  par
+                │       │       ├── #164  dimap
+                │       │       │   └── #163  par
+                │       │       │       ├── #75  scope agent:claude-agent/fable
+                │       │       │       │   └── #74  scope mode:plan
+                │       │       │       │       └── #73  prompt correctness@claude-agent
+                │       │       │       └── #162  dimap
+                │       │       │           └── #161  par
+                │       │       │               ├── #78  scope agent:codex/gpt-5.5/xhigh
+                │       │       │               │   └── #77  scope mode:plan
+                │       │       │               │       └── #76  prompt correctness@codex
+                │       │       │               └── #160  dimap
+                │       │       │                   └── #159  par
+                │       │       │                       ├── #81  scope agent:claude-agent/fable
+                │       │       │                       │   └── #80  scope mode:plan
+                │       │       │                       │       └── #79  prompt security@claude-agent
+                │       │       │                       └── #158  dimap
+                │       │       │                           └── #157  par
+                │       │       │                               ├── #84  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                               │   └── #83  scope mode:plan
+                │       │       │                               │       └── #82  prompt security@codex
+                │       │       │                               └── #156  dimap
+                │       │       │                                   └── #155  par
+                │       │       │                                       ├── #87  scope agent:claude-agent/fable
+                │       │       │                                       │   └── #86  scope mode:plan
+                │       │       │                                       │       └── #85  prompt tests@claude-agent
+                │       │       │                                       └── #154  dimap
+                │       │       │                                           └── #153  par
+                │       │       │                                               ├── #90  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                               │   └── #89  scope mode:plan
+                │       │       │                                               │       └── #88  prompt tests@codex
+                │       │       │                                               └── #152  dimap
+                │       │       │                                                   └── #151  par
+                │       │       │                                                       ├── #93  scope agent:claude-agent/fable
+                │       │       │                                                       │   └── #92  scope mode:plan
+                │       │       │                                                       │       └── #91  prompt performance@claude-agent
+                │       │       │                                                       └── #150  dimap
+                │       │       │                                                           └── #149  par
+                │       │       │                                                               ├── #96  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                               │   └── #95  scope mode:plan
+                │       │       │                                                               │       └── #94  prompt performance@codex
+                │       │       │                                                               └── #148  dimap
+                │       │       │                                                                   └── #147  par
+                │       │       │                                                                       ├── #99  scope agent:claude-agent/fable
+                │       │       │                                                                       │   └── #98  scope mode:plan
+                │       │       │                                                                       │       └── #97  prompt haskell@claude-agent
+                │       │       │                                                                       └── #146  dimap
+                │       │       │                                                                           └── #145  par
+                │       │       │                                                                               ├── #102  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                                               │   └── #101  scope mode:plan
+                │       │       │                                                                               │       └── #100  prompt haskell@codex
+                │       │       │                                                                               └── #144  dimap
+                │       │       │                                                                                   └── #143  par
+                │       │       │                                                                                       ├── #105  scope agent:claude-agent/fable
+                │       │       │                                                                                       │   └── #104  scope mode:plan
+                │       │       │                                                                                       │       └── #103  prompt ponytail@claude-agent
+                │       │       │                                                                                       └── #142  dimap
+                │       │       │                                                                                           └── #141  par
+                │       │       │                                                                                               ├── #108  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                                                               │   └── #107  scope mode:plan
+                │       │       │                                                                                               │       └── #106  prompt ponytail@codex
+                │       │       │                                                                                               └── #140  dimap
+                │       │       │                                                                                                   └── #139  par
+                │       │       │                                                                                                       ├── #111  scope agent:claude-agent/fable
+                │       │       │                                                                                                       │   └── #110  scope mode:plan
+                │       │       │                                                                                                       │       └── #109  prompt doctrine@claude-agent
+                │       │       │                                                                                                       └── #138  dimap
+                │       │       │                                                                                                           └── #137  par
+                │       │       │                                                                                                               ├── #114  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                                                                               │   └── #113  scope mode:plan
+                │       │       │                                                                                                               │       └── #112  prompt doctrine@codex
+                │       │       │                                                                                                               └── #136  dimap
+                │       │       │                                                                                                                   └── #135  par
+                │       │       │                                                                                                                       ├── #117  scope agent:claude-agent/fable
+                │       │       │                                                                                                                       │   └── #116  scope mode:plan
+                │       │       │                                                                                                                       │       └── #115  prompt discipline@claude-agent
+                │       │       │                                                                                                                       └── #134  dimap
+                │       │       │                                                                                                                           └── #133  par
+                │       │       │                                                                                                                               ├── #120  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                                                                                               │   └── #119  scope mode:plan
+                │       │       │                                                                                                                               │       └── #118  prompt discipline@codex
+                │       │       │                                                                                                                               └── #132  dimap
+                │       │       │                                                                                                                                   └── #131  par
+                │       │       │                                                                                                                                       ├── #123  scope agent:claude-agent/fable
+                │       │       │                                                                                                                                       │   └── #122  scope mode:plan
+                │       │       │                                                                                                                                       │       └── #121  prompt architecture@claude-agent
+                │       │       │                                                                                                                                       └── #130  dimap
+                │       │       │                                                                                                                                           └── #129  par
+                │       │       │                                                                                                                                               ├── #126  scope agent:codex/gpt-5.5/xhigh
+                │       │       │                                                                                                                                               │   └── #125  scope mode:plan
+                │       │       │                                                                                                                                               │       └── #124  prompt architecture@codex
+                │       │       │                                                                                                                                               └── #128  pure-adapter
+                │       │       │                                                                                                                                                   └── #127  id
+                │       │       └── #358  dimap
+                │       │           └── #357  par
+                │       │               ├── #258  seq
+                │       │               │   ├── #165  prompt regroup:units
+                │       │               │   └── #257  dimap
+                │       │               │       └── #256  par
+                │       │               │           ├── #168  scope agent:claude-agent/fable
+                │       │               │           │   └── #167  scope mode:plan
+                │       │               │           │       └── #166  prompt correctness@claude-agent
+                │       │               │           └── #255  dimap
+                │       │               │               └── #254  par
+                │       │               │                   ├── #171  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                   │   └── #170  scope mode:plan
+                │       │               │                   │       └── #169  prompt correctness@codex
+                │       │               │                   └── #253  dimap
+                │       │               │                       └── #252  par
+                │       │               │                           ├── #174  scope agent:claude-agent/fable
+                │       │               │                           │   └── #173  scope mode:plan
+                │       │               │                           │       └── #172  prompt security@claude-agent
+                │       │               │                           └── #251  dimap
+                │       │               │                               └── #250  par
+                │       │               │                                   ├── #177  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                   │   └── #176  scope mode:plan
+                │       │               │                                   │       └── #175  prompt security@codex
+                │       │               │                                   └── #249  dimap
+                │       │               │                                       └── #248  par
+                │       │               │                                           ├── #180  scope agent:claude-agent/fable
+                │       │               │                                           │   └── #179  scope mode:plan
+                │       │               │                                           │       └── #178  prompt tests@claude-agent
+                │       │               │                                           └── #247  dimap
+                │       │               │                                               └── #246  par
+                │       │               │                                                   ├── #183  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                   │   └── #182  scope mode:plan
+                │       │               │                                                   │       └── #181  prompt tests@codex
+                │       │               │                                                   └── #245  dimap
+                │       │               │                                                       └── #244  par
+                │       │               │                                                           ├── #186  scope agent:claude-agent/fable
+                │       │               │                                                           │   └── #185  scope mode:plan
+                │       │               │                                                           │       └── #184  prompt performance@claude-agent
+                │       │               │                                                           └── #243  dimap
+                │       │               │                                                               └── #242  par
+                │       │               │                                                                   ├── #189  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                   │   └── #188  scope mode:plan
+                │       │               │                                                                   │       └── #187  prompt performance@codex
+                │       │               │                                                                   └── #241  dimap
+                │       │               │                                                                       └── #240  par
+                │       │               │                                                                           ├── #192  scope agent:claude-agent/fable
+                │       │               │                                                                           │   └── #191  scope mode:plan
+                │       │               │                                                                           │       └── #190  prompt haskell@claude-agent
+                │       │               │                                                                           └── #239  dimap
+                │       │               │                                                                               └── #238  par
+                │       │               │                                                                                   ├── #195  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                                   │   └── #194  scope mode:plan
+                │       │               │                                                                                   │       └── #193  prompt haskell@codex
+                │       │               │                                                                                   └── #237  dimap
+                │       │               │                                                                                       └── #236  par
+                │       │               │                                                                                           ├── #198  scope agent:claude-agent/fable
+                │       │               │                                                                                           │   └── #197  scope mode:plan
+                │       │               │                                                                                           │       └── #196  prompt ponytail@claude-agent
+                │       │               │                                                                                           └── #235  dimap
+                │       │               │                                                                                               └── #234  par
+                │       │               │                                                                                                   ├── #201  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                                                   │   └── #200  scope mode:plan
+                │       │               │                                                                                                   │       └── #199  prompt ponytail@codex
+                │       │               │                                                                                                   └── #233  dimap
+                │       │               │                                                                                                       └── #232  par
+                │       │               │                                                                                                           ├── #204  scope agent:claude-agent/fable
+                │       │               │                                                                                                           │   └── #203  scope mode:plan
+                │       │               │                                                                                                           │       └── #202  prompt doctrine@claude-agent
+                │       │               │                                                                                                           └── #231  dimap
+                │       │               │                                                                                                               └── #230  par
+                │       │               │                                                                                                                   ├── #207  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                                                                   │   └── #206  scope mode:plan
+                │       │               │                                                                                                                   │       └── #205  prompt doctrine@codex
+                │       │               │                                                                                                                   └── #229  dimap
+                │       │               │                                                                                                                       └── #228  par
+                │       │               │                                                                                                                           ├── #210  scope agent:claude-agent/fable
+                │       │               │                                                                                                                           │   └── #209  scope mode:plan
+                │       │               │                                                                                                                           │       └── #208  prompt discipline@claude-agent
+                │       │               │                                                                                                                           └── #227  dimap
+                │       │               │                                                                                                                               └── #226  par
+                │       │               │                                                                                                                                   ├── #213  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                                                                                   │   └── #212  scope mode:plan
+                │       │               │                                                                                                                                   │       └── #211  prompt discipline@codex
+                │       │               │                                                                                                                                   └── #225  dimap
+                │       │               │                                                                                                                                       └── #224  par
+                │       │               │                                                                                                                                           ├── #216  scope agent:claude-agent/fable
+                │       │               │                                                                                                                                           │   └── #215  scope mode:plan
+                │       │               │                                                                                                                                           │       └── #214  prompt architecture@claude-agent
+                │       │               │                                                                                                                                           └── #223  dimap
+                │       │               │                                                                                                                                               └── #222  par
+                │       │               │                                                                                                                                                   ├── #219  scope agent:codex/gpt-5.5/xhigh
+                │       │               │                                                                                                                                                   │   └── #218  scope mode:plan
+                │       │               │                                                                                                                                                   │       └── #217  prompt architecture@codex
+                │       │               │                                                                                                                                                   └── #221  pure-adapter
+                │       │               │                                                                                                                                                       └── #220  id
+                │       │               └── #356  dimap
+                │       │                   └── #355  par
+                │       │                       ├── #352  seq
+                │       │                       │   ├── #259  prompt regroup:sequence
+                │       │                       │   └── #351  dimap
+                │       │                       │       └── #350  par
+                │       │                       │           ├── #262  scope agent:claude-agent/fable
+                │       │                       │           │   └── #261  scope mode:plan
+                │       │                       │           │       └── #260  prompt correctness@claude-agent
+                │       │                       │           └── #349  dimap
+                │       │                       │               └── #348  par
+                │       │                       │                   ├── #265  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                   │   └── #264  scope mode:plan
+                │       │                       │                   │       └── #263  prompt correctness@codex
+                │       │                       │                   └── #347  dimap
+                │       │                       │                       └── #346  par
+                │       │                       │                           ├── #268  scope agent:claude-agent/fable
+                │       │                       │                           │   └── #267  scope mode:plan
+                │       │                       │                           │       └── #266  prompt security@claude-agent
+                │       │                       │                           └── #345  dimap
+                │       │                       │                               └── #344  par
+                │       │                       │                                   ├── #271  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                   │   └── #270  scope mode:plan
+                │       │                       │                                   │       └── #269  prompt security@codex
+                │       │                       │                                   └── #343  dimap
+                │       │                       │                                       └── #342  par
+                │       │                       │                                           ├── #274  scope agent:claude-agent/fable
+                │       │                       │                                           │   └── #273  scope mode:plan
+                │       │                       │                                           │       └── #272  prompt tests@claude-agent
+                │       │                       │                                           └── #341  dimap
+                │       │                       │                                               └── #340  par
+                │       │                       │                                                   ├── #277  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                   │   └── #276  scope mode:plan
+                │       │                       │                                                   │       └── #275  prompt tests@codex
+                │       │                       │                                                   └── #339  dimap
+                │       │                       │                                                       └── #338  par
+                │       │                       │                                                           ├── #280  scope agent:claude-agent/fable
+                │       │                       │                                                           │   └── #279  scope mode:plan
+                │       │                       │                                                           │       └── #278  prompt performance@claude-agent
+                │       │                       │                                                           └── #337  dimap
+                │       │                       │                                                               └── #336  par
+                │       │                       │                                                                   ├── #283  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                   │   └── #282  scope mode:plan
+                │       │                       │                                                                   │       └── #281  prompt performance@codex
+                │       │                       │                                                                   └── #335  dimap
+                │       │                       │                                                                       └── #334  par
+                │       │                       │                                                                           ├── #286  scope agent:claude-agent/fable
+                │       │                       │                                                                           │   └── #285  scope mode:plan
+                │       │                       │                                                                           │       └── #284  prompt haskell@claude-agent
+                │       │                       │                                                                           └── #333  dimap
+                │       │                       │                                                                               └── #332  par
+                │       │                       │                                                                                   ├── #289  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                                   │   └── #288  scope mode:plan
+                │       │                       │                                                                                   │       └── #287  prompt haskell@codex
+                │       │                       │                                                                                   └── #331  dimap
+                │       │                       │                                                                                       └── #330  par
+                │       │                       │                                                                                           ├── #292  scope agent:claude-agent/fable
+                │       │                       │                                                                                           │   └── #291  scope mode:plan
+                │       │                       │                                                                                           │       └── #290  prompt ponytail@claude-agent
+                │       │                       │                                                                                           └── #329  dimap
+                │       │                       │                                                                                               └── #328  par
+                │       │                       │                                                                                                   ├── #295  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                                                   │   └── #294  scope mode:plan
+                │       │                       │                                                                                                   │       └── #293  prompt ponytail@codex
+                │       │                       │                                                                                                   └── #327  dimap
+                │       │                       │                                                                                                       └── #326  par
+                │       │                       │                                                                                                           ├── #298  scope agent:claude-agent/fable
+                │       │                       │                                                                                                           │   └── #297  scope mode:plan
+                │       │                       │                                                                                                           │       └── #296  prompt doctrine@claude-agent
+                │       │                       │                                                                                                           └── #325  dimap
+                │       │                       │                                                                                                               └── #324  par
+                │       │                       │                                                                                                                   ├── #301  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                                                                   │   └── #300  scope mode:plan
+                │       │                       │                                                                                                                   │       └── #299  prompt doctrine@codex
+                │       │                       │                                                                                                                   └── #323  dimap
+                │       │                       │                                                                                                                       └── #322  par
+                │       │                       │                                                                                                                           ├── #304  scope agent:claude-agent/fable
+                │       │                       │                                                                                                                           │   └── #303  scope mode:plan
+                │       │                       │                                                                                                                           │       └── #302  prompt discipline@claude-agent
+                │       │                       │                                                                                                                           └── #321  dimap
+                │       │                       │                                                                                                                               └── #320  par
+                │       │                       │                                                                                                                                   ├── #307  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                                                                                   │   └── #306  scope mode:plan
+                │       │                       │                                                                                                                                   │       └── #305  prompt discipline@codex
+                │       │                       │                                                                                                                                   └── #319  dimap
+                │       │                       │                                                                                                                                       └── #318  par
+                │       │                       │                                                                                                                                           ├── #310  scope agent:claude-agent/fable
+                │       │                       │                                                                                                                                           │   └── #309  scope mode:plan
+                │       │                       │                                                                                                                                           │       └── #308  prompt architecture@claude-agent
+                │       │                       │                                                                                                                                           └── #317  dimap
+                │       │                       │                                                                                                                                               └── #316  par
+                │       │                       │                                                                                                                                                   ├── #313  scope agent:codex/gpt-5.5/xhigh
+                │       │                       │                                                                                                                                                   │   └── #312  scope mode:plan
+                │       │                       │                                                                                                                                                   │       └── #311  prompt architecture@codex
+                │       │                       │                                                                                                                                                   └── #315  pure-adapter
+                │       │                       │                                                                                                                                                       └── #314  id
+                │       │                       └── #354  pure-adapter
+                │       │                           └── #353  id
+                │       └── #361  prompt synthesis
+                └── #396  seq
+                    ├── #370  dimap
+                    │   └── #369  loop Fuel {fuelMax = 12}
+                    │       └── #368  seq
+                    │           ├── #365  second
+                    │           │   └── #364  prompt remediate
+                    │           └── #367  pure-adapter
+                    │               └── #366  id
+                    └── #395  dimap
+                        └── #394  par
+                            ├── #371  id
+                            └── #393  loop Fuel {fuelMax = 3}
+                                └── #392  seq
+                                    ├── #386  dimap
+                                    │   └── #385  seq
+                                    │       ├── #375  dimap
+                                    │       │   └── #374  par
+                                    │       │       ├── #372  id
+                                    │       │       └── #373  exec compile
+                                    │       └── #384  seq
+                                    │           ├── #379  dimap
+                                    │           │   └── #378  par
+                                    │           │       ├── #376  id
+                                    │           │       └── #377  exec tests
+                                    │           └── #383  dimap
+                                    │               └── #382  par
+                                    │                   ├── #380  id
+                                    │                   └── #381  exec vitest
+                                    └── #391  seq
+                                        ├── #388  pure-adapter
+                                        │   └── #387  id
+                                        └── #390  left
+                                            └── #389  prompt repair

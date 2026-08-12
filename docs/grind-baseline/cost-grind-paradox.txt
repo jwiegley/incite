@@ -1,0 +1,3 @@
+worst-case leaf executions: 4611686018427387927
+dominating bound: 4611686018427387903
+distinct skeleton nodes: 103
