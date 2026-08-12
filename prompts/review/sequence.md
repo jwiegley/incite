@@ -21,6 +21,9 @@ Output, and nothing else:
 Every hunk appears exactly once, verbatim — no reformatting, no elision. If a
 hunk belongs to no step, put it under a final `## step: orphaned`.
 
+If the change has no hunks at all, write `## no change` and stop. Do not write
+a sequence for an empty change.
+
 **The gap between the actual change and this sequence is the finding, so make it
 visible rather than smoothing it over.** After the steps, add:
 

@@ -5,7 +5,7 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (find, isInfixOf, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -18,15 +18,17 @@ import Control.Exception (ErrorCall (..), evaluate, try)
 import Agent.Bounds (Fuel (..))
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (Grant, permitExec)
-import Agent.Flow (Flow (Id), Mode (Plan), foldLeavesScoped, (>>>))
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped, (>>>))
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
 import Agent.Op (ExecOutcome (..), LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
+import Agent.Oracle (Answer (..))
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
 import Incite.Backend (backends, backendsFor, blockOpencode, claudeAgentBackend, opencodeBackend, opencodeBackendFor, reviewer)
 import Incite.Feature
   ( Orientation (..)
+  , actingGrant
   , fixerContinuation
   , closeWithChanges
   , paradoxRule
@@ -54,6 +56,7 @@ import Incite.Feature
   , asReviewSubject
   , asReviewSubjectIgnoring
   , asStackSubject
+  , codeChecks
   , codeRule
   , continueMarker
   , decideContinue
@@ -65,6 +68,8 @@ import Incite.Feature
   , docsPlanLenses
   , isRed
   , document
+  , implement
+  , liteFuel
   , orchestrateWith
   , orient
   , planFeature
@@ -74,6 +79,7 @@ import Incite.Feature
   , retrospective
   , shipDocs
   , shipFeature
+  , shipFeatureLite
   , budgetCheck
   , budgetFuel
   , consentCheck
@@ -121,7 +127,9 @@ import Incite.Prompts
   , ponytailLadder
   , ponytailReviewRubric
   , qaAgent
+  , reviewSequence
   , reviewSynthesis
+  , reviewUnits
   , reviewArchitecture
   , reviewComplexity
   , reviewCorrectness
@@ -190,6 +198,7 @@ tests =
     , reframingTests
     , preambleViolationsTests
     , orientTests
+    , emptyChangeTests
     , documentTests
     , remediateTests
     , retrospectiveTests
@@ -198,6 +207,7 @@ tests =
     , codexFessTests
     , grindPanelTests
     , stackTests
+    , liteTests
     , reorientationTests
     , promptLintTests
     , packagingTests
@@ -573,74 +583,130 @@ reframingTests =
 -- trip of its fuel and then aborts, with no output anywhere naming the cause.
 -- @plan@ cannot see it — it renders leaf names — so this is the check.
 --
--- 'document' is the one that can be read here. @implement@ is bound inside
--- 'Incite.Feature.shipFeature', which is why the second worker brief was
--- written top-level.
+-- __Both workers, not one.__ 'document' was the only one that could be read
+-- here while @implement@ was bound inside 'Incite.Feature.shipFeature'\'s
+-- @where@ block. It is top-level now — two workflows run it — so the same three
+-- cases are quantified over both, and the house rule below applies to it for the
+-- first time.
 documentTests :: TestTree
 documentTests =
   testGroup
-    "document"
-    [ testCase "is one leaf" $ do
-        sent <- flowLeafPrompts "document" document "THE PLAN"
-        length sent @?= 1
-    , -- Round trip through the decider, not a substring check on the marker.
-      -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what has
-      -- to hold is that the decorated form the worker copies is one
-      -- 'decideContinue' reads as "call me again". It fails if the brief wraps
-      -- the marker in something outside the decoration alphabet, or if the
-      -- marker itself grows a character that alphabet does not strip.
-      --
-      -- The bullet's trailing prose is deliberately not fed in: the brief says
-      -- the status line stands alone, so the contract is about the token.
-      testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
-        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
-        let decorated = "`" <> continueMarker <> "`"
-        assertBool
-          "the brief does not show the marker in the decoration this asserts"
-          (T.isInfixOf decorated leafText)
-        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
-    , -- The input is the plan, not the findings: @document@ sits where
-      -- @implement@ sits, after @steer@ and inside the loop. Findings are
-      -- 'Incite.Feature.remediate'\'s input, downstream of the panel.
-      testCase "hands the plan to the worker" $ do
-        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
-        assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
-    , -- The same contract on the fixer that runs under an orchestrator, and the
-      -- same failure if it drifts. 'grindParadox' wraps @remediate@ in
-      -- 'Incite.Feature.orchestrate', so this clause is what asks for another
-      -- trip; a marker the decider does not read strands that loop for its whole
-      -- fuel with nothing in any output naming the cause.
-      --
-      -- Round trip through 'decideContinue' rather than a substring check, for
-      -- 'documentTests'\'s reason: what has to hold is that the DECORATED form
-      -- the brief shows is one the decider accepts.
-      testCase "fixerContinuation shows a marker decideContinue accepts" $ do
-        let decorated = "`" <> continueMarker <> "`"
-        assertBool
-          "the fixer clause does not show the marker in the decoration this asserts"
-          (says fixerContinuation decorated)
-        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
-    , -- The other half of the contract: the terminal line, and what it must
-      -- claim. A fixer that says WORK COMPLETE without saying what it closed
-      -- leaves the gate as the only evidence anything happened.
-      testCase "fixerContinuation names the terminal line and what it must carry" $
-        report
-          [ "fixerContinuation does not say " <> tshow needle
-          | needle <- ["WORK COMPLETE", "every finding is fixed or answered"]
-          , not (says fixerContinuation needle)
+    "the worker briefs"
+    $ [ testGroup
+          name
+          [ testCase "is one leaf" $ do
+              sent <- flowLeafPrompts name worker "THE PLAN"
+              length sent @?= 1
+          , -- Round trip through the decider, not a substring check on the marker.
+            -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what
+            -- has to hold is that the decorated form the worker copies is one
+            -- 'decideContinue' reads as "call me again". It fails if the brief
+            -- wraps the marker in something outside the decoration alphabet, or if
+            -- the marker itself grows a character that alphabet does not strip.
+            --
+            -- The bullet's trailing prose is deliberately not fed in: the brief
+            -- says the status line stands alone, so the contract is about the
+            -- token.
+            testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
+              leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+              let decorated = "`" <> continueMarker <> "`"
+              assertBool
+                "the brief does not show the marker in the decoration this asserts"
+                (T.isInfixOf decorated leafText)
+              decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+          , -- The input is the plan, not the findings: a worker sits after @steer@
+            -- and inside the loop. Findings are 'Incite.Feature.remediate'\'s
+            -- input, downstream of the panel.
+            testCase "hands the plan to the worker" $ do
+              leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+              assertBool "the input is not in the leaf" (T.isInfixOf "THE PLAN" leafText)
+          , -- __The house rule 'Incite.Feature.document'\'s haddock states__: a
+            -- top-level worker leaf names no stage that follows it. It held for
+            -- @document@ by construction and was stated as the reason @implement@
+            -- was allowed to say "review comes next" — it was private to the one
+            -- @where@ block that put a review after it. It is not private now, and
+            -- 'Incite.Feature.shipFeatureLite' puts a different panel after it, so
+            -- the rule is quantified over both briefs and the sentence had to go.
+            --
+            -- __A phrase list, and it is worth being exact about what that is.__
+            -- The rule is semantic and this is not: it refutes the spellings a
+            -- worker brief would plausibly reach for, not every sentence that
+            -- names a following stage. What makes it more than a pin on the one
+            -- deleted sentence is that the list IS a list — a rewording is how
+            -- this drift recurs, and a single literal waves every rewording
+            -- through. A phrasing outside it still gets past, which is why the
+            -- rule stays written down in 'Incite.Feature.document'\'s haddock as
+            -- well as here.
+            --
+            -- Quantified over both briefs though only @implement@ has ever
+            -- broken it: @document@'s instance is a standing guarantee rather
+            -- than a regression pin, and a rule that covers only the leaf known
+            -- to have failed it is not a rule.
+            --
+            -- __It reads the RENDERED leaf__, which splices 'ponytailLadder',
+            -- 'wiggum' and (for @implement@) 'agenticCoder'. An upstream brief
+            -- adopting one of these phrasings therefore fails here too. That is
+            -- the right polarity — those bytes are in what the worker is told,
+            -- whoever wrote them — and the complaint names the phrase, which is
+            -- what points a reader at the upstream file rather than at this
+            -- repository's own text.
+            --
+            -- 'proseNormal' rather than a raw substring: rewrapping a paragraph
+            -- or backticking a word is not a failure, the sentence being there
+            -- is.
+            testCase "names no stage that follows it" $ do
+              leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+              report
+                [ T.pack name <> " tells the worker what runs after it: " <> tshow phrase
+                | phrase <-
+                    [ "review comes next"
+                    , "review follows"
+                    , "reviewed next"
+                    , "goes to review"
+                    , "the panel runs"
+                    , "then the reviewers"
+                    ]
+                , T.isInfixOf phrase (proseNormal leafText)
+                ]
           ]
-    , -- The one rule this brief exists to carry that @implement@ must not.
-      -- Whitespace-normalised, so rewrapping the paragraph is not a failure —
-      -- the sentence being gone is.
-      testCase "forbids editing code to make a sentence true" $ do
-        leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
-        assertBool
-          "the brief does not forbid correcting the code instead of the prose"
-          ( T.isInfixOf
-              "never edit code to make a sentence true"
-              (T.unwords (T.words leafText))
-          )
+    | (name, worker) <- [("document", document), ("implement", implement)]
     ]
+      <> [ -- The same contract on the fixer that runs under an orchestrator, and
+           -- the same failure if it drifts. 'grindParadox' wraps @remediate@ in
+           -- 'Incite.Feature.orchestrate', so this clause is what asks for
+           -- another trip; a marker the decider does not read strands that loop
+           -- for its whole fuel with nothing in any output naming the cause.
+           --
+           -- Round trip through 'decideContinue' rather than a substring check,
+           -- for 'documentTests'\'s reason: what has to hold is that the
+           -- DECORATED form the brief shows is one the decider accepts.
+           testCase "fixerContinuation shows a marker decideContinue accepts" $ do
+            let decorated = "`" <> continueMarker <> "`"
+            assertBool
+              "the fixer clause does not show the marker in the decoration this asserts"
+              (says fixerContinuation decorated)
+            decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+         , -- The other half of the contract: the terminal line, and what it must
+           -- claim. A fixer that says WORK COMPLETE without saying what it closed
+           -- leaves the gate as the only evidence anything happened.
+           testCase "fixerContinuation names the terminal line and what it must carry" $
+            report
+              [ "fixerContinuation does not say " <> tshow needle
+              | needle <- ["WORK COMPLETE", "every finding is fixed or answered"]
+              , not (says fixerContinuation needle)
+              ]
+         , -- The one rule the docs brief exists to carry that @implement@ must
+           -- not. Whitespace-normalised, so rewrapping the paragraph is not a
+           -- failure — the sentence being gone is.
+           testCase "document forbids editing code to make a sentence true" $ do
+            leafText <- onlyFlowLeafPrompt "document" document "THE PLAN"
+            assertBool
+              "the brief does not forbid correcting the code instead of the prose"
+              ( T.isInfixOf
+                  "never edit code to make a sentence true"
+                  (T.unwords (T.words leafText))
+              )
+         ]
 
 -- | The bytes of the fixer brief that this repository owns, recorded off the
 -- shipped flow.
@@ -789,6 +855,40 @@ preambleViolationsTests =
           preambleViolations repaired @?= []
       ]
     | (law, broken, expected, repaired) <- preambleLaws
+    ]
+
+-- | The outcome the change-review path had no way to report: __there was no
+-- change__.
+--
+-- Every lens on that path is written for a diff, and each one has a clean-change
+-- ending it is told to fire — @Already sequential.@, @Nothing blocking.@ — so a
+-- panel handed an empty tree produces the same artifact as a panel handed a
+-- clean one. That is not a hypothetical: it is what most of the review of this
+-- very change did, pointed at a working tree with nothing in it, and the run
+-- read as a change with nothing wrong.
+--
+-- The fence is a token per stage, because the fix is prose and prose is what
+-- drifts. It cannot assert that a model obeys the sentence; what it can assert
+-- is that the sentence is still in the text the stage ships, which is the half
+-- that goes missing in an edit. The synthesis row is doubled — both verdicts —
+-- since naming one without the other leaves the reducer no way to keep them
+-- apart.
+emptyChangeTests :: TestTree
+emptyChangeTests =
+  testGroup
+    "the empty change"
+    [ testCase "every stage that reads a diff can say there was none" $
+        report
+          [ stage <> " does not state the empty-change outcome: " <> token
+          | (stage, body, token) <-
+              [ ("preambleOf AtChange", preambleOf AtChange, "Nothing to review.")
+              , ("prompts/review/units.md", promptText reviewUnits, "## no change")
+              , ("prompts/review/sequence.md", promptText reviewSequence, "## no change")
+              , ("prompts/review/synthesis.md", promptText reviewSynthesis, "Nothing to review.")
+              , ("prompts/review/synthesis.md", promptText reviewSynthesis, "Nothing blocking.")
+              ]
+          , not (T.isInfixOf token body)
+          ]
     ]
 
 orientTests :: TestTree
@@ -2242,6 +2342,14 @@ stackTests =
     "stack-prs"
     [ testCase "acts in the order its gates are worth anything in" $
         filter (`elem` stackActing) (leafNames (wfFlow stackPRs)) @?= stackActing
+    , -- __The tail, which the order above cannot see:__ it filters to the acting
+      -- roster, so a stage appended after promotion passes it. That the
+      -- promotion loop is LAST is a claim @docs\/workflows.md@ now makes in
+      -- prose — an exhausted promotion loop yields to nothing, so a stack left
+      -- half promoted ends the run looking like one that finished. Append a
+      -- stage there and the sentence is wrong; this is what says so.
+      testCase "the promotion loop is the last stage, which is why exhaustion there is silent" $
+        last (leafNames (wfFlow stackPRs)) @?= "promote"
     , -- The safety property the whole workflow exists to hold, stated on its
       -- own rather than left as a corollary of the order above. A budget check
       -- reached AFTER the first promotion is a check on a slot already spent.
@@ -2276,6 +2384,9 @@ stackTests =
       -- reader checks: 'stackFuel' being 'Nothing' is the overflow, and
       -- 'budgetFuel' being unbounded is a promotion gate that waits forever
       -- instead of handing a stuck queue to a person.
+      --
+      -- 'Incite.Feature.liteFuel' gets the same treatment in 'liteTests', where
+      -- the workflow it belongs to is.
       testCase "both fuels are finite, which is what keeps the cost a number" $ do
         assertBool "stackFuel is unbounded" (stackFuel /= Nothing)
         assertBool "budgetFuel is not positive" (budgetFuel > 0)
@@ -2287,32 +2398,18 @@ stackTests =
       -- bare number that no check could see going stale: a fuel change, a panel
       -- change or one more stage moves it silently.
       --
+      -- 'worstCaseTable' is the reader, shared with the Small changes section
+      -- rather than copied for it. It replaced the worked example that stood
+      -- here, and only after both of that reader's vacuity modes were provoked
+      -- and seen to fail — see its own haddock.
+      --
       -- __Two columns, and the live one checked__ — the review-tier table's
       -- treatment, for the review-tier table's reason: 'stackPRs' carries a
       -- review panel, so its worst case moves with @BLOCK_OPENCODE@, and a
       -- single-column table made this fence a statement about whoever's shell
       -- ran the suite.
-      testCase "the Stacking worst-case table matches worstCaseCost" $ do
-        doc <- TIO.readFile "docs/workflows.md"
-        let rows = tableRows (sectionBody "Stacking a change" doc)
-        assertBool "no worst-case row read from the Stacking section" (not (null rows))
-        report
-          [ complaint
-          | (name, cells) <- rows
-          , complaint <- case (name == wfName stackPRs, cells) of
-              (False, _) -> [name <> ": the Stacking table names a workflow this is not about"]
-              (True, full : blocked : _) ->
-                let raw = T.strip (if blockOpencode then blocked else full)
-                 in case reads (T.unpack raw) of
-                      [(n, "")] ->
-                        let actual = worstCaseCost (toSkeleton (wfFlow stackPRs))
-                         in [ name <> ": docs/workflows.md says " <> tshow n
-                                <> ", the flow's worst case is " <> renderCost actual
-                            | actual /= Finite n
-                            ]
-                      _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
-              (True, _) -> [name <> ": the row does not carry both counts"]
-          ]
+      testCase "the Stacking worst-case table matches worstCaseCost" $
+        worstCaseTable FullAndBlocked "Stacking a change" stackPRs
     , -- Every acting leaf under one pin, read off the SHIPPED flow rather than
       -- off the source. 'remediate' and 'repair' are unpinned in the two
       -- workflows that share them, so nothing but this says they are pinned
@@ -2468,6 +2565,269 @@ stackTests =
           , not (T.isInfixOf n body)
           ]
     ]
+
+-- | Fences the tier that trades coverage for price, on what that trade buys and
+-- on what it must not cost.
+--
+-- Everything else about @ship-feature-lite@ is a composition of bindings the
+-- heavy path already fences: 'Incite.Feature.planLeaf',
+-- 'Incite.Feature.implement', 'Incite.Feature.asReviewSubject',
+-- 'Incite.Review.reviewLiteFlow' and 'Incite.Feature.remediate' are one binding
+-- each, so a case here restating their contents would restate a fence rather
+-- than add one. What is new is the cap, what the cap does when it runs out,
+-- where that shows and where it does not, the grant, and where the chain stops.
+liteTests :: TestTree
+liteTests =
+  testGroup
+    "ship-feature-lite"
+    [ -- The counterpart of @stack-prs@'s "both fuels are finite" case, and for
+      -- the same reason: 'Incite.Feature.liteFuel' being 'Nothing' would make
+      -- this tier's whole premise — a small change, priced before it runs —
+      -- unstatable, and the flow would build, plan and run identically either
+      -- way. The cost is asserted here as well as against the prose, so this
+      -- stays a fence when the docs table is absent or when the reader below
+      -- matches nothing.
+      testCase "the fuel is finite, which is what keeps the cost a number" $ do
+        assertBool "liteFuel is unbounded" (liteFuel /= Nothing)
+        case worstCaseCost (toSkeleton (wfFlow shipFeatureLite)) of
+          Finite n -> assertBool ("worst case is " <> show n) (n > 0)
+          other -> assertFailure ("worst case is " <> T.unpack (renderCost other))
+    , -- __What separates "converged" on trip three from "gave up" on trip
+      -- three.__ Exhaustion yields rather than aborting, by
+      -- 'Incite.Feature.orchestrateWith'\'s design, so a capped run that never
+      -- finished still reaches the panel, the fixer and the close — and reads
+      -- as a complete ship unless the text itself says otherwise.
+      --
+      -- It does say otherwise, and this is what asserts it: the summary yielded
+      -- at trip n is the one that ASKED for trip n+1, so 'continueMarker' is
+      -- still in it, and 'Incite.Feature.decideTrip' appends
+      -- 'exhaustionNotice' under its own heading. A converged run ends on WORK
+      -- COMPLETE and carries no notice. Nothing else in this repository tells
+      -- the two outcomes apart. Where that text then goes — and where it does
+      -- not — is the third case below, because a notice nobody can reach is
+      -- not a distinction an operator has.
+      --
+      -- The trip number is the assertion, and 'tripWorker' is where that
+      -- mechanism is argued for. Driven off 'Incite.Feature.liteFuel' rather
+      -- than a literal, so this is an assertion about the constant the workflow
+      -- actually passes.
+      testCase "an exhausted loop yields the LAST trip's summary under the notice" $ do
+        exhausted <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker (const continueMarker))) "THE PLAN"
+        exhausted @?= tripSummary (maybe 0 fuelMax liteFuel) continueMarker <> "\n\n" <> exhaustionNotice
+    , -- The converged half of the same question, so the case above is a
+      -- discrimination rather than a statement that every loop output carries
+      -- the marker — and it converges BEFORE the cap, which is the other thing
+      -- a loop-free 'Incite.Feature.orchestrateWith' would get wrong: the fuel
+      -- is a ceiling, not a schedule, and a job finished on trip two costs two
+      -- turns.
+      --
+      -- __The stopping trip is derived from the fuel, not written as 2.__ A
+      -- literal here is an assertion about @'Just' 3@ and nothing else: lower
+      -- 'Incite.Feature.liteFuel' to @'Just' 2@ and the case is back on the cap,
+      -- where a fuel-as-schedule loop passes it again. One below the cap is
+      -- short of it at every fuel, and the margin itself is asserted — a cap of
+      -- one leaves no room to converge early and makes this case unstatable
+      -- rather than false.
+      testCase "a converged loop stops on the trip that said so, short of the cap" $ do
+        let cap = maybe 0 fuelMax liteFuel
+            stopAt = cap - 1
+            doneThen n = if n >= stopAt then "WORK COMPLETE" else continueMarker
+        assertBool ("liteFuel is " <> show cap <> ", which leaves no trip short of the cap") (stopAt >= 1)
+        converged <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker doneThen)) "THE PLAN"
+        converged @?= tripSummary stopAt "WORK COMPLETE"
+        decideContinue converged @?= Right converged
+        assertBool
+          "a converged run carries the exhaustion notice"
+          (not (exhaustionNotice `T.isInfixOf` converged))
+    , -- __Where the marker is legible, and where it is not.__ The two cases
+      -- above fence what the LOOP yields. This one fences what becomes of that
+      -- text afterwards, because @docs\/operations.md@ tells an operator where
+      -- to read it and the wrong answer there is precisely the failure the
+      -- marker exists to prevent — a capped run that gave up, read as a
+      -- finished ship.
+      --
+      -- The loop's yield is an INPUT to the panel: 'Incite.Feature.orient' is a
+      -- pure prepend, so 'Incite.Feature.asReviewSubject' points the lenses at
+      -- the tree and carries the account in under it. Every stage after the
+      -- loop then writes fresh text of its own, so the run's final artifact is
+      -- 'Incite.Feature.remediate'\'s closing paragraph and carries neither
+      -- marker. Both halves are asserted, and the second is what a relay added
+      -- later would fail — which is the day the docs sentence changes.
+      --
+      -- 'runByLeaf' rather than 'flowOutput' because the question needs every
+      -- leaf's answer told apart: one uniform answer is both the marker's source
+      -- and the fixer's output, so an assertion about the final artifact would
+      -- hold whichever leaf wrote it. Each leaf answers @\<\<its own name\>\>@,
+      -- which is what makes @final@ below name the leaf that produced it.
+      --
+      -- __The relayed text is the whole summary, not the marker.__ Matching the
+      -- bare phrase is satisfied by the first post-loop brief that QUOTES the
+      -- marker — 'Incite.Feature.preambleOf' does not, but a lens rewritten to
+      -- explain the status line would — and that passes with the relay broken,
+      -- which is the exact failure this case was written after.
+      testCase "the marker reaches the panel and never the final artifact" $ do
+        let yielded = "edited three files\n" <> continueMarker
+            byLeaf n = if n == "implement" then yielded else "<<" <> n <> ">>"
+        (final, sent) <- runByLeaf shipFeatureLite byLeaf "THE PLAN"
+        assertBool
+          "no leaf after the loop was shown the summary the loop yielded"
+          (any (\(n, rendered) -> n /= "implement" && T.isInfixOf yielded rendered) sent)
+        -- And it reaches them ORIENTED. Nothing else fences the
+        -- @dimap' asReviewSubject id@ around the panel: delete it and all five
+        -- lenses review the worker's prose as though it were the change, with
+        -- every other case here still green.
+        report
+          [ "the " <> n <> " lens was not pointed at the change"
+          | n <- ["correctness", "fess", "complexity", "ponytail", "qa"]
+          , not (any (\(leaf, rendered) -> leaf == n && T.isInfixOf (preambleOf AtChange) rendered) sent)
+          ]
+        -- The final artifact is the FIXER's own paragraph plus the gate's
+        -- verdict under its heading — the loop's status is nowhere in it, which
+        -- is why @docs/operations.md@ sends an operator to the transcript
+        -- instead. The @✓@ line is upstream's @decodeOutcome@ spelling, written
+        -- out for the reason the @ask:gate:@ fragment below is: the coupling is
+        -- to another repository's literals and a rename there would otherwise
+        -- weaken this to an assertion about nothing.
+        final @?= "<<remediate>>\n\n## gate\n\n✓ flake-check (exit 0)"
+    , -- __The grant, pinned to the binding the prose names.__ Every other case
+      -- here reads 'Agent.Run.wfFlow'; this reads 'Agent.Run.wfGrant', which
+      -- nothing else does for this workflow. README, AGENTS.md and
+      -- @docs\/workflows.md@ all state that @ship-feature-lite@ runs under
+      -- 'Incite.Feature.actingGrant' — swapping @workflowGReq@ for
+      -- @workflowReq@ leaves every one of those claims false and the rest of the
+      -- suite green.
+      testCase "runs under actingGrant, which is what every document says" $
+        wfGrant shipFeatureLite @?= actingGrant
+    , -- __And what that grant contains__, which the case above cannot see: it
+      -- pins the BINDING, so redefining 'Incite.Feature.actingGrant' as
+      -- @execGrant [\"*\"]@ keeps it green while falsifying the @nix*@ claim in
+      -- README, AGENTS.md and both documents. 'grindGrant' and 'stackGrant'
+      -- carry this pair already; the shared grant had neither half.
+      --
+      -- Through 'permitExec' over @T.unwords@, which is what @Agent.Run@ applies
+      -- to an 'Agent.Op.Exec' leaf, and over the gate's own argv rather than a
+      -- transcription of it: a check the grant denies is refused inside the run
+      -- (exit 126), so the gate reads a red no repair leaf can fix.
+      testCase "actingGrant permits the gate's check as the runtime spells it" $
+        report
+          [ "denied by actingGrant: " <> tshow line
+          | (_, cmd) <- codeChecks
+          , let line = T.unwords (NE.toList cmd)
+          , not (permitExec actingGrant line)
+          ]
+    , testCase "actingGrant denies what no check asked for" $
+        report
+          [ "actingGrant permits " <> tshow line
+          | line <- ["rm -rf /", "git push origin master", "gh pr merge 1", "curl example.com"]
+          , permitExec actingGrant line
+          ]
+    , -- __What the run ends on, stated as an order and as an absence.__
+      --
+      -- The order first: the last agent to touch the tree is the fixer, and a
+      -- fixer that breaks the build closes its findings and writes a confident
+      -- paragraph. Until the gate existed, that paragraph WAS the run's evidence
+      -- that the tree still built. So the tail of the chain is asserted whole —
+      -- the fixer, then the check we run ourselves, then the leaf that repairs a
+      -- red one — and both directions fail: dropping the gate, and appending
+      -- anything after it.
+      --
+      -- 'leafKinds' as well as 'leafNames', because a name cannot say whether a
+      -- gate is real. @exec:flake-check@ is 'Agent.Flow.Combinators.verify'
+      -- running argv and reading the exit code; the same stage written as an
+      -- @agentVerify@ prompt keeps the name, the position and the cost, and asks
+      -- an agent whether its own work passed.
+      --
+      -- Then the absence. 'shipDocs'\'s argument verbatim: an unattended run
+      -- auto-answers a gate and @--sandbox@ isolates the working tree but not
+      -- the network, so a PR leaf here would be an irreversible action with
+      -- nothing in the run able to stop it.
+      --
+      -- __Not the only fence a gate or a PR leaf would move__, and worth being
+      -- exact about the difference: 'Agent.Cost.worstCaseCost' counts every
+      -- leaf, @Ask@ included, so an added leaf takes the worst case off the
+      -- figure in the prose and @worstCaseTable@ below fails too. But that
+      -- failure is repaired by
+      -- editing a number in @docs\/workflows.md@ — which would wave the new leaf
+      -- straight through. This case is the one whose only repair is removing the
+      -- leaf.
+      --
+      -- __The leaf spellings are upstream's, not ours.__
+      -- @Agent.Flow.Combinators.humanGate@ builds
+      -- @LeafName (\"gate:\" <> question)@ under an @Ask@, which
+      -- 'Agent.Op.opTagPrefixed' renders @ask:gate:…@; @submitPR@ is
+      -- @refineWith \"submit-pr\"@. Written down because the coupling is to
+      -- another repository's string literals and nothing in this one would
+      -- otherwise say where they came from — a rename upstream turns these two
+      -- fragments into an assertion that matches nothing, silently.
+      testCase "the fixer is followed by the gate and by nothing else" $ do
+        let names = leafNames (wfFlow shipFeatureLite)
+            kinds = leafKinds (wfFlow shipFeatureLite)
+            asks = [k | k <- kinds, T.isPrefixOf "ask:" k]
+        assertBool "the flow has no leaves" (not (null names))
+        dropWhile (/= "remediate") names @?= ["remediate", "flake-check", "repair"]
+        assertBool
+          "the gate is not a check we run ourselves"
+          ("exec:flake-check" `elem` kinds)
+        -- One question, and it is the steer BEFORE the work — the gate that
+        -- costs nothing to auto-answer, because answering it wrong spends a
+        -- planning turn rather than opening a pull request.
+        --
+        -- __Which side of the work it sits on is the whole safety argument__,
+        -- and the identity of the single ask cannot state it: move the steer
+        -- below the loop and it is still one @ask:steer:@, still auto-answered,
+        -- and now it asks for guidance on work already done.
+        map (T.takeWhile (/= ':') . T.drop 4) asks @?= ["steer"]
+        assertBool "the flow has no implement leaf" ("implement" `elem` names)
+        assertBool
+          "the steer does not precede the implementation it steers"
+          (any (T.isPrefixOf "steer:") (takeWhile (/= "implement") names))
+        report
+          [ "ship-feature-lite carries a " <> what <> " leaf"
+          | (what, present) <-
+              [ ("human gate", any (T.isPrefixOf "ask:gate:") kinds)
+              , ("pull request", any (T.isInfixOf "submit-pr") names)
+              ]
+          , present
+          ]
+    , -- The figure in the prose, against the arithmetic — 'worstCaseTable'\'s
+      -- second caller, and the reason it is a property rather than a second copy
+      -- of the Stacking example.
+      testCase "the Small changes worst-case table matches worstCaseCost" $
+        worstCaseTable OneCount "Small changes" shipFeatureLite
+    ]
+
+-- | A worker stub that can be asked which trip it is on, given a closing status
+-- as a function of the trip number.
+--
+-- __The trip count rides in the summary, because that is where the loop already
+-- puts it.__ 'Incite.Feature.orchestrateWith' hands a worker its own previous
+-- output as the next trip's input, so a worker that writes its trip number can
+-- read the last one back and add one — no 'Data.IORef.IORef', and the counter is
+-- carried by exactly the mechanism under test. A stub that ignores its input
+-- (@const@) makes every trip identical and cannot tell three trips from one.
+--
+-- A @dimap'@ over 'Id' rather than a leaf: the fuel accounting is what these
+-- cases are about, and a prompt leaf here would add a handler's answer between
+-- the loop and the assertion.
+tripWorker :: (Int -> Text) -> Flow Text Text
+tripWorker close =
+  dimap' id (\prev -> let n = tripOf prev + 1 in tripSummary n (close n)) Id
+
+-- | What 'tripWorker' writes on trip @n@. Shared with the assertions so the
+-- format is stated once — an expected value spelled out separately is a second
+-- copy of the stub, and the two drift.
+tripSummary :: Int -> Text -> Text
+tripSummary n closing = "trip " <> tshow n <> "\n" <> closing
+
+-- | The trip number 'tripSummary' wrote, or 0 for text it did not write (the
+-- loop's first input is the plan, not a summary). Line one, because that is
+-- where 'tripSummary' puts it: scanning further would read a number out of a
+-- plan that happens to contain the word.
+tripOf :: Text -> Int
+tripOf prev =
+  case reads . T.unpack =<< maybeToList (T.stripPrefix "trip " (T.takeWhile (/= '\n') prev)) of
+    (n, "") : _ -> n
+    _ -> 0
 
 -- | The lens bodies "Incite.Review" writes as an upstream rubric plus one
 -- adjustment, each paired with the rubric it is a delta against.
@@ -2893,6 +3253,7 @@ mirrorWorkflows :: [Workflow]
 mirrorWorkflows =
   [ planFeature
   , shipFeature
+  , shipFeatureLite
   , shipDocs
   , stackPRs
   , grindParadox
@@ -2928,6 +3289,55 @@ tableRows body =
   , T.isPrefixOf "`" c1
   , let name = T.takeWhile (/= '`') (T.drop 1 c1)
   ]
+
+-- | The worst-case figure a @## @ section's table states, against the
+-- arithmetic over the shipped flow. Quantified over every row of that table, so
+-- a section that grows a second row is covered the day it does.
+--
+-- __A property standing in for two copies of one example.__ Two sections state
+-- a worst case in prose, in tables of the same shape, and a fuel change, a panel
+-- change or one more stage moves the number in either with nothing to notice.
+--
+-- __And it can pass vacuously, which is the whole risk of a Markdown parser as
+-- a fence.__ A renamed heading or a changed table shape makes 'tableRows' match
+-- nothing and every complaint below quantifies over the empty list. The
+-- non-empty guard is what fails instead, and both failure modes were provoked
+-- deliberately — the heading renamed, then a stated number perturbed — before
+-- the worked example this replaced was deleted.
+worstCaseTable :: WorstCaseColumns -> Text -> Workflow -> Assertion
+worstCaseTable columns section wf = do
+  doc <- TIO.readFile "docs/workflows.md"
+  let rows = tableRows (sectionBody section doc)
+  assertBool
+    (T.unpack ("no worst-case row read from the " <> section <> " section"))
+    (not (null rows))
+  report
+    [ complaint
+    | (name, cells) <- rows
+    , complaint <- case (name == wfName wf, columns, cells) of
+        (False, _, _) -> [name <> ": the " <> section <> " table names a workflow this is not about"]
+        (True, OneCount, raw : _) -> counted name raw
+        (True, FullAndBlocked, full : blocked : _) ->
+          counted name (if blockOpencode then blocked else full)
+        (True, OneCount, []) -> [name <> ": the row carries no count"]
+        (True, FullAndBlocked, _) -> [name <> ": the row does not carry both counts"]
+    ]
+  where
+    counted name raw = case reads (T.unpack (T.strip raw)) of
+      [(n, "")] ->
+        let actual = worstCaseCost (toSkeleton (wfFlow wf))
+         in [ name <> ": docs/workflows.md says " <> tshow n
+                <> ", the flow's worst case is " <> renderCost actual
+            | actual /= Finite n
+            ]
+      _ -> [name <> ": the leaf count " <> tshow raw <> " does not parse as an Int"]
+
+-- | Which count cells a worst-case table carries: one figure, or the
+-- full\/opencode-blocked pair whose live column 'blockOpencode' picks. A
+-- workflow whose panel is a lens × backend cross-product moves with
+-- @BLOCK_OPENCODE@ and must state both; one whose roster is written out per
+-- leaf substitutes a backend without changing its count and states one.
+data WorstCaseColumns = OneCount | FullAndBlocked
 
 -- | The backticked name in a markdown table row's __first__ cell, for every row
 -- that has one. Later cells (a lens name, a bound flow value) are deliberately
@@ -2981,10 +3391,15 @@ docsInventoryTests =
     [ -- Direct list equality, not sorted-set equality. The table is meant to
       -- mirror 'mirrorWorkflows'\'s order (it is 'workflows/Main.hs'\'s order),
       -- and a bare set comparison cannot see a reorder: two tables naming the
-      -- same twelve workflows in different sequences would both read as the same
+      -- same thirteen workflows in different sequences would both read as the same
       -- set and this would stay green. Order is exactly what makes the claim on
       -- 'mirrorWorkflows' — "a rename or reorder on either side is exactly what
       -- this test exists to catch" — true.
+      --
+      -- Its failure output is a location rather than a count: both ordered lists
+      -- print in full, so a misplaced entry shows which one moved and where to.
+      -- Proved by putting @ship-feature-lite@ last in 'mirrorWorkflows' on
+      -- purpose when it was added, and reading what came back.
       testCase "Exposed inventory names exactly the workflows this binary exposes, in order" $ do
         doc <- TIO.readFile "docs/workflows.md"
         let named = tableFirstColumn (sectionBody "Exposed inventory" doc)
@@ -3122,6 +3537,31 @@ docsInventoryTests =
           | (name, _) <- docsPlanLenses
           , let n = leafNameText name
           , not (T.isInfixOf n body)
+          ]
+    , -- __The bullet that says where an upstream brief lands, against the flows
+      -- that land it.__ README said @agentic-coder@ opens the implementer in
+      -- @ship-feature@ while 'Incite.Feature.implement' had been hoisted to
+      -- top-level for a second caller — so a reader of that bullet had no way to
+      -- know that the same 8 KB brief, and the same unsupervised write access,
+      -- is what the lite tier runs too.
+      --
+      -- The roster is DERIVED from the shipped flows rather than written here,
+      -- which is what makes this survive the next tier: a third workflow reusing
+      -- the leaf goes red on this case rather than on nothing.
+      testCase "README's agentic-coder bullet names every workflow that runs the brief" $ do
+        readme <- TIO.readFile "README.md"
+        -- The bullet, not the section: its neighbours name workflows of their
+        -- own, and a whole-section reader would pass on ponytail's line.
+        let bullet = case dropWhile (not . T.isInfixOf "**agentic-coder**") (T.lines readme) of
+              [] -> ""
+              l : rest -> T.unlines (l : takeWhile (T.isPrefixOf "  ") rest)
+            runners = [wfName wf | wf <- mirrorWorkflows, "implement" `elem` leafNames (wfFlow wf)]
+        assertBool "no agentic-coder bullet found in README.md" (not (T.null (T.strip bullet)))
+        assertBool "no workflow runs the implement leaf" (not (null runners))
+        report
+          [ "README's agentic-coder bullet does not name `" <> n <> "`"
+          | n <- runners
+          , not (T.isInfixOf ("`" <> n <> "`") bullet)
           ]
     ]
 
@@ -3402,6 +3842,50 @@ flowOutput name flow input =
       flow
       input
 
+-- | A whole shipped workflow run with each prompt leaf answered __by name__,
+-- returning the final artifact together with every rendered prompt and the leaf
+-- it went to.
+--
+-- __Why not 'flowLeafPrompts' or 'flowOutput'.__ Both answer every leaf the same
+-- thing, which cannot ask what one leaf's OUTPUT does to the stages after it: the
+-- answer that makes the orchestrator loop exhaust would also be the answer the
+-- fixer gives, so an assertion about the final artifact would hold for the wrong
+-- reason. Dispatching on 'leafNameOf' is what keeps the worker's text and the
+-- fixer's text distinguishable.
+--
+-- __The ask and exec handlers answer instead of failing__, unlike the two helpers
+-- above: those interpret prompt-only flows, where either one is news. This is a
+-- shipped acting workflow run unattended — it has a @steer@ the run auto-answers
+-- and a gate it runs itself — so both are answered rather than refused.
+--
+-- The exec answer is @exit 0@: a green tree, which is the run this asks about.
+-- It is not a claim that the gate works — 'Agent.Flow.Combinators.checkLoop'
+-- owns the red path and 'Incite.Feature.isRed' is fenced directly — it is what
+-- lets a caller assert what the stages AFTER a passing check produce.
+runByLeaf :: Workflow -> (Text -> Text) -> Text -> IO (Text, [(Text, Text)])
+runByLeaf wf answer input = do
+  sent <- newIORef []
+  final <-
+    fst
+      <$> interpret
+        ( \sc op x ->
+            let name = leafNameOf (opTag op)
+             in leafRunner
+                  LeafHandlers
+                    { lhPrompt = \rendered -> do
+                        modifyIORef' sent (<> [(name, rendered)])
+                        pure (answer name)
+                    , lhExec = \_ -> pure (ExecOutcome {eoExit = 0, eoStdout = "", eoStderr = ""})
+                    , lhAsk = \_ -> pure (Answer "")
+                    }
+                  sc
+                  op
+                  x
+        )
+        (wfFlow wf)
+        input
+  (,) final <$> readIORef sent
+
 -- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather
 -- than picking one when it is not. @prompt-lint@ is a single @ste@ refinement
 -- under two scopes, so a second leaf appearing is a change to what it sends and
@@ -3599,6 +4083,12 @@ scopeTests =
       -- @--backend@ can move it again.
       testCase "ship-feature implements on claude-agent's default model, pinned" $
         lookup "implement" (scopedLeaves (wfFlow shipFeature)) @?= Just "claude-agent"
+    , -- The same leaf, in the workflow that shares it. 'Incite.Feature.implement'
+      -- is one binding, so this cannot drift from the case above by editing —
+      -- what it catches is the lite tier acquiring a rescoping of its own, which
+      -- a backend scope makes invisible to every other instrument here.
+      testCase "ship-feature-lite implements on the same pinned leaf" $
+        lookup "implement" (scopedLeaves (wfFlow shipFeatureLite)) @?= Just "claude-agent"
     , -- Read-only, as a statement about the resolved scope rather than about
       -- how many wrappers say so. This is what an outer @withMode Plan@ around
       -- the fan-out was there for, and what @reviewer@ already guarantees at

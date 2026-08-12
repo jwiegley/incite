@@ -11,8 +11,8 @@ Two halves, one flake:
 - **Prompts** — built on [Flake Prompt](https://gitlab.com/fresheyeball/flake-prompt),
   which renders prompt definitions into the native on-disk formats for Claude
   Code, Codex, opencode, Crush, and Droid.
-- **Workflows** — built on `agent-functor`, a typed workflow library (local
-  checkout, no remote yet). Workflows are `Flow Text Text` values composed with
+- **Workflows** — built on [agent-functor](https://gitlab.com/fresheyeball/agent-functor),
+  a typed workflow library. Workflows are `Flow Text Text` values composed with
   `>>>`; the CLI (`list`/`plan`/`cost`/`run`) and a live TUI for `run` come for
   free.
 
@@ -533,9 +533,18 @@ another, leaf by leaf. The terms the rest of this section uses:
 - **Regrouping** — an agent leaf that re-expresses the change (as logical
   units, or as the commits it should have been) so a panel can review a
   different shape of it. The granularity axis, not a third lens.
-- **Orchestrator loop (`loopUntil`)** — one worker leaf (the only leaf that
-  edits files) is re-run on its own closing summary until it ends on
-  `WORK COMPLETE` rather than the `continueMarker`; up to 8 trips.
+- **Orchestrator loop (`orchestrateWith`)** — one worker leaf (the only leaf
+  that edits files) is re-run on its own closing summary until it ends on
+  `WORK COMPLETE` rather than the `continueMarker`. No trip ceiling by default
+  (`workerFuel` is `Nothing`), and every capped call site *of this combinator*
+  names a constant: `stack-prs` runs its four loops under `stackFuel` (12) and
+  `ship-feature-lite` under `liteFuel` (3). A cap yields the last summary to
+  the next stage rather than aborting, so the edits already made are never
+  stranded — and because that summary is the one that asked for another trip,
+  it still ends on `WORK REMAINS`, in the transcript on that leaf; no later
+  stage relays it. The gate loops under `checkLoop` are a different combinator
+  with the opposite exhaustion policy:
+  [`docs/workflows.md`](docs/workflows.md#grinding-a-whole-tree).
 - **Gate** — where a run blocks on a human: `steer` (before the work starts),
   `humanGate` (before the PR). An unattended run auto-answers them.
 - **`execGrant`** — the whitelist of commands a world-acting workflow may run
@@ -544,11 +553,12 @@ another, leaf by leaf. The terms the rest of this section uses:
 
 The inventory in `workflows/Main.hs` — each workflow is defined in
 `Incite.Feature` or `Incite.Review`, and only what that list names is exposed.
-The full table of all 12 workflows and what each does lives in one place:
+The full table of all 13 workflows and what each does lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth repeating here: four workflows are **world-acting** and
-every other one is prompt-only. `ship-feature` and `ship-docs` run under
+Two safety facts worth repeating here: five workflows are **world-acting** and
+every other one is prompt-only. `ship-feature`, `ship-feature-lite` and
+`ship-docs` run under
 `actingGrant` (`execGrant ["nix*"]`); `grind-paradox` and `stack-prs` run under
 grants derived from their own check lists, so a check and its permission cannot
 drift apart. Whichever grant applies, it gates only the commands *we* run — the
@@ -565,10 +575,12 @@ Where the [upstream briefs](#upstream-prompts) land:
 - ponytail's **review** and **audit** rubrics — panel lenses, same tags and
   scoring, pointed at a diff (`review-lite` and the `review-heavy` panel) or at
   the whole change (`review-audit`).
-- **agentic-coder** — opens the brief for the implementer in `ship-feature`, the
-  first leaf in either workflow that writes to a file. That is where
-  read-before-editing and the security checklist have to land, not at the review
-  beats after it.
+- **agentic-coder** — opens `implement`, the leaf that writes code. One binding,
+  run by `ship-feature` and by `ship-feature-lite`, and in both it is the first
+  leaf that writes to a file. That is where read-before-editing and the security
+  checklist have to land, not at the review beats after it. `ship-docs` runs
+  `document` instead, which takes the ladder and `wiggum` but not this brief:
+  it is a document about writing code.
 
 The implementation brief is a three-document composition, each answering a
 different question — `agentic-coder` **how** to write it (plan first, read before

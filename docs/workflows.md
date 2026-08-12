@@ -26,6 +26,7 @@ text.
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
 | `ship-feature` | world-acting | `plan-feature`, steer, orchestrated code implementation, `reviewHeavyFlow`, remediation, retrospective, human gate, PR |
+| `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation, then a real-exit-code `nix flake check` gate with `repairFuel` trips — and it stops there, with no human gate and no PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
@@ -89,11 +90,12 @@ backends instead of three:
   stances already hold `claude-agent` and `claude-agent/fable`, so a collision
   is forced rather than chosen.
 
-`ship-feature` and `ship-docs` use `workflowGReq` with `actingGrant`, currently
-`execGrant ["nix*"]`. The grinds and `stack-prs` use grants derived from
-their own check lists — every grind's through `grindGrantFor` (`grindGrant`
-from `grindChecks`, `grindTestsGrant` from `grindTestsChecks`,
-`grindLiveViewGrant` from `grindLiveViewChecks`), `stackGrant` from
+`ship-feature`, `ship-feature-lite` and `ship-docs` use `workflowGReq` with
+`actingGrant`, currently `execGrant ["nix*"]`. The grinds and `stack-prs` use
+grants derived from their own check lists — every grind's through
+`grindGrantFor` (`grindGrant` from `grindChecks`, `grindTestsGrant` from
+`grindTestsChecks`, `grindLiveViewGrant` from `grindLiveViewChecks`),
+`stackGrant` from
 `stackChecks` and `budgetCheck` — so a check added without a permission is a
 build-time fact rather than a run-time denial nobody reads.
 
@@ -117,10 +119,20 @@ are still mediated by the backend's tool permission flow.
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
   `Just (Fuel n)` to cap at n trips after which the last summary yields to
-  the review panel — under an explicit trip-budget-exhausted notice — rather
-  than aborting the run. `orchestrateWith` takes that
-  ceiling as an argument and is what `orchestrate` is defined by, so a capped
-  loop cannot drift from the default one; `stack-prs` passes `stackFuel`;
+  whatever comes next — under an explicit trip-budget-exhausted notice —
+  rather than aborting the run. In `ship-feature-lite` that is the review
+  panel. In `stack-prs` it depends on which of the four loops ran out, and the
+  last one — promotion — has no next stage at all: an exhausted promotion loop
+  yields to the end of the workflow, so a stack left half promoted ends the
+  run under that notice. `orchestrateWith` takes that ceiling as an argument
+  and is what `orchestrate` is defined by, so a capped loop cannot drift from
+  the default one. Every call site of `orchestrateWith` names a constant
+  rather than a literal (the gate loops under `checkLoop` are a different
+  combinator with its own fuels): `stack-prs` passes `stackFuel`
+  (`Just (Fuel 12)`), `ship-feature-lite` passes `liteFuel` (`Just (Fuel 3)`),
+  `grind-tests` passes `grindTestsReviewFuel` (`Just (Fuel 12)`) for its
+  review-pass fixer, and `ship-feature`, `ship-docs` and the grinds' own fixer
+  loops take `workerFuel` (`Nothing`);
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
   `docsRule`, `paradoxRule`, or `stackRule`) plus a closing clause. The clause
   is what distinguishes a fixer that runs once (`closeWithChanges`) from one
@@ -128,6 +140,55 @@ are still mediated by the backend's tool permission flow.
   `continueMarker`); with no clause the leaf is byte-for-byte what it was
   before the argument existed, and `test/Spec.hs` pins that against a golden
   recorded beforehand.
+
+## Small changes
+
+`ship-feature-lite` is the acting shape for a change that does not need the
+heavy tier. It reuses `planLeaf`, `implement`, `actingGrant`, `orchestrateWith`,
+`asReviewSubject`, `remediate` and `greenGate` rather than copying them, so it
+cannot drift from `ship-feature` in anything they share. Four things distinguish
+it.
+
+- **It plans with `planLeaf` alone.** No four exploration stances and no
+  `editPlan` chain. Those buy independence on a change large enough to be
+  planned wrong, and they are ten leaves before a line of code is written. If a
+  lite run plans badly on real work, the fix is to swap `planLeaf` for
+  `explorePlan` — the planner is a named binding at the head of the chain for
+  exactly that reason.
+- **`liteFuel` is `Just 3`, where `workerFuel` is `Nothing`.** A fourth trip
+  means the task was never a small task. Exhaustion yields rather than aborts,
+  so the panel still reads what the three trips landed — and the summary it
+  yields is the one that asked for a fourth trip, so it still ends on
+  `WORK REMAINS`. That marker is the worker's own text, and it travels exactly
+  as far as that text does: into the panel's input and into the run transcript.
+  Every stage after the loop writes fresh text, so the run's **final artifact**
+  is the fixer's closing paragraph under the gate's verdict, and carries neither
+  marker. Read the transcript, not the artifact, to tell a capped run that gave
+  up from one that finished. `test/Spec.hs` asserts both halves of that.
+- **It ends on a gate the harness runs.** `greenGate codeRule codeChecks` runs
+  `nix flake check` itself and reads the exit code, so the last word on the tree
+  is not the fixer's. A red gate costs `repairFuel` repair trips and then aborts
+  the run; it does not report success over a failing check. `ship-feature` needs
+  no such stage because it ends at a human gate and a pull request, where a
+  person and CI read the change. Nothing reads a lite run but the tree. The
+  check is `nix flake check` and not `cabal test` because `actingGrant` is
+  `execGrant ["nix*"]`: an ungranted check is denied inside the run and the gate
+  reads a red no repair leaf can fix.
+- **It has no human gate and no PR**, which is `ship-docs`'s safety property and
+  the same argument: an unattended run auto-answers a gate (`gateAnswer`
+  defaults to `"yes"`) and `--sandbox` isolates the working tree but not the
+  network, so a PR leaf here would be an irreversible action with nothing in the
+  run able to stop it. The change lands in the tree; opening the pull request
+  stays a human's push. The one question it does ask is the `steer` before the
+  work, where a wrong auto-answer costs a planning turn.
+
+**The worst case is fenced, not quoted**, the same way the Stacking figure and
+the review-tier table are: `test/Spec.hs` reads the number below out of this
+file and compares it against `worstCaseCost . toSkeleton . wfFlow`.
+
+| Workflow | Worst-case leaves |
+|---|---:|
+| `ship-feature-lite` | 19 |
 
 ## Stacking a change
 

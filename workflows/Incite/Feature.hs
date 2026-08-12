@@ -2,13 +2,17 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | Turning a request into a plan, and a plan into the work it asks for: a pull
--- request for code, edited prose for documentation.
+-- | Turning a request into a plan, and a plan into the work it asks for. What
+-- the work leaves behind differs by workflow: edited code in the tree
+-- ('shipFeatureLite'), edited prose in the documents ('shipDocs'), and a pull
+-- request only where a human is present to say yes to one ('shipFeature').
 --
 -- 'planFeature', 'shipFeature' and 'shipDocs' over one shared prefix.
 -- @explorePlan@ is the analysis half — explore, plan — and @editPlan@ is the
 -- six-lens plan-editing chain; both are plain 'Flow' values, so 'planFeature'
 -- stops there while the two acting workflows continue into the acting half.
+-- 'shipFeatureLite' is the same acting half over a shorter prefix — 'planLeaf'
+-- alone — and its own haddock argues for the trade.
 --
 -- __The acting half is shared by name, not by count.__ 'actingGrant' is the
 -- exec policy, 'orchestrate' is the fuelled worker loop over 'continueMarker'
@@ -18,14 +22,19 @@
 -- 'codeRule'), and where it stops. Bindings rather than copies for one reason:
 -- the workflows cannot drift in anything they share.
 --
--- 'stackPRs' is the third acting shape over those same pieces, pointed at one
--- change rather than at a request: it cuts a large diff into an ordered stack of
--- branches. What it adds is a second harness-run gate — 'budgetGate' asks
--- whether a CI slot may be spent at all, with a real exit code, before every
+-- 'grindParadox' and 'stackPRs' are the two acting shapes pointed at something
+-- other than a request — a whole tree, and one change too large to review at
+-- once — and both end where 'shipFeatureLite' does, on a 'greenGate': a check
+-- the harness runs itself, with a real exit code, because everything upstream of
+-- it is an agent reporting on its own work. 'stackPRs' adds a second such gate,
+-- 'budgetGate', which asks whether a CI slot may be spent at all before every
 -- trip of the promotion loop.
 module Incite.Feature
   ( planFeature
+  , planLeaf
+  , implement
   , shipFeature
+  , shipFeatureLite
   , shipDocs
   , docsPlanLenses
   , grindParadox
@@ -53,9 +62,11 @@ module Incite.Feature
   , orchestrate
   , orchestrateWith
   , workerFuel
+  , liteFuel
   , stackFuel
   , repairFuel
   , checkLoop
+  , codeChecks
   , greenGate
   , repairLeaf
   , GrindSpec (..)
@@ -142,6 +153,7 @@ import Incite.Review
   , reviewAuditFlow
   , reviewDocsFlow
   , reviewHeavyFlow
+  , reviewLiteFlow
   , spreadPinned
   )
 import Incite.Prompts
@@ -210,61 +222,76 @@ shipFeature =
       >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
-    -- One worker implements the plan for real, editing this repository in
-    -- place. Its standing brief composes 'agenticCoder' (HOW), 'ponytailLadder'
-    -- (HOW MUCH) and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that
-    -- writes code unsupervised, and the reason the orchestrator needs no
-    -- cadence of its own.
-    --
-    -- __Pinned, and the only leaf in this workflow that is.__ The lens chains
-    -- around it are deliberately left on the run's own backend, because they are
-    -- several readings of one text and their argument is that they stay
-    -- comparable. This leaf is different in kind: it is the one that writes code
-    -- unsupervised, under an orchestrator that will call it again, so its model
-    -- is a decision rather than a default. Left unpinned it inherits the run's —
-    -- a @run --backend codex@, or an MCP caller passing @backend@, silently
-    -- moves the leaf that does the work, and no leaf name, plan skeleton or cost
-    -- estimate moves with it.
-    --
-    -- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
-    -- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where
-    -- a fast reader over a fixed text is the point. Implementation is not that.
-    implement = withBackend claudeAgent defaultModel implementLeaf
-
-    -- Separated from its scope so the brief's indentation is untouched by it:
-    -- the body is a `__i` quasi-quote, and re-indenting a quasi-quote to nest it
-    -- one level deeper edits the prompt.
-    implementLeaf =
-      refineWith
-        "implement"
-        ( brief
-            [__i|
-              #{agenticCoder}
-
-              #{ponytailLadder}
-
-              #{wiggum}
-
-              Implement this plan fully in the current repository — edit the
-              files directly.
-
-              You are running under an orchestrator that will call you again
-              with your own summary as its input, so write the summary for your
-              successor: what you changed, what is left, and what it needs to
-              know to continue.
-
-              End with a status line, alone on the last line:
-
-              - `#{continueMarker}` — the plan is not finished. You will be
-                called again.
-              - `WORK COMPLETE` — every step is done and the build is green.
-                Say what changed; review comes next.
-            |]
-        )
-        id
     -- The panel's lenses are written for a diff, and the artifact here is the
     -- worker's closing summary: 'asReviewSubject' points them at the tree.
     reviewChange = dimap' asReviewSubject id reviewHeavyFlow
+
+-- | The worker that writes code. As a function of its argument: it maps __a
+-- plan__ to __a report of the edits it made under that plan__, and it makes
+-- them in the repository it runs in.
+--
+-- One worker implements the plan for real, editing this repository in place.
+-- Its standing brief composes 'agenticCoder' (HOW), 'ponytailLadder' (HOW MUCH)
+-- and 'wiggum' (HOW LONG) — ~7 KB, worth it on the one leaf that writes code
+-- unsupervised, and the reason the orchestrator needs no cadence of its own.
+--
+-- __Pinned, and the only ACTING leaf that is.__ Which is a narrower claim than
+-- \"the only pinned leaf\": 'planLeaf' and the explore stances carry pins of
+-- their own, each argued for where it sits. What is unpinned around this leaf
+-- is the lens chains — 'editPlan', and the panels — deliberately left on the
+-- run's own backend, because they are several readings of one text and their
+-- argument is that they stay comparable. This leaf is different in kind from
+-- both: it is the one that writes code
+-- unsupervised, under an orchestrator that will call it again, so its model is a
+-- decision rather than a default. Left unpinned it inherits the run's — a @run
+-- --backend codex@, or an MCP caller passing @backend@, silently moves the leaf
+-- that does the work, and no leaf name, plan skeleton or cost estimate moves
+-- with it.
+--
+-- 'defaultModel' is claude-agent's own default (Claude Opus), deliberately
+-- __not__ 'fable5'. Fable is pinned on the review and planning lenses, where a
+-- fast reader over a fixed text is the point. Implementation is not that.
+--
+-- __Top-level because it has two callers__ — 'shipFeature' and
+-- 'shipFeatureLite' — and because a brief nothing outside its own @where@ block
+-- can read is a brief no test can hold to the house rules. @test\/Spec.hs@
+-- checks its marker contract against 'decideContinue' exactly as it does
+-- 'document'\'s.
+implement :: Flow Text Text
+implement = withBackend claudeAgent defaultModel implementLeaf
+
+-- | Separated from its scope so the brief's indentation is untouched by it: the
+-- body is a @__i@ quasi-quote, and re-indenting a quasi-quote to nest it one
+-- level deeper edits the prompt.
+implementLeaf :: Flow Text Text
+implementLeaf =
+  refineWith
+    "implement"
+    ( brief
+        [__i|
+          #{agenticCoder}
+
+          #{ponytailLadder}
+
+          #{wiggum}
+
+          Implement this plan fully in the current repository — edit the
+          files directly.
+
+          You are running under an orchestrator that will call you again
+          with your own summary as its input, so write the summary for your
+          successor: what you changed, what is left, and what it needs to
+          know to continue.
+
+          End with a status line, alone on the last line:
+
+          - `#{continueMarker}` — the plan is not finished. You will be
+            called again.
+          - `WORK COMPLETE` — every step is done and the build is green.
+            Say what changed.
+        |]
+    )
+    id
 
 -- | Close a run with "Incite.Review".'retroFlow'\'s three columns, appended to
 -- the work rather than replacing it.
@@ -339,6 +366,72 @@ shipDocs =
       >>> dimap' asDocsSubject id reviewDocsFlow
       >>> remediate docsRule closeWithChanges
 
+-- | 'shipFeature' for a change small enough not to want the heavy tier: the
+-- planner alone, one steer, a capped implementation loop, the five-lens
+-- 'reviewLiteFlow' panel, and the fixer.
+--
+-- It shares 'planLeaf', 'implement', 'actingGrant', 'orchestrateWith',
+-- 'asReviewSubject' and 'remediate' with the heavy path, so the two cannot drift
+-- in anything they share. Three things are its own.
+--
+-- __'planLeaf', not 'explorePlan'.__ The four exploration stances are what a
+-- large change buys independence with, and they are four leaves before a line is
+-- written. A small change knows what it is. If a lite run plans badly on real
+-- tasks the fix is one token — swap 'planLeaf' for 'explorePlan' — which is why
+-- the planner is a named binding at the head of the chain rather than an inline
+-- expression. There is no 'editPlan' either, for the same reason: six sequential
+-- rewrites of a plan that fits in a paragraph.
+--
+-- __'liteFuel', not 'workerFuel'.__ Three trips, then the last summary yields to
+-- the panel with its 'continueMarker' still on it. The cap is what makes this
+-- tier's worst case a finite number rather than the unbounded one 'shipFeature'
+-- reports, and the marker is what stops an exhausted run from reading as a
+-- finished one __at the leaf that wrote it__ — nothing after the loop relays it,
+-- so the run's final artifact is @remediate@\'s own closing paragraph and
+-- carries neither marker. See 'liteFuel'.
+--
+-- __It ends on a gate WE run, not on the fixer's word.__ Every other stage here
+-- is an agent reporting on its own work, and the last of them edits code: a
+-- fixer that breaks the build closes its findings, writes a confident paragraph
+-- and the run ends green. 'greenGate' over 'codeChecks' is the one statement in
+-- this workflow that no agent authors — 'Agent.Flow.Combinators.verify' runs the
+-- command and reads the exit code — and a red tree costs 'repairFuel' repair
+-- trips and then aborts the run rather than reporting success over it. That is
+-- the whole difference between a tier that ships a small change and a tier that
+-- ships whatever the last agent said it did.
+--
+-- 'shipFeature' needs no such stage for the same reason it can afford the heavy
+-- panel: it ends at a 'humanGate' and a pull request, so a person and CI read
+-- the change before anything merges. Nothing reads a lite run but the tree.
+--
+-- __And still no 'humanGate' and no 'submitPR'.__ 'shipDocs'\'s argument
+-- exactly: an unattended run auto-answers the gate — @gateAnswer@ defaults to
+-- @\"yes\"@ — and @--sandbox@ isolates the working tree but not the network, so
+-- a PR leaf here would be an irreversible action with nothing in the run able to
+-- stop it. That omission is the safety property that keeps every irreversible
+-- action out of an unattended run. The change lands in the tree; opening the
+-- pull request stays a human's push.
+shipFeatureLite :: Workflow
+shipFeatureLite =
+  workflowGReq
+    "ship-feature-lite"
+    [iii|
+      Plan a small change without the exploration stances, then implement it
+      under an orchestrator capped at three trips; review the result with the
+      five-lens per-commit panel, remediate the findings, and gate on a
+      harness-run `nix flake check`
+    |]
+    actingGrant
+    $ planLeaf
+      >>> steer "Review the plan — add any guidance before implementation begins"
+      >>> orchestrateWith liteFuel implement
+      -- The panel's lenses are written for a diff, and the artifact here is the
+      -- worker's closing summary: 'asReviewSubject' points them at the tree,
+      -- exactly as 'shipFeature' and 'shipDocs' point their own panels.
+      >>> dimap' asReviewSubject id reviewLiteFlow
+      >>> remediate codeRule closeWithChanges
+      >>> greenGate codeRule codeChecks
+
 -- | The plan lenses 'shipDocs' edits through, and the whole of what it puts
 -- between the planner and the steer. 'editPlan'\'s six have no purchase on a
 -- prose plan, so this is a different chain rather than a narrowing of that one.
@@ -373,11 +466,12 @@ docsPlanLenses =
 -- names a marker its orchestrator does not match strands the loop until the
 -- fuel runs out, and that is not visible from any output.
 --
--- Being top-level, it names __no stage that follows it__ — @implement@ can say
--- \"review comes next\" because it is private to the one @where@ block that
--- puts a review after it, and this is not. A leaf that spells its position is a
--- leaf whose text has to be edited to reuse it, and the edit is prose nothing
--- would flag.
+-- Being top-level, it names __no stage that follows it__. A leaf that spells its
+-- position is a leaf whose text has to be edited to reuse it, and the edit is
+-- prose nothing would flag. 'implement' said \"review comes next\" while it was
+-- private to the one @where@ block that put a review after it; it is top-level
+-- now, with two workflows and two different panels behind it, so the rule
+-- covers it too and @test\/Spec.hs@ quantifies over both briefs.
 document :: Flow Text Text
 document =
   refineWith
@@ -548,6 +642,55 @@ actingGrant = execGrant ["nix*"]
 workerFuel :: Maybe Fuel
 workerFuel = Nothing
 
+-- | 'workerFuel' for 'shipFeatureLite'. As a function of its argument: it is the
+-- number of times that workflow's worker may hand itself back its own summary
+-- before the last one yields to the review panel.
+--
+-- __Three, because a fourth trip means the task was never a small task.__ That
+-- is the whole premise of the tier: it drops the four exploration stances and
+-- the heavy panel on the bet that the change is small. A worker still asking for
+-- work on trip four has refuted the bet, and the cheap answer is to hand what
+-- landed to the panel and let a person read it — not to keep spending on a tier
+-- chosen for the wrong job.
+--
+-- __A cap, not a truncation, and that distinction is legible — as far as the
+-- text goes, and no further.__ 'orchestrateWith' yields on exhaustion rather
+-- than aborting ('decideTrip'), so the tree keeps every edit the three trips
+-- made and the panel sees them. What separates exhaustion from convergence is
+-- the yielded text itself: exhaustion yields the summary that asked for another
+-- trip, so its last line is 'continueMarker', where a converged run ends on
+-- @WORK COMPLETE@. That text reaches the panel's input and the run transcript,
+-- because those are where the worker's own bytes go. It reaches nothing else:
+-- every stage after the loop writes fresh text, so the run's FINAL ARTIFACT is
+-- 'remediate'\'s closing paragraph and carries neither marker. An operator
+-- reads the transcript, not the artifact — @docs\/operations.md@ says so and
+-- @test\/Spec.hs@ asserts both halves of it.
+--
+-- Named rather than written as a literal @'Just' 3@ at the call site for
+-- 'stackFuel'\'s reason: @test\/Spec.hs@ fences the fuels as named finite
+-- constants, and no test can assert an inline value the same way.
+liteFuel :: Maybe Fuel
+liteFuel = Just (Fuel 3)
+
+-- | The check 'shipFeatureLite'\'s gate runs __itself__, on the repository the
+-- run acts in: @nix flake check@, which is this tree's build, its test suite and
+-- its formatting in one exit code.
+--
+-- One command rather than a list, because the flake already composes them and a
+-- second list here would be a second place for the two to disagree — the same
+-- argument 'grindChecks' makes the other way, where the target project has no
+-- single entry point.
+--
+-- __No grant of its own.__ 'actingGrant' is @nix*@ already, so this check is
+-- permitted by the policy the workflow was running under before the gate
+-- existed. That is why the command is @nix@ and not @cabal@: an ungranted check
+-- is denied inside the run (exit 126), the gate reads a red it cannot repair,
+-- and 'repairFuel' trips later the run aborts on the permission rather than on
+-- the code. @test\/Spec.hs@ asserts the permission through the runtime's own
+-- matcher rather than trusting that reading.
+codeChecks :: [(LeafName, NonEmpty Text)]
+codeChecks = [("flake-check", "nix" :| ["flake", "check"])]
+
 -- | The checks the grind gate runs __itself__, as argv rather than as a shell
 -- string: the target tree's own build and its own test harness.
 --
@@ -710,14 +853,18 @@ orchestrate = orchestrateWith workerFuel
 -- in what the worker sees, or in what exhaustion does.
 --
 -- __A parameter because a workflow's fuel is a property of the workflow.__
--- 'workerFuel' is 'Nothing' for the two that finish when their worker says so.
--- 'stackFuel' is finite for the one that runs four of these loops in one
--- chain: an unbounded loop costs the sentinel @'maxBound' \`div\` 2@, so four
--- of them in a row render a worst case no operator can read anything from —
--- and 'Agent.Cost.worstCaseCost' used to sum them in 'Int', where two wrapped
--- NEGATIVE (its arithmetic is 'Integer' now, and the unbounded-loop fence in
--- @test\/Spec.hs@ holds every chain to at most one sentinel anyway). Four
--- capped loops report a number worth reading before deciding to spend.
+-- 'workerFuel' is 'Nothing' for the workflows that finish when their worker
+-- says so — 'shipFeature', 'shipDocs' and every grind's fixer loop, each
+-- reaching it through 'orchestrate'. 'liteFuel' is finite for the tier whose
+-- whole premise is a price quoted before the run: an unbounded loop makes that
+-- number unstatable. 'stackFuel' is finite for the one that runs four of these
+-- loops in one chain: an unbounded loop costs the sentinel
+-- @'maxBound' \`div\` 2@, so four of them in a row render a worst case no
+-- operator can read anything from — and 'Agent.Cost.worstCaseCost' used to sum
+-- them in 'Int', where two wrapped NEGATIVE (its arithmetic is 'Integer' now,
+-- and the unbounded-loop fence in @test\/Spec.hs@ holds every chain to at most
+-- one sentinel anyway). Four capped loops report a number worth reading before
+-- deciding to spend.
 orchestrateWith :: Maybe Fuel -> Flow Text Text -> Flow Text Text
 orchestrateWith fuel worker =
   dimap' (\summary -> (fuel, summary)) id
@@ -734,7 +881,8 @@ orchestrateWith fuel worker =
 -- account. An 'Orientation' names where the evidence actually is, so the lenses
 -- go and read it instead of inferring it from the account.
 data Orientation
-  = -- | The working tree, as a diff. 'shipFeature'\'s review stage.
+  = -- | The working tree, as a diff. The review stage of both code tiers —
+    -- 'shipFeature' and 'shipFeatureLite' — through 'asReviewSubject'.
     AtChange
   | -- | The run's own record — its commits and what the panel did with them.
     -- 'shipFeature'\'s retrospective stage.
@@ -776,7 +924,7 @@ data Orientation
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. If all three show no change — nothing modified, nothing staged, nothing untracked — there is no change to audit: report `Nothing to review.` and stop. An empty tree is a result, and it is not the same result as a change with nothing wrong in it — a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
@@ -1814,9 +1962,25 @@ stackContinuation =
 blockedMarker :: Text
 blockedMarker = "WORK BLOCKED"
 
--- | The shared analysis prefix: explore (three stances) then plan.
+-- | The planner leaf, alone. As a function of its argument: it maps __a task
+-- description__ to __a plan for that task__.
+--
+-- Read-only, pinned to Fable 5: 'planBrief' leans on both.
+--
+-- __Top-level because 'shipFeatureLite' takes the planner without the
+-- stances.__ 'explorePlan' is this leaf behind a four-stance fan-out, and the
+-- fan-out is what a small change does not need. Naming the head of the chain
+-- rather than inlining it is also what makes @planLeaf >>> …@ into
+-- @explorePlan >>> …@ a one-token swap if a lite run plans badly.
+planLeaf :: Flow Text Text
+planLeaf =
+  withMode Plan
+    $ withBackend claudeAgent fable5
+    $ refineWith "plan" (brief planBrief) id
+
+-- | The shared analysis prefix: explore (four stances) then plan.
 explorePlan :: Flow Text Text
-explorePlan = explore >>> plan
+explorePlan = explore >>> planLeaf
   where
     -- Analysis-only and heterogeneous — one agent spec per stance, so the
     -- perspectives are genuinely independent. Four stances over three
@@ -1855,11 +2019,6 @@ explorePlan = explore >>> plan
         -- the design stance because the design stance is told to build on its
         -- map.
         $ hierarchical ["skeptic", "architect", "contemplative", "intrepid"]
-    -- Read-only, pinned to Fable 5: 'planBrief' leans on both.
-    plan =
-      withMode Plan
-        $ withBackend claudeAgent fable5
-        $ refineWith "plan" (brief planBrief) id
 
 -- | The six-lens plan-editing chain for code implementation plans. Order is the
 -- argument: ponytail deletes first so the rest only work on surviving steps;
@@ -1870,7 +2029,7 @@ explorePlan = explore >>> plan
 -- contract.
 --
 -- __Unpinned, on purpose.__ Every other backend scope in this module is
--- argued for at the leaf it wraps — 'plan' on Fable 5 because 'planBrief'
+-- argued for at the leaf it wraps — 'planLeaf' on Fable 5 because 'planBrief'
 -- leans on it, each explore stance on its own agent because the fan-out is
 -- bought with independence. A lens chain is neither: it is six sequential
 -- rewrites of one text, so a pin here buys no independence, and there is no

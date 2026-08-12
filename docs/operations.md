@@ -133,11 +133,30 @@ nix flake update ponytail
 nix flake update awesome-prompts
 nix flake update promptdeploy
 nix flake update simple-english
+nix flake update nix-config
 ```
 
 After an upstream update, rebuild and run tests that cover the affected wiring.
 If a local reorientation splices an upstream rubric, inspect the reorientation
 tests first; they are designed to catch section drift.
+
+Check that the lock is **complete**, not only that a check was green. A plain
+`nix` command amends `flake.lock` in place, without saying so, when `flake.nix`
+declares an input the lock has no entry for. A green `nix flake check` can
+therefore be a statement about a lock that is not the one in git, and an
+unlocked prompt input floats to whatever upstream last pushed — which makes the
+prompt bytes the tests fence whatever the tip happened to be that day. Verify
+against the committed tree:
+
+```bash
+nix flake metadata --no-update-lock-file
+git status --short flake.lock
+```
+
+The first fails with `requires lock file changes but they're not allowed`
+exactly when the lock needs a change — an input with no entry, and equally an
+entry that is stale against a changed `flake.nix` — rather than locking it
+behind your back; the second must print nothing after any `nix` command.
 
 `agent-functor` is different. It comes over ssh from GitLab:
 
@@ -204,8 +223,21 @@ Codex and Claude rendered trees differ:
 
 - `orchestrate`'s `workerFuel` is `Nothing` by default — no ceiling — so the
   worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just (Fuel n)`
-  to cap at n trips, after which the last summary yields to the review panel,
-  under an explicit trip-budget-exhausted notice, rather than aborting;
+  to cap at n trips, after which the last summary yields to the next stage —
+  under an explicit trip-budget-exhausted notice — rather than aborting;
+- three workflows cap an orchestrator loop: `stack-prs` runs its four loops
+  under `stackFuel` (`Just (Fuel 12)`), `ship-feature-lite` runs its one under
+  `liteFuel` (`Just (Fuel 3)`), and `grind-tests` runs its review-pass fixer
+  under `grindTestsReviewFuel` (`Just (Fuel 12)`). A capped run that gave up
+  reaches the end like a run that finished, so read for the notice rather than
+  assuming: the summary an exhausted loop yields is the one that asked for
+  another trip, and `decideTrip` appends its `## trip budget exhausted`
+  heading under it, where a converged run ends on `WORK COMPLETE`;
+- read that notice in the **run transcript**, on the loop's last output — not
+  in `ship-feature-lite`'s final artifact. Every stage after that workflow's
+  loop writes fresh text of its own, so its final artifact is the fixer's
+  closing paragraph under the gate's verdict, and carries neither the marker
+  nor the notice;
 - the run can still abort for reasons the fuel does not cover — a rate-limited
   backend (429) or a backend error — and the work done so far is not lost then
   either: with `--sandbox` it is on the run's `agent-functor/run-…` worktree
