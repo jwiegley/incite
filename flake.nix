@@ -204,7 +204,7 @@
           builtins.readFile "${awesome-prompts}/prompts/Technical_Documentation_Strategist.txt";
         "prompts/upstream/awesome-prompts/stop-slop.md" =
           builtins.readFile "${awesome-prompts}/prompts/stop_slop.txt";
-        # The fifth `review-lite` reviewer, reoriented to a commit by
+        # The `qa` reviewer in `review-lite`, reoriented to a commit by
         # `Incite.Review.qaOfCommit`.
         "prompts/upstream/awesome-prompts/qa-agent.md" =
           builtins.readFile "${awesome-prompts}/prompts/qa_agent.txt";
@@ -426,7 +426,12 @@
           model = "claude-sonnet-5";
           extraFrontmatter = {
             temperature = 0.1;
-            tools = { write = false; edit = false; bash = false; };
+            # No bash denial: the command deployed onto this agent mandates
+            # `git fetch origin` and a merge-base `git diff` (see
+            # commands/code-review.md, "Diff hygiene"), so denying bash left
+            # the reviewer unable to produce the diff it was told to review.
+            # Read-only stays enforced where it matters — write and edit off.
+            tools = { write = false; edit = false; };
           };
           body = builtins.readFile ./agents/code-review.md;
         }

@@ -135,8 +135,12 @@ import Incite.Review
   , reviewDocs
   , reviewHeavy
   , reviewLite
+  , reviewLiteRouters
+  , routeHaskell
   , slopOfDocs
   , spread
+  , TriageVerdict (..)
+  , haskellTriggerExtensions
   )
 
 main :: IO ()
@@ -167,6 +171,8 @@ tests =
     , backendTests
     , scopeTests
     , qaFenceTests
+    , haskellRouteTests
+    , agentToolTests
     , factsFileTests
     , rendererNameTests
     , docsInventoryTests
@@ -1331,6 +1337,17 @@ grindPanelTests =
                   ]
                 ]
           ]
+    , -- The validation step beside those drop rules is prose in the reducer
+      -- with no producer coupling at all, so nothing else notices its
+      -- deletion. Two tokens it cannot lose: findings checked against what
+      -- the code actually says, and reading — not building or running — as
+      -- the only admissible evidence.
+      testCase "the synthesis validates findings against the code, by reading" $
+        report
+          [ "reviewSynthesis no longer says " <> tshow needle
+          | needle <- ["the code contradicts", "no build, no test run"]
+          , not (saysLoosely reviewSynthesis needle)
+          ]
     , testCase "emission lenses carry the bodies they name" $
         report (lensBodyMismatches expectedEmissionLenses emissionLenses)
     , -- 'spread' is a zip against a cycled backend list, so the leaf count is
@@ -1923,7 +1940,17 @@ reorientationTests =
                 , -- The house rules the lens exists to carry: absent from the
                   -- base, so their presence here is the composition working.
                   [ "the haskell lens no longer carries " <> tshow rule
-                  | rule <- ["No primitive in a top-level signature", "RecordWildCards", "DataKinds"]
+                  | rule <-
+                      [ "No primitive in a top-level signature"
+                      , "RecordWildCards"
+                      , "DataKinds"
+                      , "No partial field accessors"
+                      , "Generically"
+                      , "quickcheck-classes-base"
+                      , "StrictData"
+                      , "KnownNat"
+                      , "genSingletons"
+                      ]
                   , not (says haskellOfHouse rule)
                   ]
                 ]
@@ -2311,6 +2338,29 @@ docsInventoryTests =
                       <> " does not parse as an Int"
                   ]
           ]
+    , -- The same prices, quoted where a caller is steered between tiers. The
+      -- two command files carried "21 reviewers" and "75 leaves" — two lens
+      -- generations stale — because only the docs table above was fenced.
+      -- Each needle is derived from the flow it prices, so the next lens
+      -- added to the panel goes red here instead of aging in prose.
+      testCase "the command files quote the fenced tier prices" $ do
+        pca <- TIO.readFile "commands/post-commit-audit.md"
+        cr <- TIO.readFile "commands/code-review.md"
+        let leavesOf wf = renderCost (worstCaseCost (toSkeleton (wfFlow wf)))
+            lensCount = countWord (length (lensesOf OfDiff))
+            reviewerCount = tshow (length (lensesOf OfDiff) * length (NE.toList (backendsFor False)))
+        report
+          [ complaint
+          | (path, txt, needle) <-
+              [ ("commands/post-commit-audit.md", pca, lensCount <> " lenses")
+              , ("commands/post-commit-audit.md", pca, leavesOf reviewAudit <> " leaves")
+              , ("commands/code-review.md", cr, reviewerCount <> " reviewers")
+              , ("commands/code-review.md", cr, leavesOf reviewHeavy <> " leaves")
+              , ("commands/code-review.md", cr, leavesOf reviewAudit <> "-leaf")
+              ]
+          , let complaint = T.pack path <> " does not say " <> tshow needle
+          , not (T.isInfixOf needle (proseNormal txt))
+          ]
     , -- The "Documentation workflow" section is where this file says what
       -- distinguishes a docs run, and it said "it uses only the SimpleEnglish
       -- plan lens" for as long as that chain has had two entries — while the
@@ -2384,7 +2434,13 @@ backendProseTests =
       -- exactly 'reviewLite'. So the three files that state its roster state it
       -- lens by lens, and this reads the pairings back out of the flow.
       testCase "every file describing review-lite names its reviewers and their backends" $ do
-        let lenses = scopedLeaves (wfFlow reviewLite)
+        -- Routers subtracted, as in the qa fence: the documents count and pair
+        -- REVIEWERS, and 'haskell-triage' is a branch decision, not a reviewer.
+        let lenses =
+              [ (n, a)
+              | (n, a) <- scopedLeaves (wfFlow reviewLite)
+              , n `notElem` map leafNameText reviewLiteRouters
+              ]
         assertBool "review-lite has no leaves to describe" (not (null lenses))
         claims <- mapM (\(p, ws) -> (,,) p ws <$> TIO.readFile p) (reviewLiteProse lenses)
         report
@@ -2421,6 +2477,29 @@ backendProseTests =
 -- documented it as three files and stayed at three across four more being
 -- added, so the published account of what third-party text reaches a prompt
 -- understated it by more than half. Nothing links the two but this.
+-- | The one coupling between a command's instructions and the toolset of the
+-- agent it deploys onto. @commands/code-review.md@ mandates @git fetch origin@
+-- and a merge-base @git diff@; the command runs as the @code-review@ agent
+-- (bound in @flake.nix@), whose frontmatter once set @bash = false@ — the
+-- reviewer was ordered to run git with the one tool that could do it switched
+-- off, and nothing went red. The denial is textual and today unique to that
+-- agent, so its absence is what this reads; if another agent ever legitimately
+-- denies bash, scope this to the @code-review@ attrset.
+agentToolTests :: TestTree
+agentToolTests =
+  testGroup
+    "the code-review agent's tools"
+    [ testCase "the agent can run the git its command mandates" $ do
+        nix <- TIO.readFile "flake.nix"
+        cmd <- TIO.readFile "commands/code-review.md"
+        assertBool
+          "code-review.md no longer mandates the fetch — retire or repoint this fence"
+          ("git fetch origin" `T.isInfixOf` cmd)
+        assertBool
+          "flake.nix denies bash while commands/code-review.md mandates git"
+          (not ("bash = false" `T.isInfixOf` nix))
+    ]
+
 inputAllowlistTests :: TestTree
 inputAllowlistTests =
   testGroup
@@ -2452,9 +2531,9 @@ inputAllowlistTests =
 -- file uses for it, and — for the two that go lens by lens — one @lens on
 -- backend@ pairing per reviewer.
 --
--- @code-review.md@ mentions the tier in one line of a review ladder and states
--- only the count, so only the count is required of it. Demanding five pairings
--- there would be demanding worse prose.
+-- @code-review.md@ and @README.md@ each mention the tier in one line, and
+-- state only the count, so only the count is required of them. Demanding a
+-- full pairing list there would be demanding worse prose.
 -- __The pairings are the DEFAULT roster's, and are only demanded of the prose
 -- when that is the roster running.__ @qa@ is pinned to the opencode slot, which
 -- resolves to codex under @BLOCK_OPENCODE@ — and these documents describe the
@@ -2462,13 +2541,17 @@ inputAllowlistTests =
 -- them to say \"qa on codex\" because of an environment variable would be
 -- demanding that the documents track a shell.
 --
--- The count clause survives blocking, because five reviewers is five either
--- way, so neither mode leaves this fence checking nothing.
+-- The count clause survives blocking, because the reviewer count is the same
+-- either way, so neither mode leaves this fence checking nothing.
 reviewLiteProse :: [(Text, Text)] -> [(FilePath, [Text])]
 reviewLiteProse lenses =
   [ ("commands/post-commit-audit.md", count "independent reviewers" : pairings)
   , ("docs/workflows.md", count "per-commit reviewers" : pairings)
   , ("commands/code-review.md", [count "reviewers"])
+  , -- Held to the count alone, like code-review.md: the README describes the
+    -- tier in one clause of its lens-axis paragraph. It is in this list at
+    -- all because it drifted once — a reviewer count nothing went red on.
+    ("README.md", [count "reviewers"])
   ]
   where
     count noun = countWord (length lenses) <> " " <> noun
@@ -2702,9 +2785,10 @@ scopeTests =
       -- @~\/.codex\/config.toml@ happens to say, and @codex-acp@ cannot drive a
       -- model it has no built-in metadata for (see 'Incite.Backend.gpt55'). One
       -- line in an interactive tool's settings file therefore failed every codex
-      -- leaf in this repository at once — and @review-lite@, which puts three of
-      -- its five lenses on codex under @BLOCK_OPENCODE@, went on calling itself
-      -- five independent reviewers while three of them returned nothing.
+      -- leaf in this repository at once — and @review-lite@, then five lenses,
+      -- three of them on codex under @BLOCK_OPENCODE@, went on calling itself
+      -- five independent reviewers while three of them returned nothing. (The
+      -- same telling, at five, is in 'Incite.Backend' at the 'gpt55' pin.)
       --
       -- Quantified over the WHOLE inventory rather than the leaves that happened
       -- to be codex when this was written: the defect was six call sites each
@@ -2774,9 +2858,15 @@ qaFenceTests =
     [ -- The claim in one line: the lenses qa declines to are exactly the ones
       -- beside it. Sorted, because the fold's order is 'hierarchical'\'s and is
       -- not this roster's business.
+      -- The routers are subtracted before the equality: 'haskell-triage' is a
+      -- leaf in the skeleton but owns no question, so qa fencing against it
+      -- would tell qa to decline findings to a block that never reaches the
+      -- fold. 'reviewLiteRouters' is the flow's own statement of which leaves
+      -- those are, so a router added without joining that list still fails
+      -- here.
       testCase "fences against exactly review-lite's other lenses" $
         sort (map (leafNameText . fst) qaSiblings <> ["qa"])
-          @?= sort (leafNames (wfFlow reviewLite))
+          @?= sort (filter (`notElem` map leafNameText reviewLiteRouters) (leafNames (wfFlow reviewLite)))
     , -- The roster reaching the SHIPPED leaf, once each. A table spliced and
       -- then ignored, or spliced twice, satisfies the case above and says
       -- nothing to the model.
@@ -2811,6 +2901,128 @@ qaFenceTests =
               ]
           , not (saysLoosely (qaOfCommitOver roster) needle)
           ]
+    ]
+
+-- | The pure half of review-lite's conditional haskell lens: what the triage
+-- verdict does to the input. The routing default is the safety property here —
+-- a verdict that is anything but a clean @none@ must run the lens, because the
+-- failure mode of skipping is a review that silently never happened. The empty
+-- verdict is the case the test interpreter produces for every leaf, so it is
+-- also what keeps the haskell brief visible to 'workflowLeafPrompts'.
+haskellRouteTests :: TestTree
+haskellRouteTests =
+  testGroup
+    "routeHaskell"
+    [ testCase "a clean none skips the lens, however decorated" $
+        report
+          [ "verdict " <> tshow v <> " did not skip"
+          | v <- ["none", "None", "NONE", " none \n", "`none`", "none."]
+          , routeHaskell "a docs-only change" (TriageVerdict v) /= Right "No Haskell edits."
+          ]
+    , testCase "anything else reviews, carrying the input verbatim" $
+        report
+          [ "verdict " <> tshow v <> " did not route to the lens"
+          | v <- ["haskell", "", "Haskell files: none of them compile", "nonetheless, only docs"]
+          , routeHaskell "the diff" (TriageVerdict v) /= Left "the diff"
+          ]
+    , -- The guard on the skip: the one failure the loud default cannot catch
+      -- is a WELL-FORMED wrong `none` — a router that looked at the working
+      -- tree instead of the diff it was handed, or was steered by text inside
+      -- it. Where the input's own diff headers name a Haskell path, the
+      -- verdict is overruled. `.cabal` is in the trigger set because the lens
+      -- owns dependency-list findings.
+      testCase "a none verdict cannot skip a diff that visibly touches Haskell" $
+        report
+          [ "input with header " <> tshow header <> " was skipped on a none verdict"
+          | header <-
+              [ "diff --git a/Foo.hs b/Foo.hs"
+              , "+++ b/src/Bar.lhs"
+              , "rename to Baz.hsc"
+              , "+++ b/incite-workflows.cabal"
+              ]
+          , let input = "prose above\n" <> header <> "\ncontext below"
+          , routeHaskell input (TriageVerdict "none") /= Left input
+          ]
+    , -- And the guard reads only header shapes, so diff CONTENT cannot hold
+      -- the lens hostage: a changed line that merely mentions a Haskell file
+      -- is not a Haskell edit.
+      testCase "a content line naming a .hs file does not overrule the skip" $
+        routeHaskell "+ see Foo.hs for the details\n" (TriageVerdict "none")
+          @?= Right "No Haskell edits."
+    , -- The list the fence and prose tests subtract is a claim about the flow;
+      -- this is the other direction — every name it claims is a leaf the tier
+      -- actually has, so a renamed triage leaf cannot leave the subtraction
+      -- filtering nothing.
+      testCase "every named router is a review-lite leaf" $
+        report
+          [ "review-lite has no leaf named " <> leafNameText r
+          | r <- reviewLiteRouters
+          , leafNameText r `notElem` leafNames (wfFlow reviewLite)
+          ]
+    , -- The wiring between the two leaves is a pure adapter, and a pure stage
+      -- between two leaves has no fence anywhere else (see 'flowOutput'\'s own
+      -- comment): swap the fan-out's pair order and the triage's one-word
+      -- verdict is sent into the lens as its input, with every leaf name,
+      -- count and cost unchanged and the routeHaskell cases above still green.
+      -- So the rendered prompt is asserted. Under the test interpreter the
+      -- triage answers @\"\"@, which routes to review, and the lens brief must
+      -- then carry the workflow input — not that verdict.
+      testCase "the lens leaf is sent the diff, not the triage verdict" $ do
+        sent <- flowLeafPrompts "review-lite" (wfFlow reviewLite) "MARKER-diff-under-review"
+        case filter (T.isInfixOf "Orphan instances are fine here") sent of
+          [lensPrompt] ->
+            assertBool "the haskell lens brief does not carry the workflow input" $
+              T.isInfixOf "MARKER-diff-under-review" lensPrompt
+          other ->
+            assertFailure $
+              "expected exactly one rendered haskell lens prompt, found " <> show (length other)
+    , -- The skip arm, executed. Every other interpretation in this suite
+      -- drives the review branch (empty verdicts route loud), so a mangled
+      -- Right arm — a \"skip\" that still runs the lens, or one that loses the
+      -- stand-in block — passed everything above. Here the handler answers the
+      -- router's brief with `none` on an input naming no Haskell, so the skip
+      -- must actually happen: the ~30 KB lens brief never renders, and the
+      -- fold still prints a haskell block.
+      testCase "a none verdict skips the lens and the fold carries the stand-in" $ do
+        sentRef <- newIORef []
+        (out, _) <-
+          interpret
+            ( leafRunner
+                LeafHandlers
+                  { lhPrompt = \rendered -> do
+                      modifyIORef' sentRef (<> [rendered])
+                      pure (if "You are a router" `T.isInfixOf` rendered then "none" else leafAnswer)
+                  , lhExec = \cmd -> assertFailure ("review-lite ran an exec leaf: " <> show cmd)
+                  , lhAsk = \_ -> assertFailure "review-lite reached an ask leaf"
+                  }
+            )
+            (wfFlow reviewLite)
+            "a docs-only change"
+        sent <- readIORef sentRef
+        assertBool "the haskell lens rendered despite a clean none" $
+          not (any (T.isInfixOf "Orphan instances are fine here") sent)
+        assertBool "the fold lost the stand-in block" $
+          T.isInfixOf "No Haskell edits." out
+    , -- The router's contract lives in its brief, and nothing else reads the
+      -- rendered text: reword `none`, the one-word demand, or the extension
+      -- set, and every skip silently becomes a paid lens run (or the reverse)
+      -- with the whole suite green. The extension needles come from the same
+      -- list the brief splices, so the set cannot drift from its guard; the
+      -- token needles are the contract 'routeHaskell' actually parses.
+      testCase "the triage brief carries its whole vocabulary" $ do
+        sent <- workflowLeafPrompts reviewLite
+        case filter (T.isInfixOf "You are a router") sent of
+          [briefText] ->
+            report
+              [ "the triage brief does not say " <> tshow needle
+              | needle <-
+                  ["`none`", "`haskell`", "one word", "--name-only"]
+                    <> ["`" <> e <> "`" | e <- haskellTriggerExtensions]
+              , not (T.isInfixOf needle briefText)
+              ]
+          other ->
+            assertFailure $
+              "expected exactly one rendered triage brief, found " <> show (length other)
     ]
 
 -- | Every @## Heading@ section of a document, in order: the heading text and

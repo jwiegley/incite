@@ -55,6 +55,10 @@ module Incite.Review
   , qaOfCommit
   , qaOfCommitOver
   , qaSiblings
+  , routeHaskell
+  , TriageVerdict (..)
+  , haskellTriggerExtensions
+  , reviewLiteRouters
   , docsAccuracy
   , docsStrategyOfPlan
   , slopOfDocs
@@ -62,6 +66,7 @@ module Incite.Review
   , ponytailOfTree
   ) where
 
+import Data.Char (isSpace)
 import Data.List (find, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty)
@@ -69,7 +74,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, defaultModel, withBackend)
-import Agent.Flow (Flow, Mode (Plan), withMode, (>>>))
+import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', withMode, (>>>))
 import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, promptText, __i)
@@ -78,19 +83,24 @@ import Agent.Run (Workflow, withCapturedTranscript, workflow, workflowReq)
 import Incite.Backend (backends, claudeAgentBackend, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Prompts
 
--- | The cheap tier, fired by @wiggum@ after every commit: five reviewers, one
--- wave, reduced by a pure fold with no synthesis leaf.
+-- | The cheap tier, fired by @wiggum@ after every commit: six reviewers — one
+-- of them behind a router — one wave, reduced by a pure fold with no synthesis
+-- leaf.
 --
--- Deliberately __not__ 'withCapturedTranscript' even though fess is a lens: all
--- five leaves read the same input, so the mark would hand the code lenses a
+-- Deliberately __not__ 'withCapturedTranscript' even though fess is a lens:
+-- every leaf reads the same input, so the mark would hand the code lenses a
 -- conversation log. Here fess audits claims against the diff; 'fessAudit' is
 -- the whole-session version.
 --
--- __The @qa@ leaf is what this tier had no lens for.__ The other four ask
+-- __The @qa@ leaf is what this tier had no lens for.__ The others ask
 -- whether the change is right, honest, tangled or too big; none of them asks
 -- how it fails, and none of them looks at a trust boundary — security lives in
 -- 'reviewHeavy' behind an 8.5 KB rubric this tier cannot afford. 'qaOfCommit'
 -- is 2.6 KB and buys the failure question on every commit.
+--
+-- __The @haskell@ leaf is conditional__ — see 'haskellIfEdited' for how a
+-- one-word triage leaf keeps the ~30 KB 'haskellOfHouse' rubric off the diffs
+-- that have no Haskell in them.
 --
 -- The backend spread here is written out per leaf rather than fanned, so the
 -- @fess@ leaf's is a choice made in this list — and it is claude-agent because
@@ -101,9 +111,10 @@ reviewLite =
   workflowReq
     "review-lite"
     [iii|
-      Review a commit with five independent reviewers (correctness, fess
+      Review a commit with six independent reviewers (correctness, fess
       claims-versus-diff audit, reshape complexity, ponytail cuts, adversarial
-      QA) — one call, cheap enough to run on every commit
+      QA, and a Haskell lens that a triage leaf spends only on diffs touching
+      Haskell source) — one call, cheap enough to run on every commit
     |]
     $ exploreFlows
       [ reviewer (withBackend claudeAgent fable5) "correctness" reviewCorrectness
@@ -111,10 +122,133 @@ reviewLite =
       , reviewer codexScope "complexity" reviewComplexity
       , reviewer codexScope "ponytail" ponytailReviewRubric
       , reviewer opencodeScope "qa" qaOfCommit
+      , haskellIfEdited
       ]
-      -- Narrowing, as everywhere else: what is wrong, what was claimed, how it
-      -- fails, what is braided, what should not exist at all.
-      (hierarchical ["correctness", "fess", "qa", "complexity", "ponytail"])
+      -- Narrowing, as everywhere else: what is wrong, what the Haskell hides,
+      -- what was claimed, how it fails, what is braided, what should not exist
+      -- at all.
+      (hierarchical ["correctness", "haskell", "fess", "qa", "complexity", "ponytail"])
+
+-- | The sixth reviewer, paid for only when it can earn: the @haskell@ lens
+-- behind a router.
+--
+-- 'haskellOfHouse' is ~30 KB — the upstream rubric plus the house addendum —
+-- and this tier's own comment on the qa leaf prices an 8.5 KB rubric as
+-- unaffordable per commit. Unconditional, the lens would be the most expensive
+-- leaf in the tier on every commit, including the ones that touch no Haskell
+-- at all. So a one-word triage leaf reads the diff first, and 'routeHaskell'
+-- sends the input into the lens ('left''') only when Haskell source is edited;
+-- otherwise the arm short-circuits to the block the fold prints.
+--
+-- Both leaves sit inside ONE expert of the 'exploreFlows' fan-out, so the
+-- reduce still sees a single @haskell@ block (or its \"No Haskell edits.\"
+-- stand-in) and the other five reviewers never wait on the triage. The two
+-- leaves ARE both in the skeleton — @plan@ and the leaf-count table price the
+-- worst case, which is what a static analysis can promise.
+haskellIfEdited :: (LeafName, Flow Text Text)
+haskellIfEdited =
+  ( "haskell"
+  , fanout' Id triage
+      >>> dimap' (\(input, verdict) -> routeHaskell input (TriageVerdict verdict)) (either id id) (left'' lens)
+  )
+  where
+    -- The router stays on fable5 knowingly: it is the cheapest model any
+    -- claude-agent leaf here can pin (the backend's default is Opus), a codex
+    -- leaf must name gpt-5.5/xhigh, and the opencode slot is blockable. The
+    -- real cost control is the brief above it — a path list, never a diff.
+    triage = snd (reviewer (withBackend claudeAgent fable5) "haskell-triage" haskellTriage)
+    lens = snd (reviewer (withBackend claudeAgent fable5) "haskell" haskellOfHouse)
+
+-- | The router's whole brief. It asks for one word so 'routeHaskell' has
+-- something a substring-free equality can read, and for paths rather than
+-- diffs so a commit's worth of hunks never rides into the tier's priciest
+-- model just to be counted; everything else is fencing against the leaf doing
+-- the review it exists to make conditional.
+--
+-- __The input comes first.__ The tier's input is normally the diff itself
+-- (see @commands/post-commit-audit.md@), and a router told only to run @git
+-- diff@ would look past a diff it was already handed at a clean working tree,
+-- answer a well-formed wrong @none@, and silently skip the review. So the
+-- brief reads the input's own headers first and reaches for git only when the
+-- input merely names the change.
+haskellTriage :: Prompt
+haskellTriage =
+  [__i|
+    You are a router, not a reviewer. The input below either shows the diff or
+    names the change. If it shows the diff, read only the paths its headers
+    touch. If it only names a ref or commit, run `git show --name-only` on it
+    (or `git diff --name-only` for uncommitted work) and read only the path
+    list — never the full diff.
+
+    Answer with one word and nothing else:
+
+    - `haskell` if any touched path ends in #{extensionList};
+    - `none` otherwise.
+
+    Do not review the change. Do not report findings. One word.
+  |]
+  where
+    extensionList = T.intercalate ", " ["`" <> e <> "`" | e <- haskellTriggerExtensions]
+
+-- | The router's one-word answer, distinguished from the artifact it routes.
+-- 'routeHaskell' takes two 'Text'-shaped values in different roles — the diff
+-- and the verdict — and the house rules this repository reviews under forbid
+-- exactly that signature; the wrapper is unwrapped at the 'dimap'' site and
+-- nowhere else.
+newtype TriageVerdict = TriageVerdict Text
+
+-- | What routes a diff into the haskell lens, stated once: the brief splices
+-- it, 'routeHaskell'\'s guard scans for it, and the vocabulary fence in
+-- @test\/Spec.hs@ asserts the brief still carries every entry. @.cabal@ is on
+-- the list because the lens owns dependency-list findings — its deriving
+-- rules name packages to add — so a dep-bump-only diff is still its business.
+haskellTriggerExtensions :: [Text]
+haskellTriggerExtensions = [".hs", ".lhs", ".hs-boot", ".hsc", ".cabal"]
+
+-- | Whether the input itself shows a diff touching Haskell: a pure scan of
+-- diff header lines for a path with a trigger extension. Only header shapes
+-- are read — @diff --git@, @+++@, @---@, and the rename pair — so a content
+-- line mentioning @Foo.hs@ cannot steer the route.
+diffNamesHaskell :: Text -> Bool
+diffNamesHaskell input =
+  or
+    [ ext `T.isSuffixOf` w
+    | l <- T.lines input
+    , any (`T.isPrefixOf` l) ["diff --git ", "+++ ", "--- ", "rename from ", "rename to "]
+    , w <- T.words l
+    , ext <- haskellTriggerExtensions
+    ]
+
+-- | Where the triage verdict sends the diff: into the haskell lens ('Left'),
+-- or past it ('Right', already carrying the block the fold will print).
+--
+-- __The loud default is to review.__ Only a clean @none@ skips the lens; any
+-- other verdict — chatty, empty, malformed — runs it. A waffling triage then
+-- costs one wasted lens run, where the opposite default would cost a silent
+-- skip on a Haskell diff: a review that quietly never happened, which nothing
+-- downstream can notice. This is also what keeps the test interpreter (whose
+-- leaves all answer @\"\"@) walking the haskell leaf, so its prompt stays
+-- visible to @workflowLeafPrompts@.
+--
+-- __And even a clean @none@ is not taken on faith.__ The one failure the loud
+-- default cannot catch is a well-formed wrong @none@ — a router that looked in
+-- the wrong place, or was steered by text inside the diff. So the skip is
+-- guarded by 'diffNamesHaskell': where the input visibly shows a diff naming a
+-- Haskell path, the verdict is overruled and the lens runs.
+routeHaskell :: Text -> TriageVerdict -> Either Text Text
+routeHaskell input (TriageVerdict verdict)
+  | verdictWord == "none" && not (diffNamesHaskell input) = Right "No Haskell edits."
+  | otherwise = Left input
+  where
+    verdictWord = T.dropAround (\c -> isSpace c || c == '.') (T.toLower (T.filter (/= '`') verdict))
+
+-- | The leaves 'reviewLite' runs that are __not__ reviewers: routing machinery
+-- whose output feeds a branch decision, never the fold. The qa fence and the
+-- prose tests subtract these from the tier's leaf list — a router owns no
+-- question, so qa does not fence against it and the documents do not count it
+-- as a reviewer.
+reviewLiteRouters :: [LeafName]
+reviewLiteRouters = ["haskell-triage"]
 
 -- | The thorough tier: eight lenses answered by all three backends, then a
 -- synthesis leaf that de-duplicates and ranks. Where 'reviewLite' spreads its
@@ -542,7 +676,7 @@ architectureOfChange =
 -- is worth a line at all.
 --
 -- __No fence against the lenses beside it__, and that is the difference from
--- 'qaOfCommit'. That leaf declines what its four siblings own because
+-- 'qaOfCommit'. That leaf declines what its siblings own because
 -- 'reviewLite' reduces by a pure fold and nothing de-duplicates. Both tiers this
 -- one runs in end in 'reviewSynthesis', which merges duplicates and treats
 -- agreement as evidence, so a finding declined here for looking like somebody
@@ -608,8 +742,8 @@ disciplineOfPanel =
     If the change survives every gate above, say `Sound.` and stop.
   |]
 
--- | The adversarial QA reviewer pointed at one commit, and fenced off the four
--- lenses beside it.
+-- | The adversarial QA reviewer pointed at one commit, and fenced off the
+-- lenses beside it — 'qaSiblings' is the roster, so the count lives there.
 --
 -- Both halves are load-bearing. 'reviewLite' reduces by a pure fold and has __no
 -- synthesis leaf__, so nothing downstream de-duplicates: two reviewers reporting
@@ -621,7 +755,7 @@ disciplineOfPanel =
 --
 -- The output format goes with it: the tier's lenses emit one line per finding
 -- and a token when clean, and a five-field block per finding would drown the
--- other four in a fold that ranks nothing.
+-- others in a fold that ranks nothing.
 qaOfCommit :: Prompt
 qaOfCommit = qaOfCommitOver qaSiblings
 
@@ -644,6 +778,7 @@ qaSiblings =
   , ("fess", "whether its claims match the diff")
   , ("complexity", "what is braided together")
   , ("ponytail", "what should not exist")
+  , ("haskell", "the Haskell: types, totality, strictness and instances — a lens that runs only when the diff touches Haskell source")
   ]
 
 -- | An 'Int' as prompt text. Shared by the two briefs that tell a leaf how many
@@ -655,9 +790,9 @@ count = T.pack . show
 -- be checked against the tier it belongs to.
 --
 -- The two counts are derived from the roster rather than spelled, for the
--- reason 'grindSynthesisOver' derives its own: a fifth lens added to
--- 'reviewLite' would otherwise leave this leaf telling its reader there are
--- five reviewers and four owners, which is prose that nothing goes red on.
+-- reason 'grindSynthesisOver' derives its own: a lens added to 'reviewLite'
+-- would otherwise leave this leaf telling its reader stale reviewer and owner
+-- counts, which is prose that nothing goes red on.
 qaOfCommitOver :: [(LeafName, Text)] -> Prompt
 qaOfCommitOver siblings =
   [__i|

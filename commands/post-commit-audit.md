@@ -6,13 +6,16 @@ than restating it, so there is one copy to keep true.
 
 ## What to run
 
-**Always call `review-lite`.** It runs five independent reviewers over the commit,
+**Always call `review-lite`.** It runs six independent reviewers over the commit,
 concurrently across three backends — correctness on claude-agent, fess on
-claude-agent, complexity on codex, ponytail on codex, qa on opencode — ranked:
+claude-agent, complexity on codex, ponytail on codex, qa on opencode, haskell on
+claude-agent (behind a triage leaf: it runs only when the diff touches Haskell
+source or a cabal file) — ranked:
 
 | lens | judges | a finding means |
 |---|---|---|
 | `correctness` | the code — does it do what it claims, on every input | it is wrong; fix it |
+| `haskell` | the Haskell — types, totality, strictness, instances | the type system was left holding less than it can; fix it |
 | `fess` | **your claims** — against what the diff actually shows | your account is wrong; correct the record *and* do the work you said you had done |
 | `qa` | the cases nobody wrote — edge, error, scale, observability | an untested path; cover it |
 | `complexity` | the shape — what a reshape would fix | structural debt; decide whether to pay it now |
@@ -24,17 +27,17 @@ while `fess-audit` audits your whole captured session. It needs no input from yo
 the server supplies your transcript. Outside a run there is no capture, so it is
 not available and the `fess` lens is what you have.
 
-Do not run a heavier check on this beat. `review-heavy` (seven lenses × three
-backends) and `review-audit` (75 leaves) are for a pre-PR review and a standing
+Do not run a heavier check on this beat. `review-heavy` (eight lenses × three
+backends) and `review-audit` (84 leaves) are for a pre-PR review and a standing
 audit; running either per-commit burns the turns you need for the work.
 
 ## Input — the part to get right
 
-All four `review-lite` lenses read the **same** input, so one artifact has to serve
+All `review-lite` lenses read the **same** input, so one artifact has to serve
 them. A bare diff silently defeats the `fess` lens: it audits claims against
 reality, and a diff on its own carries no claims. Pass:
 
-1. **The diff** — `git show` for the commit you just made. The other three lenses
+1. **The diff** — `git show` for the commit you just made. The other lenses
    need nothing else.
 2. **What you were asked to do** — the task or plan step this commit is against.
 3. **What you are claiming about it** — in your own words, before the tool answers.

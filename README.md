@@ -666,9 +666,12 @@ reduced — live in one place:
 four review tiers are prompt-only and read-only; none holds `actingGrant`.
 
 The tiers escalate along three independent axes, and each buys something different.
-**Lenses** buy coverage — `review-lite` spreads four across backends for cheap
-independence; `review-heavy` adds security, tests, performance, Haskell and the
-`alexey-review` discipline; `review-audit` adds architecture. **Backends** buy confidence: from `review-heavy`
+**Lenses** buy coverage — `review-lite` spreads its six reviewers across
+backends for cheap independence, the Haskell lens behind a triage leaf that
+spends it only on diffs touching Haskell; `review-heavy` adds security, tests,
+performance, the AI-generated-code doctrine and the `alexey-review` discipline —
+and runs the Haskell lens unconditionally, on all three backends, where
+`review-lite` triages it; `review-audit` adds architecture. **Backends** buy confidence: from `review-heavy`
 up, every lens is answered by all three models, so agreement is confirmation and
 disagreement is signal rather than one model's opinion. **Granularity** re-expresses
 the change so a shape of finding the flat diff cannot show becomes visible — and
@@ -749,10 +752,10 @@ a lens that wanders into another's territory costs a turn and returns a
 duplicate. Security is upstream — `code_reviewer_security.txt`, an OWASP Top 10
 walkthrough that reports severity, attacker payoff, a corrected snippet and the
 preventing pattern per finding. It is verbose where the local lenses are terse,
-which `synthesis.md` absorbs, and at ~8.3 KB it is the third most expensive
-review lens, after the `discipline` lens below (~72 KB) and the doctrine
-(~10 KB). So it appears only in `review-heavy`, never in the per-commit
-`review-lite`.
+which `synthesis.md` absorbs, and at ~8.3 KB it is among the most expensive
+review lenses, after the `discipline` lens below (~72 KB), the composed Haskell
+lens (~30 KB) and the doctrine (~10 KB). So it appears only in `review-heavy`,
+never in the per-commit `review-lite`.
 
 `discipline` is the one lens that is deliberately **not** narrow, and it is the
 most expensive brief in the repository — ~72 KB, against `steSkill`'s ~19.7 KB

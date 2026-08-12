@@ -31,7 +31,7 @@ text.
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
-| `review-lite` | prompt-only | five per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode), pure fold reduction |
+| `review-lite` | prompt-only | six per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode, haskell on claude-agent — behind a triage leaf that skips it when the diff touches no Haskell source or cabal file), pure fold reduction |
 | `review-heavy` | prompt-only | full-diff review by eight lenses on three backends, two regrouped views on claude-agent, then synthesis |
 | `review-audit` | prompt-only | nine-lens panel over full, logical-unit, and ideal-sequence views, then synthesis |
 | `review-docs` | prompt-only | documentation panel: accuracy, completeness, structure, slop, ponytail, each on three backends except accuracy (the fess rubric, never on codex), then synthesis |
@@ -305,7 +305,7 @@ same either way; a tier that fans across the roster gets narrower.
 
 | Tier | Leaves | Leaves, opencode blocked | What the cost buys |
 |---|---:|---:|---|
-| `review-lite` | 5 | 5 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails |
+| `review-lite` | 7 | 7 | cheap per-commit independence across correctness, fess, complexity, ponytail, and how the change fails; two of the seven are a Haskell triage and the lens it spends only on diffs that touch Haskell |
 | `review-heavy` | 43 | 35 | 24 full-diff reviewers, two regrouping leaves, 16 single-backend regrouped-view reviewers, and synthesis |
 | `review-audit` | 84 | 57 | full 27-leaf panel over three views, with regrouping leaves and synthesis |
 | `review-docs` | 15 | 10 | five documentation lenses across three backends, less the one pairing `admits` forbids, plus synthesis |
