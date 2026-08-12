@@ -1,13 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
--- | Turning a request into a plan, and a plan into the work it asks for: a pull
--- request for code, edited prose for documentation.
+-- | Turning a request into a plan, and a plan into the work it asks for. What
+-- the work leaves behind differs by workflow: edited code in the tree
+-- ('shipFeatureLite'), edited prose in the documents ('shipDocs'), and a pull
+-- request only where a human is present to say yes to one ('shipFeature').
 --
 -- 'planFeature', 'shipFeature' and 'shipDocs' over one shared prefix.
 -- @explorePlan@ is the analysis half — explore, plan — and @editPlan@ is the
 -- six-lens plan-editing chain; both are plain 'Flow' values, so 'planFeature'
 -- stops there while the two acting workflows continue into the acting half.
+-- 'shipFeatureLite' is the same acting half over a shorter prefix — 'planLeaf'
+-- alone — and its own haddock argues for the trade.
 --
 -- __The acting half is shared by name, not by count.__ 'actingGrant' is the
 -- exec policy, 'orchestrate' is the fuelled worker loop over 'continueMarker'
@@ -17,10 +21,12 @@
 -- 'codeRule'), and where it stops. Bindings rather than copies for one reason:
 -- the workflows cannot drift in anything they share.
 --
--- 'stackPRs' is the third acting shape over those same pieces, pointed at one
--- change rather than at a request: it cuts a large diff into an ordered stack of
--- branches. What it adds is a second harness-run gate — 'budgetGate' asks
--- whether a CI slot may be spent at all, with a real exit code, before every
+-- 'grindParadox' and 'stackPRs' are the two acting shapes pointed at something
+-- other than a request — a whole tree, and one change too large to review at
+-- once — and both end where 'shipFeatureLite' does, on a 'greenGate': a check
+-- the harness runs itself, with a real exit code, because everything upstream of
+-- it is an agent reporting on its own work. 'stackPRs' adds a second such gate,
+-- 'budgetGate', which asks whether a CI slot may be spent at all before every
 -- trip of the promotion loop.
 module Incite.Feature
   ( planFeature
@@ -742,7 +748,10 @@ orchestrate = orchestrateWith workerFuel
 -- in what the worker sees, or in what exhaustion does.
 --
 -- __A parameter because a workflow's fuel is a property of the workflow.__
--- 'workerFuel' is 'Nothing' for the two that finish when their worker says so.
+-- 'workerFuel' is 'Nothing' for the three that finish when their worker says so
+-- — 'shipFeature', 'shipDocs' and 'grindParadox', each reaching it through
+-- 'orchestrate'. 'liteFuel' is finite for the tier whose whole premise is a
+-- price quoted before the run: an unbounded loop makes that number unstatable.
 -- 'stackFuel' is finite for the one that runs four of these loops in one chain:
 -- @Agent.Cost.worstCaseCost@ sums a sequence and multiplies through a loop, and
 -- four unbounded loops in a row sum past 'maxBound' and report a NEGATIVE worst
@@ -764,7 +773,8 @@ orchestrateWith fuel worker =
 -- account. An 'Orientation' names where the evidence actually is, so the lenses
 -- go and read it instead of inferring it from the account.
 data Orientation
-  = -- | The working tree, as a diff. 'shipFeature'\'s review stage.
+  = -- | The working tree, as a diff. The review stage of both code tiers —
+    -- 'shipFeature' and 'shipFeatureLite' — through 'asReviewSubject'.
     AtChange
   | -- | The run's own record — its commits and what the panel did with them.
     -- 'shipFeature'\'s retrospective stage.
