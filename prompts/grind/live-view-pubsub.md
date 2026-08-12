@@ -7,7 +7,8 @@ Hunt these six.
 1. **High-frequency broadcasts with no coalescing.** A topic that fires on
    every write, every sample, every keystroke, handled by a subscriber that
    assigns on each message. Name the debounce or coalesce point — at the
-   broadcaster or in the handler — and write it.
+   broadcaster or in the handler — and write it in the finding, as the code
+   the fix asks for.
 2. **Broad topics filtered in the handler.** Subscribing to a collection-wide
    topic and discarding most messages in `handle_info` still wakes the
    process per message. The fix is a scoped topic keyed by the entity id;

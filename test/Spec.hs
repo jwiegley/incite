@@ -3766,11 +3766,19 @@ factsRefusalLine = "FACTS PATHS UNRESOLVED"
 -- the roster the structural laws below fold over. A new grind's facts file
 -- joins the laws by joining this list — with a needle list of its own, because
 -- the dedup law can only fence disciplines somebody wrote down for that file.
-grindFactsFiles :: [(String, Prompt, [Text])]
+data GrindFactsFile = GrindFactsFile
+  { gffLabel :: String
+  -- ^ How a red case names the file.
+  , gffFacts :: Prompt
+  , gffDisciplines :: [Text]
+  -- ^ The dedup law's needles, hand-written per file.
+  }
+
+grindFactsFiles :: [GrindFactsFile]
 grindFactsFiles =
-  [ ("paradox", paradoxFacts, factDisciplines)
-  , ("tests", testsFacts, testsFactDisciplines)
-  , ("live-view", liveViewFacts, liveViewFactDisciplines)
+  [ GrindFactsFile {gffLabel = "paradox", gffFacts = paradoxFacts, gffDisciplines = factDisciplines}
+  , GrindFactsFile {gffLabel = "tests", gffFacts = testsFacts, gffDisciplines = testsFactDisciplines}
+  , GrindFactsFile {gffLabel = "live-view", gffFacts = liveViewFacts, gffDisciplines = liveViewFactDisciplines}
   ]
 
 -- | The identifiers that pin a lens body to one repository — hand-listed from
@@ -3815,13 +3823,13 @@ factsFileTests =
       -- path it is meant to check. First section, and nothing before it.
       testCase "every facts file opens with the probe, and holds the refusal line" $
         mapM_
-          ( \(label, facts, _) -> do
+          ( \gff -> do
               assertEqual
-                (label <> ": section order")
+                (gffLabel gff <> ": section order")
                 ["Probe first", "Project facts", "Repair disciplines"]
-                (map fst (sections (promptText facts)))
-              assertBool (label <> ": the refusal line is not inside the probe section") $
-                T.isInfixOf (factsRefusalLine <> ":") (sectionBody "Probe first" (promptText facts))
+                (map fst (sections (promptText (gffFacts gff))))
+              assertBool (gffLabel gff <> ": the refusal line is not inside the probe section") $
+                T.isInfixOf (factsRefusalLine <> ":") (sectionBody "Probe first" (promptText (gffFacts gff)))
           )
           grindFactsFiles
     , -- The separation law: a grind lens body is repo-agnostic by
@@ -3855,12 +3863,12 @@ factsFileTests =
       testCase "no discipline is stated in two sections" $
         let norm = T.unwords . T.words
          in report
-              [ T.pack label <> " states " <> tshow needle <> " in " <> tshow (map fst hits)
-              | (label, facts, needles) <- grindFactsFiles
-              , needle <- needles
+              [ T.pack (gffLabel gff) <> " states " <> tshow needle <> " in " <> tshow (map fst hits)
+              | gff <- grindFactsFiles
+              , needle <- gffDisciplines gff
               , let hits =
                       [ s
-                      | s@(_, body) <- sections (promptText facts)
+                      | s@(_, body) <- sections (promptText (gffFacts gff))
                       , T.isInfixOf (norm needle) (norm body)
                       ]
               , length hits /= 1
