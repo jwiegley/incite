@@ -12,14 +12,12 @@ to do any part of it.
 Run `pwd`. The working directory must be the **target project's checkout
 root** — the workflow reads the tree it is run in, and its facts prompt opens
 with a probe of `lib/operation_web/live/` and `domain/`. If either is missing
-every lens refuses with `FACTS PATHS UNRESOLVED`, and the synthesis refuses
-to rank the eleven refusals, naming the unresolved probe as the reason. The
-flow is static, so the fixer and the gate still run — each acting on that
-refusal rather than on findings — and the run fails at its gate, whose checks
-go red in the wrong checkout. The waste is bounded: a fixer handed a refusal
-has nothing to fix, and the repair loop is capped at three trips. The `pwd`
-check is the real guard. If you are not in the project root, say so and stop
-rather than guessing at a path.
+every lens refuses with `FACTS PATHS UNRESOLVED`, and the synthesis opens its
+answer with that same line instead of ranking the eleven refusals. A stop in
+the flow reads exactly that line and fails the run at the synthesis — the
+fixer and the gate never act on a refusal. The eleven audit turns are still
+spent, so the `pwd` check is still the cheap guard. If you are not in the
+project root, say so and stop rather than guessing at a path.
 
 Nothing else needs passing. The project's view and component layout, the
 centralized topics module, the stable-id module, the hook-registration
@@ -58,12 +56,15 @@ Four stages:
    above every performance and UX finding, each keeping the severity word the
    auth lens put on it. The synthesis names every lens it heard from and
    refuses to rank anything if a block is missing, empty, or carries the
-   facts-probe refusal line.
+   facts-probe refusal line — and on that refusal line the flow stops the run
+   before the fixer acts.
 3. **Remediation** — one orchestrated fixer, looping until its own summary
    stops asking to continue.
-4. **Gate** — `mix compile --warnings-as-errors` and `mix test`, each inside
-   the project dev shell, run by agent-functor with the exit codes read. A
-   red tree goes back to a repair leaf up to three times and then **fails the
+4. **Gate** — `mix compile --warnings-as-errors`, `mix test`, and the
+   TypeScript suite, each inside the project dev shell, run by agent-functor
+   with the exit codes read. The TypeScript suite is in the gate because the
+   `ts-hooks` lens writes hook code the two mix commands cannot see. A red
+   tree goes back to a repair leaf up to three times and then **fails the
    run** rather than reporting success over a red suite.
 
 There is no review-audit stage and no separate TODO file: the fixer is the
@@ -85,5 +86,5 @@ Then say plainly that the tree is dirty and uncommitted, and that `/commit` is
 the next step once they have read it. Do not commit anything yourself.
 
 If the run failed with `FACTS PATHS UNRESOLVED` in its output, the working
-directory was wrong — say that rather than reporting a red gate or an audit
-that found nothing.
+directory was wrong and the flow stopped the run at the synthesis — say that
+rather than reporting an audit that found nothing.

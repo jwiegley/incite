@@ -203,9 +203,9 @@ Codex and Claude rendered trees differ:
 `ship-feature`/`ship-docs` runs the worker until it reports `WORK COMPLETE`:
 
 - `orchestrate`'s `workerFuel` is `Nothing` by default — no ceiling — so the
-  worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just n` to
-  cap at n trips, after which the last summary yields to the review panel
-  rather than aborting;
+  worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just (Fuel n)`
+  to cap at n trips, after which the last summary yields to the review panel,
+  under an explicit trip-budget-exhausted notice, rather than aborting;
 - the run can still abort for reasons the fuel does not cover — a rate-limited
   backend (429) or a backend error — and the work done so far is not lost then
   either: with `--sandbox` it is on the run's `agent-functor/run-…` worktree

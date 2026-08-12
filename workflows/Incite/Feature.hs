@@ -32,8 +32,10 @@ module Incite.Feature
   , continueMarker
   , decideContinue
   , decideTrip
+  , exhaustionNotice
   , isRed
   , decideRed
+  , decideFactsResolved
   , asReviewSubject
   , asRetroSubject
   , asDocsSubject
@@ -113,7 +115,7 @@ import Agent.Flow.Combinators
   , submitPR
   , verify
   )
-import Agent.Flow.Extent (loopUntil)
+import Agent.Flow.Extent (Fuel (..), loopUntil)
 import Agent.Grant (Grant, execGrant)
 import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief, i, iii, promptText, __i)
@@ -124,6 +126,7 @@ import Incite.Review
   ( Subject (OfTree)
   , docsStrategyOfPlan
   , emissionLenses
+  , factsRefusalLine
   , grindName
   , grindSynthesisOver
   , grindTestsLenses
@@ -135,7 +138,7 @@ import Incite.Review
   , reviewAuditFlow
   , reviewDocsFlow
   , reviewHeavyFlow
-  , spread
+  , spreadPinned
   )
 import Incite.Prompts
     ( intrepid,
@@ -161,7 +164,8 @@ import Incite.Prompts
       stackTriage,
       steRules,
       testsFacts,
-      liveViewFacts )
+      liveViewFacts,
+      liveViewSeverityVocabulary )
 
 -- | The analysis flagship: explore → plan → lens edit. Prompt-only — no
 -- worktree, no git, no PR; 'shipFeature' and 'shipDocs' are the acting halves.
@@ -444,17 +448,43 @@ lastOrDefault _ xs = last xs
 --
 -- 'Nothing' is no ceiling: the loop continues as long as 'decideContinue'\'s
 -- marker is present and ends the moment it is not — the worker decides trip
--- count. @'Just' n@ caps it: once n trips are spent the last summary yields
--- rather than asking for a trip the budget does not have, so a large job still
--- reaches review instead of aborting with its edits stranded.
-decideTrip :: Maybe Int -> Text -> Either (Maybe Int, Text) Text
+-- count. @'Just' ('Fuel' n)@ caps it: once n trips are spent the last summary
+-- yields rather than asking for a trip the budget does not have, so a large
+-- job still reaches review instead of aborting with its edits stranded.
+--
+-- __Exhaustion yields loudly, never silently.__ A summary that still asked to
+-- continue when the budget ran out is a claim of UNRESOLVED work, and the
+-- stages after the loop — a gate proving checks green, a review panel — say
+-- nothing about it on their own: a green gate over a fixer that was cut off
+-- mid-findings reads exactly like a finished run. 'exhaustionNotice' appended
+-- under its own heading is what keeps the final artifact honest about the
+-- difference.
+--
+-- 'Fuel' rather than a bare 'Int': the budget IS 'Agent.Flow.Extent.loopUntil'\'s
+-- fuel (mirrored by 'orchestrateWith'), and the upstream newtype saying so in
+-- the type is what keeps a trip count from being confused with any other
+-- integer a workflow threads.
+decideTrip :: Maybe Fuel -> Text -> Either (Maybe Fuel, Text) Text
 decideTrip fuel out = case decideContinue out of
   Left _ -> case fuel of
     Nothing -> Left (Nothing, out)
-    Just n
-      | n > 1 -> Left (Just (n - 1), out)
-      | otherwise -> Right out
+    Just (Fuel n)
+      | n > 1 -> Left (Just (Fuel (n - 1)), out)
+      | otherwise -> Right (out <> "\n\n" <> exhaustionNotice)
   Right _ -> Right out
+
+-- | What 'decideTrip' appends when it yields on a spent budget while the
+-- worker's summary still asked to continue. Under a @##@ heading of its own,
+-- like the gate's log, so it survives every downstream stage that keeps the
+-- account — an operator reading the final artifact sees the cut, not just the
+-- green checks below it.
+exhaustionNotice :: Text
+exhaustionNotice =
+  "## trip budget exhausted\n\
+  \The orchestrator's trip budget ran out while the summary above still asked\n\
+  \to continue. Whatever it names as remaining is unresolved work, not work\n\
+  \done — read it as open findings that want a person, however the checks\n\
+  \below came out."
 
 -- | Is this check log a __failing__ one? True exactly when some line, ANSI
 -- stripped and whitespace stripped, opens with the marker
@@ -509,9 +539,9 @@ actingGrant = execGrant ["nix*"]
 
 -- | The ceiling on how many times a worker may hand itself back its own summary.
 -- 'Nothing' — the default — is no ceiling: the worker runs until it reports
--- WORK COMPLETE. @'Just' n@ caps it at n trips, after which the last summary
--- yields to the next stage rather than aborting.
-workerFuel :: Maybe Int
+-- WORK COMPLETE. @'Just' ('Fuel' n)@ caps it at n trips, after which the last
+-- summary yields to the next stage rather than aborting.
+workerFuel :: Maybe Fuel
 workerFuel = Nothing
 
 -- | The checks the grind gate runs __itself__, as argv rather than as a shell
@@ -658,9 +688,9 @@ paradoxRule = grindRule paradoxFacts
 -- there is no budget — the loop runs until the worker reports WORK COMPLETE.
 --
 -- The 'loopUntil' fuel mirrors 'workerFuel': @'maxBound' \`div\` 2@ when
--- 'Nothing' — practically infinite, and the largest value that keeps
--- 'Agent.Cost.worstCaseCost' arithmetic from overflowing — and n when
--- @'Just' n@.
+-- 'Nothing' — practically infinite, the sentinel the unbounded-loop fence in
+-- @test\/Spec.hs@ counts, and a value @Agent.Cost.worstCaseCost@ sums exactly
+-- (its arithmetic is 'Integer') — and n when @'Just' ('Fuel' n)@.
 --
 -- @second''@ carries the budget alongside the summary so the worker itself only
 -- ever sees its own text — the briefs' \"your own summary as input\" contract
@@ -674,15 +704,17 @@ orchestrate = orchestrateWith workerFuel
 --
 -- __A parameter because a workflow's fuel is a property of the workflow.__
 -- 'workerFuel' is 'Nothing' for the two that finish when their worker says so.
--- 'stackFuel' is finite for the one that runs four of these loops in one chain:
--- @Agent.Cost.worstCaseCost@ sums a sequence and multiplies through a loop, and
--- four unbounded loops in a row sum past 'maxBound' and report a NEGATIVE worst
--- case. A cost estimate that goes backwards is worse than a large one, because
--- it is the number an operator reads before deciding to spend anything.
-orchestrateWith :: Maybe Int -> Flow Text Text -> Flow Text Text
+-- 'stackFuel' is finite for the one that runs four of these loops in one
+-- chain: an unbounded loop costs the sentinel @'maxBound' \`div\` 2@, so four
+-- of them in a row render a worst case no operator can read anything from —
+-- and 'Agent.Cost.worstCaseCost' used to sum them in 'Int', where two wrapped
+-- NEGATIVE (its arithmetic is 'Integer' now, and the unbounded-loop fence in
+-- @test\/Spec.hs@ holds every chain to at most one sentinel anyway). Four
+-- capped loops report a number worth reading before deciding to spend.
+orchestrateWith :: Maybe Fuel -> Flow Text Text -> Flow Text Text
 orchestrateWith fuel worker =
   dimap' (\summary -> (fuel, summary)) id
-    ( loopUntil (maybe (maxBound `div` 2) id fuel)
+    ( loopUntil (maybe (maxBound `div` 2) fuelMax fuel)
         ( second'' worker >>> dimap' id (uncurry decideTrip) Id )
     )
 
@@ -725,14 +757,16 @@ data Orientation
 -- Total in 'Orientation', so a new constructor cannot be added without saying
 -- where its evidence lives.
 --
--- 'AtChange'\'s @docs\/audits\/@ exclusion is deliberately categorical across
--- every consumer of the orientation: it names only the dated reports a run
--- writes for itself, and one preamble per orientation is the trade this type
--- makes against per-call-site ignored-path parameters.
+-- 'AtChange'\'s @docs\/audits\/@ exclusion is scoped by the account beneath
+-- it, not by the path alone: only a report the account claims as its own
+-- output sits outside the change. A categorical exclusion was tried first and
+-- dismissed a legitimate review whose whole change WAS an audit-report edit
+-- as @no change to audit@ — the account is the one thing every consumer of
+-- this orientation already has in hand that tells the two apart.
 preambleOf :: Orientation -> Text
 preambleOf o = case o of
   AtChange ->
-    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. A dated report under `docs/audits/` is this run's own artifact, not part of the change: leave it out of the review, and leave it out of the no-change decision — a tree whose only edit is that report has no change to audit. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
+    [i|Review the change in the current working directory. Run `git diff`, `git diff --cached` and `git status` and read the result before reporting anything. A dated report under `docs/audits/` that the account below claims as its own output is this run's own artifact, not part of the change: leave it out of the review, and leave it out of the no-change decision — a tree whose only edit is that artifact has no change to audit. A `docs/audits/` file the account does not claim is part of the change like any other file. If all three show no change — nothing modified, nothing staged, nothing untracked — say `no change to audit` and stop: an empty diff is a fact to report, never a licence to review the account below in its place. The worker's own account of what it did follows — treat it as a claim to check, not as the change itself.|]
   AtRecord ->
     [i|Hold the retrospective on the work in the current working directory, not on a conversation: this run's record is what you have, and there is no transcript of the session.
 
@@ -972,6 +1006,7 @@ grindParadox =
         , gsFacts = paradoxFacts
         , gsLenses = lensesOf OfTree <> emissionLenses
         , gsSynthesisSuffix = mempty
+        , gsPins = []
         }
       >>> greenGate paradoxRule grindChecks
 
@@ -998,6 +1033,12 @@ data GrindSpec = GrindSpec
   -- nothing to add. The seam exists so a grind can EXTEND the shared brief —
   -- a ranking clause, say — without replacing the derived roster, which is
   -- what keeps a short panel refusable in every grind.
+  , gsPins :: [(LeafName, LeafName)]
+  -- ^ The @(lens, backend)@ pairings that are POLICY rather than position,
+  -- honoured by 'Incite.Review.spreadPinned'; @[]@ for a grind whose lens
+  -- table has no row a particular model must hold. A pin is what lets the
+  -- table's order stay thematic while the assignment that matters survives a
+  -- reorder.
   }
 
 -- | The shared grind prefix: the tree's facts prepended to the caller's steer,
@@ -1017,13 +1058,22 @@ data GrindSpec = GrindSpec
 -- and 'grindRule' over the spec's own facts — so no grind can hand the
 -- synthesis a roster its panel does not run (a backend outage would fold into
 -- that as a clean tree), and no grind can audit under one set of facts and
--- repair under another. The unchanged 'grindParadox' fences in @test\/Spec.hs@
--- and the render recorded at the hoist are what pin this binding to the shape
--- that workflow always had.
+-- repair under another. The 'grindParadox' fences in @test\/Spec.hs@ pin the
+-- shape.
+--
+-- __The stop between the synthesis and the fixer is control flow, not
+-- prose.__ The derived brief tells a refusing synthesis to open its answer
+-- with 'Incite.Review.factsRefusalLine', and 'decideFactsResolved' under a
+-- fuel-1 'loopUntil' reads exactly that: a refusal takes the 'Left' branch,
+-- the single unit of fuel is spent, and the loop's exhaustion fails the run —
+-- the fixer and everything after it never act on a refusal. The gate costs no
+-- leaf ('Id' body) and no worst-case executions, so every plan and cost
+-- render counts what it always did.
 grindFlow :: GrindSpec -> Flow Text Text
 grindFlow GrindSpec {..} =
-  dimap' withFacts id (spread backends gsLenses)
+  dimap' withFacts id (spreadPinned gsPins backends gsLenses)
     >>> refineWith "synthesis" (brief synthesis) id
+    >>> loopUntil 1 (dimap' id decideFactsResolved Id)
     >>> orchestrate (remediate (grindRule gsFacts) fixerContinuation)
   where
     base = grindSynthesisOver gsName (map fst gsLenses)
@@ -1041,6 +1091,27 @@ grindFlow GrindSpec {..} =
             #{gsSynthesisSuffix}
           |]
     withFacts steerText = promptText gsFacts <> "\n\n" <> steerText
+
+-- | 'Left' when a grind synthesis answered with the wrong-checkout refusal,
+-- 'Right' when it ranked: the reader behind the fuel-1 'loopUntil' in
+-- 'grindFlow', in 'decideRed'\'s family.
+--
+-- The match is a line opening with 'Incite.Review.factsRefusalLine' after the
+-- decoration strip 'decideContinue' uses — the brief demands the bare line
+-- first, and the facts probes emit it with a colon and an explanation behind
+-- it, so a synthesis quoting a probe block verbatim still reads as the
+-- refusal it is. Line-anchored rather than an infix scan, for
+-- 'decideContinue'\'s reason: prose that mentions the refusal mid-sentence
+-- must not stop a run that read the tree.
+decideFactsResolved :: Text -> Either Text Text
+decideFactsResolved out
+  | any refusalLine (T.lines out) = Left out
+  | otherwise = Right out
+  where
+    refusalLine =
+      T.isPrefixOf factsRefusalLine
+        . T.dropAround (`elem` ("`*_ ." :: String))
+        . T.strip
 
 -- | The checks the test-suite grind gates on: the target project's own compile
 -- (warnings as errors), its Elixir suite, and its TypeScript suite — each
@@ -1104,6 +1175,7 @@ grindTests =
         , gsFacts = testsFacts
         , gsLenses = grindTestsLenses
         , gsSynthesisSuffix = mempty
+        , gsPins = []
         }
       >>> dimap' asReviewSubject id reviewAuditFlow
       >>> orchestrateWith grindTestsReviewFuel (remediate grindTestsRule fixerContinuation)
@@ -1113,58 +1185,73 @@ grindTests =
 -- review panel's findings. Finite for 'stackFuel'\'s cost reason: this
 -- workflow already runs one unbounded fixer loop inside 'grindFlow', and
 -- @worstCaseCost@ sums a sequence, so a second unbounded loop pushed the sum
--- past 'maxBound' and @cost grind-tests@ reported a NEGATIVE worst case — the
--- number an operator reads before spending anything, going backwards.
+-- past 'maxBound' and @cost grind-tests@ reported a NEGATIVE worst case (the
+-- upstream arithmetic is 'Integer' now, but two sentinel loops would still
+-- render a number an operator cannot read anything from, and the
+-- unbounded-loop fence in @test\/Spec.hs@ forbids the pair outright).
 --
 -- And finite is right on its own terms: the first fixer faces a whole
 -- suite's findings and the worker decides its trips, but this one faces the
 -- review of ONE change — a finding set that outlives twelve trips wants a
 -- person reading the panel's report, not a thirteenth trip. Exhaustion
--- yields ('orchestrateWith'), so the gate still runs over whatever landed.
-grindTestsReviewFuel :: Maybe Int
-grindTestsReviewFuel = Just 12
+-- yields ('orchestrateWith'), so the gate still runs over whatever landed —
+-- and 'decideTrip' appends 'exhaustionNotice' to the yielded summary, so a
+-- green gate after a cut-off fixer reads as exactly that in the final
+-- artifact, never as a finished remediation.
+grindTestsReviewFuel :: Maybe Fuel
+grindTestsReviewFuel = Just (Fuel 12)
 
--- | The checks the LiveView grind gates on: the target project's own compile
--- (warnings as errors) and its test suite, each through 'grindCheckCmd', run
--- by us with the exit code read. No TypeScript check, and that is a gap for a
--- grind whose @ts-hooks@ lens writes hook code: the retired gate had none, and
--- a command unverifiable without the target checkout risks the permanently-red
--- gate 'grindCheckCmd'\'s haddock names — the owed dry run (see @HANDOFF.md@)
--- is where a third row (vitest or tsc) earns its place.
+-- | The checks the LiveView grind gates on: 'grindTestsChecks', the same
+-- binding — both grinds point at the same operation checkout, so its compile,
+-- its Elixir suite and its TypeScript suite are one fact stated once.
+--
+-- The TypeScript row is load-bearing here, not inherited decoration: the
+-- @ts-hooks@ lens exists to move round trips into hook code under
+-- @assets\/ts\/hooks\/@, and a gate that never runs the TS suite passes a
+-- broken hook green — the compile and @mix test@ cannot see TypeScript. The
+-- retired engine gated on the two mix commands alone, and that was its gap,
+-- not a fact to preserve. Every row carries the same caveat as its siblings:
+-- none has run in the target checkout yet, and the owed dry run
+-- (@HANDOFF.md@) rehearses all three argv before the first paid run.
 grindLiveViewChecks :: [(LeafName, NonEmpty Text)]
-grindLiveViewChecks =
-  [ ("compile", grindCheckCmd "mix compile --warnings-as-errors")
-  , ("tests", grindCheckCmd "mix test")
-  ]
+grindLiveViewChecks = grindTestsChecks
 
 -- | 'grindGrantFor' at 'grindLiveViewChecks', for 'grindGrant'\'s reason.
 grindLiveViewGrant :: Grant
 grindLiveViewGrant = grindGrantFor grindLiveViewChecks
 
--- | 'grindRule' at 'Incite.Prompts.liveViewFacts': what the LiveView grind's
--- fixer and its gate's repair leaf stand under. Splicing the facts is how a
--- fixer learns the registration convention a half-landed hook silently
--- breaks.
+-- | 'grindRule' at the shipped spec's own facts: what the LiveView grind's
+-- gate repair leaf stands under. Splicing the facts is how a fixer learns the
+-- registration convention a half-landed hook silently breaks.
+--
+-- Derived through @'gsFacts' 'grindLiveViewSpec'@ rather than naming
+-- 'Incite.Prompts.liveViewFacts' a second time: the audit half reads the
+-- spec's facts and the gate repairs under this rule, and those are one
+-- invariant — two independent spellings of the same facts drift silently,
+-- and a gate repairing under facts the audit never read is the drift that
+-- matters.
 grindLiveViewRule :: Prompt
-grindLiveViewRule = grindRule liveViewFacts
+grindLiveViewRule = grindRule (gsFacts grindLiveViewSpec)
 
 -- | The one thing the LiveView grind adds to the derived synthesis brief, and
 -- the reason 'GrindSpec' has a suffix seam at all.
 --
 -- __It rides on the severity words 'Incite.Prompts.liveViewAuth' demands.__
--- That lens opens every finding with @critical@, @high@ or @medium@; this
--- clause matches on those words to hold every authorization finding above
--- every performance and UX finding, whatever the consequence ranking says.
--- The coupling is fenced in @test\/Spec.hs@ — drop the words from either side
--- and the case goes red, because an auth finding that sinks below UX noise is
--- exactly the silent failure the clause exists to prevent.
+-- That lens opens every finding with a word from
+-- 'Incite.Prompts.liveViewSeverityWords'; this clause matches on those words
+-- to hold every authorization finding above every performance and UX finding,
+-- whatever the consequence ranking says. Both briefs render the vocabulary
+-- from that one binding ('Incite.Prompts.liveViewSeverityVocabulary'), and
+-- the coupling case in @test\/Spec.hs@ holds both rendered briefs to its own
+-- hand-written word list — an auth finding that sinks below UX noise is
+-- exactly the silent failure this clause exists to prevent.
 grindLiveViewRanking :: Prompt
 grindLiveViewRanking =
   [__i|
     ONE RANKING RULE on top of the ranking above: every authorization finding
     ranks above every performance and UX finding, whatever their consequences
     score. The auth lens opens each of its findings with a severity word —
-    `critical`, `high` or `medium` — keep that word on the finding's line, and
+    #{liveViewSeverityVocabulary} — keep that word on the finding's line, and
     order the authorization findings by it among themselves.
   |]
 
@@ -1179,6 +1266,10 @@ grindLiveViewSpec =
     , gsFacts = liveViewFacts
     , gsLenses = grindLiveViewLenses
     , gsSynthesisSuffix = grindLiveViewRanking
+    , -- The auth lens holds the severity words the suffix ranks on, so its
+      -- backend is policy: claude-agent under either roster, stated here as
+      -- data rather than by the lens table's row order alone.
+      gsPins = [("auth", "claude-agent")]
     }
 
 -- | Audit a LiveView layer with eleven lenses, rank what they found with
@@ -1188,8 +1279,8 @@ grindLiveViewSpec =
 --
 -- No review-audit segment: 'grindTests' pays that price because a test-suite
 -- remediation's cheapest failure is a weakened assertion, and this grind's
--- edits stand under the same compile and test gate that catches a LiveView
--- regression the cheap way.
+-- edits stand under the same compile, test and TypeScript gate that catches
+-- a LiveView regression the cheap way.
 grindLiveView :: Workflow
 grindLiveView =
   workflowG
@@ -1201,7 +1292,8 @@ grindLiveView =
       authorization, page load cost, DOM keying, assign bloat, client-hook
       round trips), write a dated ranked report with authorization findings
       above every performance and UX finding, fix every finding under an
-      orchestrated fixer, then gate on the project's real compile and tests
+      orchestrated fixer, then gate on the project's real compile, test and
+      TypeScript suites
     |]
     [iii|
       Audit the LiveView layer in the current working directory. No focus:
@@ -1378,19 +1470,21 @@ stackPRs =
 -- | The ceiling on every loop in 'stackPRs'. Finite where 'workerFuel' is not,
 -- and for two reasons that point the same way.
 --
--- __Cost.__ Four orchestrated loops run in sequence here. @worstCaseCost@ sums
--- a sequence, so four unbounded loops overflow 'maxBound' and report a negative
--- worst case; four capped ones report a number an operator can read before
--- spending anything.
+-- __Cost.__ Four orchestrated loops run in sequence here. @worstCaseCost@
+-- sums a sequence, so four unbounded loops report an astronomical worst case
+-- no operator can read anything from (and, before the upstream arithmetic
+-- went 'Integer', wrapped 'Int' into a negative one); four capped loops
+-- report a number worth reading before spending anything.
 --
--- __And exhaustion is safe here.__ 'orchestrateWith' yields the last summary at
--- trip n rather than aborting, so a stack that needs more trips than this
+-- __And exhaustion is safe here.__ 'orchestrateWith' yields the last summary
+-- at trip n rather than aborting, so a stack that needs more trips than this
 -- reaches the next stage with every branch it did cut, rather than stranding
--- them. Twelve is generous against a stack of the size this workflow is for: a
--- diff wanting more than twelve trips of cutting wants a person to look at the
--- plan.
-stackFuel :: Maybe Int
-stackFuel = Just 12
+-- them — under 'exhaustionNotice', so the artifact says the budget cut the
+-- loop rather than the worker finishing. Twelve is generous against a stack
+-- of the size this workflow is for: a diff wanting more than twelve trips of
+-- cutting wants a person to look at the plan.
+stackFuel :: Maybe Fuel
+stackFuel = Just (Fuel 12)
 
 -- | The plan lenses a stacking run edits through, and the whole of what it puts
 -- between the planner and the steer.

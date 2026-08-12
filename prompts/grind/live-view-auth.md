@@ -23,13 +23,6 @@ Hunt these five.
    one of these accepts it from any connected client; validate against an
    allowlist or derive it server-side.
 
-Open every finding's first line with a severity word — `critical`, `high` or
-`medium`, and that word exactly. A mutation any authenticated user can fire
-across ownership lines is `critical`; a mutation gated by a stale assign is
-`high`; a read-only leak or unverified navigation is `medium`. The stage that
-ranks findings matches on that word, so a finding without one sinks below
-noise it should outrank.
-
 For each finding, report the severity word, the file and handler, the line,
 which of the five it is, the exploit in one sentence — who sends what and
 what happens — and the guard as code, checking the store in the handler's own

@@ -2,7 +2,7 @@ module Main (main) where
 
 import Data.Foldable (toList)
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (find, isSuffixOf, nub, sort, (\\))
+import Data.List (find, isInfixOf, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (fromMaybe)
@@ -13,7 +13,9 @@ import System.Directory (listDirectory)
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Agent.Bounds (Fuel (fuelMax))
+import Control.Exception (ErrorCall (..), evaluate, try)
+
+import Agent.Bounds (Fuel (..))
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (Grant, permitExec)
 import Agent.Flow (Flow (Id), Mode (Plan), foldLeavesScoped, (>>>))
@@ -54,6 +56,8 @@ import Incite.Feature
   , decideContinue
   , decideTrip
   , decideRed
+  , decideFactsResolved
+  , exhaustionNotice
   , docsRule
   , docsPlanLenses
   , isRed
@@ -162,6 +166,7 @@ import Incite.Review
   , routeHaskell
   , slopOfDocs
   , spread
+  , spreadPinned
   , TriageVerdict (..)
   , haskellTriggerExtensions
   )
@@ -294,7 +299,8 @@ decideContinueTests =
 -- stranding every edit the worker had made; now it is the account the review
 -- panel reads. The marker is still present and 'decideContinue' still reads
 -- it — what changed is that the budget overrides it, so the loop yields
--- rather than asking for a trip it does not have.
+-- rather than asking for a trip it does not have, and 'exhaustionNotice'
+-- rides on the yielded summary so the artifact says the budget cut the loop.
 decideTripTests :: TestTree
 decideTripTests =
   testGroup
@@ -305,31 +311,48 @@ decideTripTests =
             decideTrip Nothing "summary\nWORK REMAINS"
               @?= Left (Nothing, "summary\nWORK REMAINS")
         , testCase "Just n with budget to spare" $
-            decideTrip (Just 3) "summary\nWORK REMAINS"
-              @?= Left (Just 2, "summary\nWORK REMAINS")
+            decideTrip (Just (Fuel 3)) "summary\nWORK REMAINS"
+              @?= Left (Just (Fuel 2), "summary\nWORK REMAINS")
         , testCase "Just n decorated marker, budget to spare" $
-            decideTrip (Just 2) "summary\n`WORK REMAINS`"
-              @?= Left (Just 1, "summary\n`WORK REMAINS`")
+            decideTrip (Just (Fuel 2)) "summary\n`WORK REMAINS`"
+              @?= Left (Just (Fuel 1), "summary\n`WORK REMAINS`")
         ]
     , testGroup
         "yields (Right)"
         [ -- The case that used to abort: the marker is there, but there is no
-          -- trip left to take. The summary survives, so the panel sees the work.
-          testCase "Just 1 — marker with the budget spent" $
-            decideTrip (Just 1) "summary\nWORK REMAINS"
-              @?= Right "summary\nWORK REMAINS"
+          -- trip left to take. The summary survives, so the panel sees the
+          -- work — under the exhaustion notice, so a reader of the final
+          -- artifact can tell a cut-off worker from a finished one. Both the
+          -- exported binding and a hand-written needle, so a notice gutted to
+          -- @\"\"@ cannot pass by both sides moving together.
+          testCase "Just 1 — marker with the budget spent yields under the notice" $ do
+            decideTrip (Just (Fuel 1)) "summary\nWORK REMAINS"
+              @?= Right ("summary\nWORK REMAINS\n\n" <> exhaustionNotice)
+            assertBool
+              "the notice does not open with its own ## heading"
+              ("## trip budget exhausted" `T.isPrefixOf` exhaustionNotice)
+            assertBool
+              "the notice does not call the remainder unresolved"
+              ("unresolved work" `T.isInfixOf` exhaustionNotice)
         , -- Nothing never yields on the marker — it ends only on WORK COMPLETE.
           testCase "Nothing — WORK COMPLETE" $
             decideTrip Nothing "summary\nWORK COMPLETE"
               @?= Right "summary\nWORK COMPLETE"
-        , -- A worker that finished, whatever the budget. Same as 'decideContinue'.
+        , -- A worker that finished, whatever the budget: no notice, because
+          -- nothing was cut. Same as 'decideContinue'.
           testCase "Just n — WORK COMPLETE with budget to spare" $
-            decideTrip (Just 3) "summary\nWORK COMPLETE"
+            decideTrip (Just (Fuel 3)) "summary\nWORK COMPLETE"
               @?= Right "summary\nWORK COMPLETE"
         , -- A confused worker (no marker) ends on trip one regardless of budget.
           testCase "Nothing — no marker" $
             decideTrip Nothing "no work remains"
               @?= Right "no work remains"
+        , -- And spending the LAST trip on a finished worker is not exhaustion:
+          -- the budget ran out exactly when the work did, and a notice here
+          -- would cry wolf over every job that fit its ceiling.
+          testCase "Just 1 — WORK COMPLETE on the last trip carries no notice" $
+            decideTrip (Just (Fuel 1)) "summary\nWORK COMPLETE"
+              @?= Right "summary\nWORK COMPLETE"
         ]
     ]
 
@@ -823,8 +846,14 @@ orientTests =
                 -- the report (or any unrelated pre-existing edit beside it) as
                 -- the fixer's delta, and a no-op fix walks around the
                 -- no-change clause above.
-                "A dated report under `docs/audits/` is this run's own artifact"
+                "A dated report under `docs/audits/` that the account below claims as its own output is this run's own artifact"
               , "leave it out of the no-change decision"
+              , -- The exclusion's own limit, in bytes: it is scoped by the
+                -- account's claim, not by the path. A categorical exclusion
+                -- dismissed a legitimate change whose ONLY file was an audit
+                -- report as `no change to audit` — valid review input,
+                -- answered with a refusal to review.
+                "A `docs/audits/` file the account does not claim is part of the change like any other file"
               ]
           , not (needle `T.isInfixOf` preambleOf AtChange)
           ]
@@ -1469,15 +1498,19 @@ grindPanelTests =
                   , [ "the roster count is not derived from the roster"
                     | not ("These 3 lenses were sent" `T.isInfixOf` T.unwords (T.words rendered))
                     ]
-                  , -- The wrong-checkout refusal, which only the brief's bytes
-                    -- carry: the facts probe's "stop" is prompt text a static
-                    -- flow cannot obey, so a run outside the target checkout
-                    -- still reaches this synthesis — and without this
-                    -- instruction it ranks twelve probe refusals as findings
-                    -- and sends the fixer, the review pass and the gate to
-                    -- work in a tree the audit never read.
+                  , -- The wrong-checkout refusal. The brief must carry the
+                    -- line, and must tell the synthesis to OPEN its refusal
+                    -- with it — that opening is the contract the flow's
+                    -- refusal stop ('decideFactsResolved') reads, so a brief
+                    -- that keeps the line but drops the opening instruction
+                    -- leaves a stop nothing ever triggers, and the fixer, the
+                    -- review pass and the gate go to work in a tree the audit
+                    -- never read.
                     [ "the brief does not refuse on " <> tshow factsRefusalLine
                     | not (factsRefusalLine `T.isInfixOf` rendered)
+                    ]
+                  , [ "the brief does not tell the refusal to open with the line the stop reads"
+                    | not ("Open your answer with the line" `T.isInfixOf` rendered)
                     ]
                   ]
               )
@@ -1511,32 +1544,135 @@ grindPanelTests =
                 , gsFacts = "THE SYNTHETIC FACTS"
                 , gsLenses = lenses
                 , gsSynthesisSuffix = suffix
+                , gsPins = []
                 }
-        bare <- flowLeafPrompts "grind-synthetic" (grindFlow (specWith mempty)) "STEER"
-        suffixed <- flowLeafPrompts "grind-synthetic" (grindFlow (specWith "THE RANKING CLAUSE")) "STEER"
+            -- Total: name each of the four prompts the flow must send (one per
+            -- lens, the synthesis, the fixer) or fail with the count, rather
+            -- than reaching for @!!@\/@head@\/@last@ — the bare-partial idiom
+            -- 'onlyFlowLeafPrompt' exists to retire, which had crept back here.
+            shaped label sent = case sent of
+              [firstLens, _, synthesis, fixer] -> pure (firstLens, synthesis, fixer)
+              _ ->
+                assertFailure
+                  ( label
+                      <> ": grindFlow sent "
+                      <> show (length sent)
+                      <> " prompts, expected 4 (two lenses, synthesis, fixer)"
+                  )
+        (bareFirst, bareSynthesis, bareFixer) <-
+          shaped "bare" =<< flowLeafPrompts "grind-synthetic" (grindFlow (specWith mempty)) "STEER"
+        (_, suffixedSynthesis, _) <-
+          shaped "suffixed" =<< flowLeafPrompts "grind-synthetic" (grindFlow (specWith "THE RANKING CLAUSE")) "STEER"
         let derived = promptText (grindSynthesisOver "grind-synthetic" (map fst lenses))
-            synthesisOf sent = sent !! length lenses
         assertBool
           "the synthesis brief is not derived from the spec's name and lens table"
-          (derived `T.isInfixOf` synthesisOf bare)
-        synthesisOf suffixed
-          @?= T.replace derived (derived <> "\n\nTHE RANKING CLAUSE") (synthesisOf bare)
+          (derived `T.isInfixOf` bareSynthesis)
+        suffixedSynthesis
+          @?= T.replace derived (derived <> "\n\nTHE RANKING CLAUSE") bareSynthesis
         assertBool
           "the fixer's rule is not derived from the spec's facts"
-          (promptText (grindRule "THE SYNTHETIC FACTS") `T.isInfixOf` last bare)
+          (promptText (grindRule "THE SYNTHETIC FACTS") `T.isInfixOf` bareFixer)
         assertBool
           "the facts are not prepended to the caller's steer"
-          ("THE SYNTHETIC FACTS\n\nSTEER" `T.isInfixOf` head bare)
+          ("THE SYNTHETIC FACTS\n\nSTEER" `T.isInfixOf` bareFirst)
+    , -- __The stop is control flow, on the synthetic spec.__ Every leaf
+      -- answers with the probe's refusal line, the way a wrong-checkout panel
+      -- does; the synthesis therefore opens with it, and the run must FAIL at
+      -- the refusal stop — exactly one prompt after the panel, with the fixer
+      -- never reached. Interpreted rather than read off the skeleton, because
+      -- the stop is a pure decide inside a loop: no leaf name, no cost, no
+      -- plan line can see it. The happy path is the case above, whose empty
+      -- answers pass the same stop into the fixer.
+      testCase "a refused synthesis stops the run before the fixer" $ do
+        let lenses = [("alpha-lens", "ALPHA?"), ("beta-lens", "BETA?")] :: [(LeafName, Prompt)]
+            refusing =
+              GrindSpec
+                { gsName = "grind-synthetic"
+                , gsFacts = "THE SYNTHETIC FACTS"
+                , gsLenses = lenses
+                , gsSynthesisSuffix = mempty
+                , gsPins = []
+                }
+        sent <- newIORef (0 :: Int)
+        outcome <-
+          try $ do
+            (out, _) <-
+              interpret
+                ( leafRunner
+                    LeafHandlers
+                      { lhPrompt = \_ ->
+                          modifyIORef' sent (+ 1)
+                            >> pure (factsRefusalLine <> "\nblocks: alpha-lens@a, beta-lens@b")
+                      , lhExec = \cmd -> assertFailure ("the refused grind ran an exec leaf: " <> show cmd)
+                      , lhAsk = \_ -> assertFailure "the refused grind reached an ask leaf"
+                      }
+                )
+                (grindFlow refusing)
+                "STEER"
+            evaluate (T.length out)
+        case outcome of
+          Right _ -> assertFailure "the flow carried a refusal past the stop instead of failing the run"
+          Left (ErrorCall msg) ->
+            assertBool
+              ("the run failed, but not at a loop's exhaustion: " <> msg)
+              ("fuel exhausted" `isInfixOf` msg)
+        prompts <- readIORef sent
+        -- The panel and the synthesis were paid for; the fixer was not.
+        prompts @?= length lenses + 1
+    , -- The stop's reader, over the line shapes that reach it: the bare line
+      -- the brief demands, the probe's own colon-and-explanation form a
+      -- synthesis may quote verbatim, and a decorated spelling — against
+      -- ranked text that mentions the refusal mid-sentence, which must pass.
+      testCase "decideFactsResolved refuses on the probe's line and passes a ranked report" $ do
+        decideFactsResolved ("1. finding one\n2. finding two") @?= Right "1. finding one\n2. finding two"
+        decideFactsResolved ("prose that mentions FACTS PATHS UNRESOLVED mid-sentence")
+          @?= Right "prose that mentions FACTS PATHS UNRESOLVED mid-sentence"
+        decideFactsResolved (factsRefusalLine <> "\nblocks: alpha")
+          @?= Left (factsRefusalLine <> "\nblocks: alpha")
+        decideFactsResolved ("report:\n" <> factsRefusalLine <> ": domain/ is missing")
+          @?= Left ("report:\n" <> factsRefusalLine <> ": domain/ is missing")
+        decideFactsResolved ("`" <> factsRefusalLine <> "`")
+          @?= Left ("`" <> factsRefusalLine <> "`")
+    , -- __The pin is policy, proven where position disagrees.__ The shipped
+      -- table happens to seat @auth@ on the claude slot anyway, so only a
+      -- synthetic table where the pin and the position name DIFFERENT
+      -- backends can show the pin doing anything: the pinned lens moves, its
+      -- neighbours keep their positional backends, and a pin naming a backend
+      -- the roster lacks falls back to position rather than failing the
+      -- build.
+      testCase "spreadPinned overrides position for the pinned lens alone" $ do
+        let lenses =
+              [ ("alpha-lens", "ALPHA?")
+              , ("beta-lens", "BETA?")
+              , ("gamma-lens", "GAMMA?")
+              ] ::
+                [(LeafName, Prompt)]
+            full = backendsFor False
+        leafNames (spreadPinned [("alpha-lens", "codex")] full lenses)
+          @?= ["alpha-lens@codex", "beta-lens@codex", "gamma-lens@opencode"]
+        leafNames (spreadPinned [("alpha-lens", "no-such-backend")] full lenses)
+          @?= ["alpha-lens@claude-agent", "beta-lens@codex", "gamma-lens@opencode"]
+        leafNames (spreadPinned [] full lenses)
+          @?= leafNames (spread full lenses)
     , -- __The shipped spec, not a copy assembled here.__ The synthetic case
       -- above pins the seam mechanics for any spec; this pins that
       -- @grind-live-view@ actually rides them — its suffix IS the ranking
-      -- clause, over the same lens table its panel runs. Field equality on the
-      -- named binding, so a spec quietly rebuilt inline with @mempty@ (which
-      -- renders identically in every plan and cost) goes red here.
+      -- clause, over the same lens table its panel runs, above the LiveView
+      -- facts. Field equality on the named binding covering ALL of it: an
+      -- earlier version compared three fields and lens names only, so a spec
+      -- quietly rebuilt with @gsFacts = testsFacts@, or with a same-named
+      -- lens whose body was swapped, stayed green everywhere. Names AND
+      -- bodies per lens row, and the pin as a hand-written literal — the one
+      -- statement outside 'Incite.Feature' of which backend the auth lens
+      -- must hold.
       testCase "grind-live-view's spec carries the ranking clause over its own lens table" $ do
         promptText (gsSynthesisSuffix grindLiveViewSpec) @?= promptText grindLiveViewRanking
         gsName grindLiveViewSpec @?= grindLiveViewName
+        promptText (gsFacts grindLiveViewSpec) @?= promptText liveViewFacts
         map fst (gsLenses grindLiveViewSpec) @?= map fst grindLiveViewLenses
+        map (promptText . snd) (gsLenses grindLiveViewSpec)
+          @?= map (promptText . snd) grindLiveViewLenses
+        gsPins grindLiveViewSpec @?= [("auth", "claude-agent")]
     , -- The severity vocabulary, asserted from both sides — 'synthesisAdmits'\'s
       -- shape, for its reason: the auth lens writes the words and the ranking
       -- clause matches on them, and they live in two files nothing else reads
@@ -1570,8 +1706,10 @@ grindPanelTests =
 
 -- | The three severity words 'Incite.Prompts.liveViewAuth' opens findings with
 -- and 'Incite.Feature.grindLiveViewRanking' orders them by — literals here,
--- for 'grindContract'\'s reason: derived from either binding, the law would be
--- @x@ contains @x@.
+-- for 'grindContract'\'s reason: both briefs now render the vocabulary from
+-- the one binding 'Incite.Prompts.liveViewSeverityWords', so a fence derived
+-- from any of them would be @x@ contains @x@ and move with the very edit it
+-- exists to catch. This hand copy is the independent statement.
 severityWords :: [Text]
 severityWords = ["`critical`", "`high`", "`medium`"]
 
@@ -1852,12 +1990,15 @@ testsGrindFence =
     }
 
 -- | @grind-live-view@'s fence: the 11-lens table, the plain
--- audit-synthesize-fix-gate tail, and the grant derived from its two checks.
+-- audit-synthesize-fix-gate tail, and the grant derived from its three
+-- checks — the same three as @grind-tests@, because both grinds gate the
+-- same checkout and the @ts-hooks@ lens writes TypeScript the two mix
+-- commands cannot see.
 --
--- Both tables put @auth@ on claude-agent — position seven is the claude slot
--- under either roster, and holding the severity-word lens there is a choice
--- the lens table's own haddock argues for. These rows are where that choice
--- is pinned: reorder the table and the live column goes red.
+-- Both tables put @auth@ on claude-agent — the spec's own @gsPins@ states
+-- that policy as data, and position seven is the claude slot under either
+-- roster anyway. These rows are where the assignment is said out loud:
+-- reassign it, by reorder or by pin, and the live column goes red.
 liveViewGrindFence :: GrindFence
 liveViewGrindFence =
   GrindFence
@@ -1890,8 +2031,8 @@ liveViewGrindFence =
         , "assign-bloat@codex"
         , "ts-hooks@claude-agent"
         ]
-    , gfActingTailFull = ["synthesis", "remediate", "compile", "tests", "repair"]
-    , gfActingTailBlocked = ["synthesis", "remediate", "compile", "tests", "repair"]
+    , gfActingTailFull = ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
+    , gfActingTailBlocked = ["synthesis", "remediate", "compile", "tests", "vitest", "repair"]
     , gfGrant = grindLiveViewGrant
     , gfGrantLabel = "grindLiveViewGrant"
     , gfChecks = grindLiveViewChecks
@@ -2776,13 +2917,15 @@ docsInventoryTests =
       -- shipped exactly that (its 'grindFlow' fixer plus its post-review
       -- fixer) and only a person running @cost@ by hand noticed.
       --
-      -- __A sign check, not an overflow fence.__ Two or three chained
-      -- unbounded loops wrap negative and land here, but FOUR wrap past
-      -- 'maxBound' twice and come back to a small POSITIVE number this
-      -- check waves through while the render is grossly wrong. It stays
-      -- because a wrong turn in the 'Cost' algebra itself still shows up
-      -- as a sign flip; the at-most-one-unbounded-loop law below is what
-      -- makes the wrap-to-positive case unreachable.
+      -- __A sign check, one of three layers.__ The wrap itself is fixed at
+      -- its cause: @Agent.Cost@ carries 'Integer' now, so no chain of loops
+      -- can overflow at any count — under 'Int' two or three chained
+      -- unbounded loops wrapped negative and landed here, and FOUR wrapped
+      -- past 'maxBound' twice back to a small POSITIVE number this check
+      -- waved through. The sign check stays because a wrong turn in the
+      -- 'Cost' algebra itself still shows up as a sign flip, and the
+      -- at-most-one-unbounded-loop law below keeps the render a number an
+      -- operator can actually read.
       testCase "no exposed workflow reports a negative worst case" $
         report
           [ wfName wf <> " reports a non-positive worst case: " <> renderCost c
@@ -2792,13 +2935,14 @@ docsInventoryTests =
               Finite n -> n <= 0
               Unbounded -> False
           ]
-    , -- The cause-level law behind the sign check: with at most ONE loop
-      -- carrying the unbounded sentinel, the cost sum cannot overflow — the
-      -- sentinel is @maxBound `div` 2@ and every other contribution is a
-      -- small finite fuel times a finite body, which sums nowhere near the
-      -- remaining half of 'maxBound'. Counted off each shipped skeleton the
-      -- way 'leafNames' reads leaves, so a second unbounded fixer added to
-      -- any chain goes red here whatever sign its cost happens to land on.
+    , -- The policy law beside the sign check: at most ONE loop per chain may
+      -- carry the unbounded sentinel (@maxBound `div` 2@). Overflow is gone —
+      -- @Agent.Cost@ sums in 'Integer' — but a second sentinel loop still
+      -- renders a worst case that reads as noise, and every second loop this
+      -- repository has wanted so far was better served by a finite ceiling
+      -- ('grindTestsReviewFuel', 'stackFuel'). Counted off each shipped
+      -- skeleton the way 'leafNames' reads leaves, so a second unbounded
+      -- fixer added to any chain goes red here whatever its cost renders as.
       testCase "no exposed workflow carries two unbounded loops" $
         report
           [ wfName wf <> " carries " <> tshow k <> " unbounded loops"
@@ -2814,7 +2958,7 @@ docsInventoryTests =
       -- flows the sum arithmetic handles fine.
       testCase "the unbounded-loop reader sees a synthetic two-loop chain" $ do
         unboundedLoopCount (orchestrateWith Nothing Id) @?= 1
-        unboundedLoopCount (orchestrateWith (Just 12) Id) @?= 0
+        unboundedLoopCount (orchestrateWith (Just (Fuel 12)) Id) @?= 0
         unboundedLoopCount (orchestrateWith Nothing Id >>> orchestrateWith Nothing Id) @?= 2
     , -- Every row this reads is either checked or turned into a named failure —
       -- never silently skipped. Two rows used to vanish before 'report' ever

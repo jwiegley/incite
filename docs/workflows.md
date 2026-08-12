@@ -30,7 +30,7 @@ text.
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
 | `grind-paradox` | world-acting | 14-lens whole-tree audit spread one backend per lens, synthesis written to a dated report under `docs/audits/`, orchestrated fixer, then a real-exit-code green gate with `repairFuel` trips |
 | `grind-tests` | world-acting | 12-lens test-suite audit over the shared `grindFlow` prefix (spread panel, dated report, orchestrated fixer), then a `reviewAuditFlow` pass over the fixer's change with a second orchestrated fixer, then a real-exit-code green gate on the project's compile and test suites |
-| `grind-live-view` | world-acting | 11-lens LiveView audit over the shared `grindFlow` prefix, with a ranking clause that puts authorization findings above every performance and UX finding, then a real-exit-code green gate on the project's compile and tests |
+| `grind-live-view` | world-acting | 11-lens LiveView audit over the shared `grindFlow` prefix, with a ranking clause that puts authorization findings above every performance and UX finding, then a real-exit-code green gate on the project's compile, test and TypeScript suites |
 | `fess-audit` | prompt-only | audits a worker's captured transcript on claude-agent, pinned so the rubric cannot inherit a backend `admits` forbids |
 | `retro` | prompt-only | retrospective over a captured transcript: sentiment, went-well, went-wrong, then synthesis |
 | `review-lite` | prompt-only | six per-commit reviewers (correctness on claude-agent, fess on claude-agent, complexity on codex, ponytail on codex, qa on opencode, haskell on claude-agent — behind a triage leaf that skips it when the diff touches no Haskell source or cabal file), pure fold reduction |
@@ -116,8 +116,9 @@ are still mediated by the backend's tool permission flow.
   plan;
 - `orchestrate`: run a worker until its last non-empty line is not
   `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
-  `Just n` to cap at n trips after which the last summary yields to the
-  review panel rather than aborting the run. `orchestrateWith` takes that
+  `Just (Fuel n)` to cap at n trips after which the last summary yields to
+  the review panel — under an explicit trip-budget-exhausted notice — rather
+  than aborting the run. `orchestrateWith` takes that
   ceiling as an argument and is what `orchestrate` is defined by, so a capped
   loop cannot drift from the default one; `stack-prs` passes `stackFuel`;
 - `remediate`: fix ranked review findings under an artifact rule (`codeRule`,
@@ -174,11 +175,13 @@ rather than copying them. Six things distinguish it.
   and says to write the answers into `.stack-plan.md`. It keeps the probe, for
   the same reason: a run that reads no branches reports no work, and so does a
   finished stack.
-- **`stackFuel` is `Just 12`, where `workerFuel` is `Nothing`.** Four
-  orchestrated loops run in sequence here, and `worstCaseCost` sums a sequence,
-  so four unbounded loops overflow `maxBound` and report a negative worst case.
-  Capped, the reported worst case is the figure in the fenced table below.
-  Exhaustion yields rather than aborts, so a stack that wants more trips still
+- **`stackFuel` is `Just (Fuel 12)`, where `workerFuel` is `Nothing`.** Four
+  orchestrated loops run in sequence here, and `worstCaseCost` sums a
+  sequence, so four unbounded loops report an astronomical worst case no
+  operator can read (and once wrapped `Int` negative, before the cost
+  arithmetic went exact). Capped, the reported worst case is the figure in
+  the fenced table below. Exhaustion yields rather than aborts — under the
+  trip-budget-exhausted notice — so a stack that wants more trips still
   reaches the next stage with every branch it cut.
 
 It promotes and it never merges. `prompts/stack/rule.md` forbids merging at
@@ -224,10 +227,13 @@ stated and the suite checks whichever one is live where it runs.
 change, and at another checkout instead of this one. It is the first of three
 grinds — `grind-tests` audits a test suite and `grind-live-view` audits a
 LiveView layer — and all three share one skeleton: `grindFlow` takes a
-`GrindSpec` (the grind's name, its facts file, its lens table, and a synthesis
-suffix) and runs the facts-prepended `spread` panel, one synthesis derived
-from the spec's own name and lens table, then an orchestrated fixer under
-`grindRule` at the same facts. What a grind adds after that prefix is its own:
+`GrindSpec` (the grind's name, its facts file, its lens table, a synthesis
+suffix, and the backend pins `spreadPinned` honours) and runs the
+facts-prepended panel, one synthesis derived from the spec's own name and
+lens table, a refusal stop (`decideFactsResolved` under a fuel-1 `loopUntil`
+that fails the run when the synthesis opens with the facts probe's refusal
+line), then an orchestrated fixer under `grindRule` at the same facts. What a
+grind adds after that prefix is its own:
 `grind-paradox` and `grind-live-view` go straight to their green gates, and
 `grind-live-view`'s ranking clause rides in as the synthesis suffix, appended
 below the derived brief so authorization findings outrank performance and UX
@@ -286,8 +292,8 @@ What distinguishes the paradox grind:
 `workerFuel` (the fixer-loop ceiling) is `Nothing` by default — unbounded.
 `repairFuel` (currently 3) bounds the gate. `cost` multiplies through both
 loops rather than flattening them, so with the default unbounded fixer loop
-the reported worst case is very large; set `workerFuel = Just n` for a finite
-ceiling (at `Just 8`, the worst case is 32 leaf executions).
+the reported worst case is very large; set `workerFuel = Just (Fuel n)` for a
+finite ceiling (at `Just (Fuel 8)`, the worst case is 32 leaf executions).
 
 Nothing is committed. The product of a run is a dirty tree and a dated report,
 for a person to read. That is why the command drives it with `sandbox=false`:

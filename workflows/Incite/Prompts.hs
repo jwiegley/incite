@@ -80,6 +80,8 @@ module Incite.Prompts
   , liveViewDomKeying
   , liveViewPageLoad
   , liveViewAuth
+  , liveViewSeverityWords
+  , liveViewSeverityVocabulary
   , liveViewAssignBloat
   , liveViewTsHooks
     -- * Stacked pull requests
@@ -121,7 +123,11 @@ module Incite.Prompts
   , steSkill
   ) where
 
-import Agent.Prompt (Prompt, promptFile)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
+import Data.Text (Text)
+import qualified Data.Text as T
+import Agent.Prompt (Prompt, prompt, promptFile, promptText, __i)
 
 -- Explore -----------------------------------------------------------------------
 
@@ -346,9 +352,54 @@ liveViewDomKeying = [promptFile|prompts/grind/live-view-dom-keying.md|]
 liveViewPageLoad = [promptFile|prompts/grind/live-view-page-load.md|]
 
 liveViewAuth, liveViewAssignBloat, liveViewTsHooks :: Prompt
-liveViewAuth = [promptFile|prompts/grind/live-view-auth.md|]
+liveViewAuth =
+  prompt (T.stripEnd (promptText liveViewAuthRubric) <> "\n\n" <> promptText liveViewSeverityDemand)
 liveViewAssignBloat = [promptFile|prompts/grind/live-view-assign-bloat.md|]
 liveViewTsHooks = [promptFile|prompts/grind/live-view-ts-hooks.md|]
+
+-- | The rubric half of the auth lens: the five hunts and the report format,
+-- from the markdown like every other lens body. The severity demand is NOT in
+-- the file — 'liveViewAuth' appends it from 'liveViewSeverityDemand', so the
+-- vocabulary the demand spells and the vocabulary the ranking clause matches
+-- on have one home in Haskell instead of two homes in two prompts.
+liveViewAuthRubric :: Prompt
+liveViewAuthRubric = [promptFile|prompts/grind/live-view-auth.md|]
+
+-- | The severity vocabulary of the LiveView grind, most severe first: the
+-- words 'liveViewSeverityDemand' makes the auth lens open findings with, and
+-- the words @Incite.Feature.grindLiveViewRanking@ orders those findings by.
+-- One binding with two consumers, because the words are one fact — a word
+-- dropped from either side silently sinks an authorization finding below UX
+-- noise, and the coupling case in @test\/Spec.hs@ holds both rendered briefs
+-- to its own hand-written copy of this list.
+liveViewSeverityWords :: NonEmpty Text
+liveViewSeverityWords = "critical" :| ["high", "medium"]
+
+-- | 'liveViewSeverityWords' as both briefs quote it: backticked, comma
+-- separated, @or@ before the last.
+liveViewSeverityVocabulary :: Text
+liveViewSeverityVocabulary =
+  case NE.reverse (NE.map tick liveViewSeverityWords) of
+    lastWord :| revInit -> case reverse revInit of
+      [] -> lastWord
+      ws -> T.intercalate ", " ws <> " or " <> lastWord
+  where
+    tick w = "`" <> w <> "`"
+
+-- | The demand half of the severity coupling: what makes every auth finding
+-- open with a word from 'liveViewSeverityWords'. Appended below the rubric by
+-- 'liveViewAuth' rather than written in the markdown, so the vocabulary
+-- renders from the shared binding.
+liveViewSeverityDemand :: Prompt
+liveViewSeverityDemand =
+  [__i|
+    Open every finding's first line with a severity word — #{liveViewSeverityVocabulary},
+    and that word exactly. A mutation any authenticated user can fire across
+    ownership lines is `critical`; a mutation gated by a stale assign is
+    `high`; a read-only leak or unverified navigation is `medium`. The stage
+    that ranks findings matches on that word, so a finding without one sinks
+    below noise it should outrank.
+  |]
 
 -- Stacked pull requests -------------------------------------------------------
 

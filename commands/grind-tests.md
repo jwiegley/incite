@@ -13,14 +13,12 @@ not spawn subagents to do any part of it.
 Run `pwd`. The working directory must be the **target project's checkout
 root** — the workflow reads the tree it is run in, and its facts prompt opens
 with a probe of `domain/` and `test/`. If either is missing every lens refuses
-with `FACTS PATHS UNRESOLVED`, and the synthesis refuses to rank the twelve
-refusals, naming the unresolved probe as the reason. The flow is static, so
-the later stages still run — each acting on that refusal rather than on
-findings — and the run fails at its gate, whose checks go red in the wrong
-checkout. The waste is bounded: a fixer handed a refusal has nothing to fix,
-and the repair loop is capped at three trips. The `pwd` check is the real
-guard. If you are not in the project root, say so and stop rather than
-guessing at a path.
+with `FACTS PATHS UNRESOLVED`, and the synthesis opens its answer with that
+same line instead of ranking the twelve refusals. A stop in the flow reads
+exactly that line and fails the run at the synthesis — the fixers, the review
+panel and the gate never act on a refusal. The twelve audit turns are still
+spent, so the `pwd` check is still the cheap guard. If you are not in the
+project root, say so and stop rather than guessing at a path.
 
 Nothing else needs passing. The project's runners, coverage and mutation
 tooling, generated-code layout and repair disciplines are all in
@@ -55,7 +53,8 @@ Five stages:
 2. **Synthesis** — ranks the findings and writes them to
    `docs/audits/grind-tests-<YYYY-MM-DD>.md`. It names every lens it heard
    from and refuses to rank anything if a block is missing, empty, or carries
-   the facts-probe refusal line.
+   the facts-probe refusal line — and on that refusal line the flow stops the
+   run before any fixer acts.
 3. **Remediation** — one orchestrated fixer, looping until its own summary
    stops asking to continue.
 4. **Review of the fix** — the full review-audit panel reads the fixer's
@@ -87,5 +86,5 @@ Then say plainly that the tree is dirty and uncommitted, and that `/commit` is
 the next step once they have read it. Do not commit anything yourself.
 
 If the run failed with `FACTS PATHS UNRESOLVED` in its output, the working
-directory was wrong — say that rather than reporting a red gate or an audit
-that found nothing.
+directory was wrong and the flow stopped the run at the synthesis — say that
+rather than reporting an audit that found nothing.

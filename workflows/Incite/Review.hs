@@ -32,6 +32,8 @@ module Incite.Review
   , forbiddenPairings
   , emissionLenses
   , spread
+  , spreadPinned
+  , factsRefusalLine
   , grindName
   , grindSynthesis
   , grindSynthesisOver
@@ -1095,16 +1097,40 @@ panelAcross bs lenses =
 -- full panel, so a spread block and a panel block are read the same way by
 -- 'unionFindings' and by 'reviewSynthesis'.
 spread :: NonEmpty (LeafName, Flow Text Text -> Flow Text Text) -> [(LeafName, Prompt)] -> Flow Text Text
-spread bs lenses =
+spread = spreadPinned []
+
+-- | 'spread' with the backend assignments that are POLICY written out as data:
+-- each @(lens, backend)@ pin overrides the positional pairing for that lens
+-- alone, leaving every other lens on its positional backend.
+--
+-- Position encodes backend, so without pins a lens whose model matters — the
+-- LiveView grind's @auth@, whose severity words the synthesis ranks on — is
+-- held to its backend by sitting at the right index, and a thematic reorder
+-- silently reassigns it. A pin states the policy where it can be read and
+-- fenced, and lets lens order vary independently of it.
+--
+-- A pin naming a backend the roster does not have falls back to the positional
+-- assignment rather than failing: the roster genuinely varies (@BLOCK_OPENCODE@
+-- drops one), and the ordered @lens\@backend@ tables in @test\/Spec.hs@ are the
+-- instrument that catches a pin gone quiet. 'admits' still has the last word —
+-- a pin cannot build a pairing the panel is forbidden to build.
+spreadPinned :: [(LeafName, LeafName)] -> NonEmpty (LeafName, Flow Text Text -> Flow Text Text) -> [(LeafName, Prompt)] -> Flow Text Text
+spreadPinned pins bs lenses =
   exploreFlows (zipWith assign lenses (NE.toList (NE.cycle bs))) unionFindings
   where
-    -- A backend that must not answer this lens ('admits') is rotated past
-    -- rather than dropped: every lens still gets a leaf, which is the whole
-    -- property of a spread, and only the model changes. Positional order is
-    -- preserved for every other lens.
-    assign l b
-      | admits (fst b) (snd l) = paired l b
-      | otherwise = paired l (fromMaybe b (find (\b' -> admits (fst b') (snd l)) (NE.toList bs)))
+    assign l positional = paired l (admitted (pinnedOr positional))
+      where
+        pinnedOr fallback =
+          fromMaybe fallback $ do
+            want <- lookup (fst l) pins
+            find ((== want) . fst) (NE.toList bs)
+        -- A backend that must not answer this lens ('admits') is rotated past
+        -- rather than dropped: every lens still gets a leaf, which is the whole
+        -- property of a spread, and only the model changes. Positional order is
+        -- preserved for every other lens.
+        admitted b
+          | admits (fst b) (snd l) = b
+          | otherwise = fromMaybe b (find (\b' -> admits (fst b') (snd l)) (NE.toList bs))
 
 -- | May this backend be handed this lens? Total, and 'False' in exactly one
 -- case: __the fess rubric never runs on codex__.
@@ -1152,6 +1178,15 @@ paired ::
   (LeafName, Flow Text Text -> Flow Text Text) ->
   (LeafName, Flow Text Text)
 paired (name, lens) (backendTag, scope) = reviewer scope (name <> "@" <> backendTag) lens
+
+-- | The line every grind facts file's probe answers outside its target
+-- checkout, the line the derived synthesis brief refuses on, and the line
+-- @Incite.Feature.decideFactsResolved@ stops the run on. One binding for every
+-- Haskell reader, so the brief's ear and the flow's stop cannot drift apart;
+-- the facts files carry the same bytes as markdown, and the fence in
+-- @test\/Spec.hs@ holds all of them to its own hand-written copy.
+factsRefusalLine :: Text
+factsRefusalLine = "FACTS PATHS UNRESOLVED"
 
 -- | The slug of the grind workflow, in one place. @workflowG@ names the tool
 -- with it and 'grindSynthesis' writes the report under it, so the file on disk
@@ -1205,13 +1240,15 @@ grindLiveViewName = "grind-live-view"
 -- contract, in the order their blocks are read — the same laws, order
 -- semantics and separation fence as 'grindTestsLenses'.
 --
--- __The @auth@ row sits seventh on purpose.__ Position is backend assignment
--- ('spread' pairs positionally), and the seventh slot lands on claude-agent
--- under BOTH rosters — the full three-backend cycle and the blocked
--- alternation. The auth lens is the one whose findings carry load-bearing
--- severity words the synthesis ranks on, so its slot is chosen rather than
--- inherited from the thematic order; the ordered @lens\@backend@ tables in
--- @test\/Spec.hs@ are what hold it there.
+-- __The @auth@ row's backend is policy, and the policy is a pin.__ The auth
+-- lens is the one whose findings carry load-bearing severity words the
+-- synthesis ranks on, so it must land on claude-agent whatever the thematic
+-- order does — 'Incite.Feature.grindLiveViewSpec' says so as data
+-- (@gsPins@, honoured by 'spreadPinned') rather than by this table holding
+-- position seven forever. Seventh also happens to BE the claude-agent slot
+-- under both rosters, so the pin changes nothing today; the ordered
+-- @lens\@backend@ tables in @test\/Spec.hs@ are what say the assignment out
+-- loud either way.
 grindLiveViewLenses :: [(LeafName, Prompt)]
 grindLiveViewLenses =
   [ ("css-hardening", reporting liveViewCssHardening)
@@ -1242,12 +1279,13 @@ grindLiveViewLenses =
 -- blocks it received, and stopping when one is missing, is what turns a
 -- backend outage into a failure instead of a clean bill of health.
 --
--- __The same refusal covers a wrong checkout.__ Every facts file opens with a
--- probe that answers @FACTS PATHS UNRESOLVED@ outside its target root, and a
--- static 'Flow' has no data-dependent skip — so the stop the probe asks for
--- has to happen here, where the whole panel is in hand. Ranking twelve copies
--- of that line would send the fixer, the review pass and the gate to work in
--- a checkout the audit never read.
+-- __The same refusal covers a wrong checkout, and here it is machine-read.__
+-- Every facts file opens with a probe that answers 'factsRefusalLine' outside
+-- its target root; this brief tells the synthesis to open its refusal with
+-- that exact line, and @Incite.Feature.grindFlow@ puts a stop behind the
+-- synthesis (@decideFactsResolved@ under a fuel-1 'loopUntil') that fails the
+-- run on it. Ranking twelve copies of that line would instead send the fixer,
+-- the review pass and the gate to work in a checkout the audit never read.
 --
 -- No separate TODO file. Upstream wrote one because its fixers ran in a later
 -- phase and needed a hand-off; here the fixer is the next stage of the same
@@ -1294,11 +1332,13 @@ grindSynthesisOver name lensNames =
     exactly like a tree with no debt in it. Refusing is the only way a reader
     can tell those apart.
 
-    Refuse the same way if any block carries the line `FACTS PATHS UNRESOLVED`:
+    Refuse the same way if any block carries the line `#{factsRefusalLine}`:
     the panel ran outside the target checkout, so its blocks describe no tree
-    at all. Name the blocks that carry it, say the run must start again from
-    the checkout root, and do not rank anything — a page of refusals ranked as
-    findings sends a fixer to repair a tree nobody read.
+    at all. Open your answer with the line `#{factsRefusalLine}`, alone on the
+    first line — the flow stops the run on exactly that line. Then name the
+    blocks that carry it and say the run must start again from the checkout
+    root. Do not rank anything — a page of refusals ranked as findings would
+    send a fixer to repair a tree nobody read.
   |]
 
 -- | The mid-run honesty auditor: one read-only leaf over a worker's session.

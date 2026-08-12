@@ -43,6 +43,9 @@ relative to the working directory you just probed.
 - Compile check: `mix compile --warnings-as-errors`. Tests: `mix test <path>`
   while you work, `mix test` for the whole suite. The suite runs in seconds,
   not minutes.
+- TypeScript tests: Vitest, run with `cd assets && npx vitest run <path>`
+  while you work, `cd assets && npx vitest run` for the whole suite. A hook
+  change is proved there, not by the Elixir compile.
 - Style: well-typed, purely functional — a pure core, immutable data, side
   effects at the edges. Match the surrounding code, and avoid a new module or
   file where an existing one fits.
