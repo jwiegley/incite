@@ -11,8 +11,8 @@ Two halves, one flake:
 - **Prompts** — built on [Flake Prompt](https://gitlab.com/fresheyeball/flake-prompt),
   which renders prompt definitions into the native on-disk formats for Claude
   Code, Codex, opencode, Crush, and Droid.
-- **Workflows** — built on `agent-functor`, a typed workflow library (local
-  checkout, no remote yet). Workflows are `Flow Text Text` values composed with
+- **Workflows** — built on [agent-functor](https://gitlab.com/fresheyeball/agent-functor),
+  a typed workflow library. Workflows are `Flow Text Text` values composed with
   `>>>`; the CLI (`list`/`plan`/`cost`/`run`) and a live TUI for `run` come for
   free.
 
