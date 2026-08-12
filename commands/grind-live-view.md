@@ -1,5 +1,5 @@
 Grind the LiveView layer: audit it with eleven lenses, fix every finding, and
-gate on a compile and a test suite that actually ran.
+gate on a compile and both test suites that actually ran.
 
 This command is a launcher. The workflow it starts is `grind-live-view`, an
 agent-functor tool — the audit, the ranking, the remediation and the gate all

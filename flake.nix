@@ -557,7 +557,7 @@
         {
           type = "command";
           name = "grind-live-view";
-          description = "Phoenix LiveView quality grinder — launches the grind-live-view workflow: eleven lenses over the LiveView layer, a ranked report with authorization findings first, remediation, and a real compile/test gate";
+          description = "Phoenix LiveView quality grinder — launches the grind-live-view workflow: eleven lenses over the LiveView layer, a ranked report with authorization findings first, remediation, and a real gate over the compile and both the Elixir and TypeScript suites";
           body = builtins.readFile ./commands/grind-live-view.md;
         }
 
@@ -571,7 +571,7 @@
         {
           type = "command";
           name = "grind-tests";
-          description = "Test suite grinder — launches the grind-tests workflow: twelve lenses over the whole suite, a ranked report, remediation, a full review-audit pass over the fix, and a real compile/test gate";
+          description = "Test suite grinder — launches the grind-tests workflow: twelve lenses over the whole suite, a ranked report, remediation, a full review-audit pass over the fix, and a real gate over the compile and both the Elixir and TypeScript suites";
           body = builtins.readFile ./commands/grind-tests.md;
         }
 
