@@ -897,14 +897,21 @@ shipFeatureRetroTests =
               ]
           , not (T.isInfixOf (T.unwords (T.words needle)) (T.unwords (T.words leafText)))
           ]
-    , -- The person's half, held where it lives: the leaf NAMES carry the steer
-      -- and gate texts, so the ask for an acceptance bar and for a named defect
-      -- are properties of the shipped flow rather than of documentation.
-      testCase "the steer asks for the acceptance bar and the gate for a named defect" $ do
+    , -- The person's half, held where it lives: the leaf NAME carries the steer
+      -- text, so the ask for an acceptance bar is a property of the shipped
+      -- flow rather than of documentation.
+      --
+      -- The gate at the far end asked a refusal to name the defect and no
+      -- longer does — a question written for an answer the operator has said
+      -- they will never give is a longer prompt for the same yes\/no.
+      -- 'accountTests' fences the steer over all three acting workflows; this
+      -- case is the ship-feature instance of it, kept beside the two structural
+      -- answers it was written with.
+      testCase "the steer asks for the acceptance bar" $ do
         let names = leafNames (wfFlow shipFeature)
         report
           [ "no leaf name carries " <> tshow needle
-          | needle <- ["acceptance bar", "name the defect"]
+          | needle <- ["acceptance bar"]
           , not (any (T.isInfixOf needle) names)
           ]
     ]

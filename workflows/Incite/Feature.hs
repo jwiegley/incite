@@ -247,7 +247,7 @@ shipFeature =
       >>> remediate codeRule closeWithChanges
       >>> greenGate codeRule codeChecks
       >>> retrospective
-      >>> humanGate "Open a pull request for these changes? A no ends the run — name the defect in your answer, so the next session starts from a finding rather than from a bare refusal."
+      >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- The panel's lenses are written for a diff, and the artifact here is the
