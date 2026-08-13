@@ -190,15 +190,20 @@ person, deliberately untracked.
 A unit test suite (`test/Spec.hs`, tasty + HUnit) covers the pure logic that was
 previously untestable because it was buried in `where` clauses:
 
-- `decideContinue` and `continueMarker` — the orchestrator loop's continuation
-  contract, stated from both sides: the decorations read through *and* the ones
-  that must not be.
+- `tripEnding`, the three markers, and `decideTrip` — the orchestrator loop's
+  continuation contract, stated from every side: the decorations read through
+  *and* the ones that must not be, each of the three declared endings, and the
+  re-prompt a summary that declares none of them buys.
+- `completionGate` — that `ship-feature` and `ship-docs` halt, rather than
+  review and gate, when their loop yields anything but a declared completion.
+  Driven end-to-end, because a pure stage is invisible to every other
+  instrument here.
 - `orient`, `preambleOf`, `preambleViolations` and the three named reframings
   (`asReviewSubject`, `asRetroSubject`, `asDocsSubject`) — their bytes recorded
   under `test/golden/`, with the golden table forced to cover the whole
   `Orientation` enumeration.
 - `document` — the documentation worker's brief, round-tripped through
-  `decideContinue`.
+  `tripEnding`.
 - `lensesOf` and `lensSetViolations` — review panel composition per `Subject`,
   lens names *and* lens bodies.
 - The reorientations (`docsAccuracy`, `ponytailOfDocs`, `architectureOfChange`)

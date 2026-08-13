@@ -878,10 +878,14 @@
             touch $out
           '';
 
-        # The unit test suite for the pure workflow logic: `decideContinue` and
-        # `continueMarker` (the orchestrator loop's continuation contract, from
-        # both sides — the decorations that are read through and the ones that
-        # are not), `orient` with `preambleOf`/`preambleViolations` and the three
+        # The unit test suite for the pure workflow logic: `tripEnding`, the
+        # three markers and `decideTrip` (the orchestrator loop's continuation
+        # contract, from every side — the decorations that are read through,
+        # the ones that are not, each declared ending, and the re-prompt a
+        # summary declaring none of them buys), `completionGate` (that
+        # `ship-feature` and `ship-docs` halt rather than review and gate work
+        # nobody declared finished), `orient` with
+        # `preambleOf`/`preambleViolations` and the three
         # named reframings (their bytes recorded under `test/golden/`),
         # `document`'s worker brief, `lensesOf` with `lensSetViolations` (review
         # panel composition per `Subject`, names AND bodies), the reorientation

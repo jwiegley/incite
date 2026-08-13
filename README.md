@@ -534,17 +534,24 @@ another, leaf by leaf. The terms the rest of this section uses:
   units, or as the commits it should have been) so a panel can review a
   different shape of it. The granularity axis, not a third lens.
 - **Orchestrator loop (`orchestrateWith`)** — one worker leaf (the only leaf
-  that edits files) is re-run on its own closing summary until it ends on
-  `WORK COMPLETE` rather than the `continueMarker`. No trip ceiling by default
-  (`workerFuel` is `Nothing`), and every capped call site *of this combinator*
-  names a constant: `stack-prs` runs its four loops under `stackFuel` (12) and
-  `ship-feature-lite` under `liteFuel` (3). A cap yields the last summary to
-  the next stage rather than aborting, so the edits already made are never
-  stranded — and because that summary is the one that asked for another trip,
-  it still ends on `WORK REMAINS`, in the transcript on that leaf; no later
-  stage relays it. The gate loops under `checkLoop` are a different combinator
-  with the opposite exhaustion policy:
+  that edits files) is re-run on its own closing summary until that summary
+  *declares* an ending: `WORK COMPLETE`, or `WORK BLOCKED` for a stage that
+  needs a person. `WORK REMAINS` asks for another trip, and a last line that
+  is none of the three ends nothing — it is fed back with a corrective nudge,
+  twice per run, then yields under a no-completion-declared notice. No trip
+  ceiling by default (`workerFuel` is `Nothing`), and every capped call site
+  *of this combinator* names a constant: `stack-prs` runs its four loops under
+  `stackFuel` (12) and `ship-feature-lite` under `liteFuel` (3). A cap yields
+  the last summary to the next stage rather than aborting, so the edits
+  already made are never stranded — and because that summary is the one that
+  asked for another trip, it still ends on `WORK REMAINS`, in the transcript
+  on that leaf; no later stage relays it. The gate loops under `checkLoop` are
+  a different combinator with the opposite exhaustion policy:
   [`docs/workflows.md`](docs/workflows.md#grinding-a-whole-tree).
+- **`completionGate`** — `ship-feature` and `ship-docs` halt immediately after
+  their loop unless it yielded a declared `WORK COMPLETE`. The human gate, the
+  review panel and the PR are what a completion claim pays for, and a run that
+  never made one does not get to spend them.
 - **Gate** — where a run blocks on a human: `steer` (before the work starts),
   `humanGate` (before the PR). An unattended run auto-answers them.
 - **`execGrant`** — the whitelist of commands a world-acting workflow may run

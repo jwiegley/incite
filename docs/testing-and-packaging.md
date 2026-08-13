@@ -32,7 +32,8 @@ its skeleton, but it does not show prompt body text.
 
 | Area | Failure caught |
 |---|---|
-| `decideContinue` / `continueMarker` | a worker brief and loop matcher drifting apart |
+| `tripEnding` / the three markers | a worker brief and loop matcher drifting apart |
+| `completionGate` | a run reviewing and gating work its worker never declared done |
 | `orient` / reframing goldens | panels reading a worker summary as if it were the artifact |
 | `document` | documentation worker losing the marker or editing-code prohibition |
 | `lensesOf` | a panel keeping the same names while carrying the wrong prompt bodies |

@@ -118,15 +118,42 @@ are still mediated by the backend's tool permission flow.
 - `docsPlanLenses`: the plan lenses `ship-docs` uses — `docs-strategy` then
   `simple-english` — because the code lenses have no useful purchase on a prose
   plan;
-- `orchestrate`: run a worker until its last non-empty line is not
-  `WORK REMAINS`; `workerFuel` is `Nothing` by default (no ceiling), or
+- `orchestrate`: run a worker until its last non-empty line **declares an
+  ending** — `WORK COMPLETE`, or `WORK BLOCKED` passed through verbatim for
+  the stage that reads blocks. `WORK REMAINS` asks for another trip. A last
+  line that is none of the three is a protocol violation: the summary is fed
+  back to the worker with a corrective nudge below it, at most
+  `violationBudget` (2) times per run, and then the loop yields under a
+  no-completion-declared notice. The polarity is inverted from what it was,
+  and the run that inverted it is worth stating: a worker paused to wait on a
+  concurrent review, closed its trip with "nothing more to do until the review
+  finishes", and the loop — which ended on any line that was not
+  `WORK REMAINS` — read waiting as completion on step 20 of a 27-step plan.
+  Nothing downstream reads the plan, so the run spent its whole review panel
+  and reached its pull-request gate over a tree whose daemon was a stub. Every
+  brief now carries the same rule from one binding: waiting is `WORK REMAINS`,
+  never completion and never silence;
+- `completionGate`: `ship-feature` and `ship-docs` halt the run, immediately
+  after their loop, unless what it yielded declares `WORK COMPLETE`. A block
+  or a spent violation budget stops the workflow there rather than buying a
+  review panel, a fixer and a human gate — the stages a completion claim pays
+  for. The halt names the ending and quotes the line it read, so a failed run
+  says which of the three it was. It is deliberately absent from
+  `ship-feature-lite` (whose exhaustion-yield to the panel is the tier's
+  designed trade), the grinds (report-producing, with `greenGate` guarding the
+  tree) and `stack-prs` (where a block is a designed ending its promote stage
+  reads);
+- `workerFuel` is `Nothing` by default (no ceiling), or
   `Just (Fuel n)` to cap at n trips after which the last summary yields to
   whatever comes next — under an explicit trip-budget-exhausted notice —
   rather than aborting the run. In `ship-feature-lite` that is the review
   panel. In `stack-prs` it depends on which of the four loops ran out, and the
   last one — promotion — has no next stage at all: an exhausted promotion loop
   yields to the end of the workflow, so a stack left half promoted ends the
-  run under that notice. `orchestrateWith` takes that ceiling as an argument
+  run under that notice. A violation re-prompt spends no trip fuel, so a
+  capped tier does not lose a real trip to a formatting slip; the underlying
+  `loopUntil` fuel is widened to `n + violationBudget` to cover them.
+  `orchestrateWith` takes that ceiling as an argument
   and is what `orchestrate` is defined by, so a capped loop cannot drift from
   the default one. Every call site of `orchestrateWith` names a constant
   rather than a literal (the gate loops under `checkLoop` are a different
@@ -195,7 +222,7 @@ file and compares it against `worstCaseCost . toSkeleton . wfFlow`.
 
 | Workflow | Worst-case leaves |
 |---|---:|
-| `ship-feature-lite` | 19 |
+| `ship-feature-lite` | 21 |
 
 ## Stacking a change
 
@@ -287,7 +314,7 @@ stated and the suite checks whichever one is live where it runs.
 
 | Workflow | Worst-case leaves | Worst case, opencode blocked |
 |---|---:|---:|
-| `stack-prs` | 139 | 131 |
+| `stack-prs` | 151 | 143 |
 
 ## Grinding a whole tree
 
@@ -378,7 +405,9 @@ What distinguishes the paradox grind:
 `repairFuel` (currently 3) bounds the gate. `cost` multiplies through both
 loops rather than flattening them, so with the default unbounded fixer loop
 the reported worst case is very large; set `workerFuel = Just (Fuel n)` for a
-finite ceiling (at `Just (Fuel 8)`, the worst case is 32 leaf executions).
+finite ceiling (at `Just (Fuel 8)`, the worst case is 34 leaf executions — the
+ceiling plus the two corrective re-prompts `violationBudget` allows, since a
+worker that never declares an ending is re-prompted rather than believed).
 
 Nothing is committed. The product of a run is a dirty tree and a dated report,
 for a person to read. That is why the command drives it with `sandbox=false`:
@@ -391,10 +420,13 @@ compiler build inside an `Exec` leaf, and again for the test binaries, on every
 run. In place, those checks reuse the checkout's existing artifacts and finish
 in the time an incremental build takes.
 
-The continuation contract is intentionally narrow. `decideContinue` looks only
+The continuation contract is intentionally narrow. `tripEnding` looks only
 at the last non-empty line, after stripping the small decoration alphabet tested
 in `test/Spec.hs`. A summary that says "no work remains" in prose must not keep
-the loop alive.
+the loop alive — and must not end it either: it declares no ending, so it is
+re-prompted as a protocol violation. Narrow reading with a safe default is the
+whole of it: what the classifier cannot read as a declared ending costs a
+corrective trip, never a silent completion.
 
 ## What the 2026-08-12 retrospective changed
 
@@ -407,9 +439,9 @@ its closing summary. One change per mechanism finding:
   only after the session outgrew the tool. `auditedImplement` now runs
   `fessOfTrip` at every trip boundary: the worker's own claims against the
   tree, findings prepended to the summary the next trip reads. The merge puts
-  the audit *above* the summary because `decideContinue` reads the last line —
-  the flipped merge ends every loop on trip one, and `test/Spec.hs` holds the
-  round trip.
+  the audit *above* the summary because `tripEnding` reads the last line —
+  the flipped merge buries every worker's status line and spends the whole
+  violation budget on every trip, and `test/Spec.hs` holds the round trip.
 - *"verification, if it ran, was never written into the tree"* — the closing
   greens (369/0, hlint clean) existed only in the fixer's summary. The
   `greenGate` before the human gate makes the ✓ lines the person reads the

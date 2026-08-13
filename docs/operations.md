@@ -225,6 +225,20 @@ Codex and Claude rendered trees differ:
   worker runs until it reports `WORK COMPLETE`. Set `workerFuel = Just (Fuel n)`
   to cap at n trips, after which the last summary yields to the next stage —
   under an explicit trip-budget-exhausted notice — rather than aborting;
+- a summary whose last line is none of `WORK REMAINS`, `WORK COMPLETE` or
+  `WORK BLOCKED` does **not** end the loop. It is fed back to the worker with
+  a corrective nudge, twice per run, and then the loop yields under a
+  `## no completion declared` heading. Waiting messages are the case this
+  exists for: a worker that stops to wait on a review or a background watcher
+  is waiting on something that will never call it back, and before this the
+  loop read that as completion;
+- in `ship-feature` and `ship-docs`, `completionGate` then **halts the run**
+  unless the yield declares `WORK COMPLETE`. Expect a failed run whose reason
+  reads `completionGate: the work loop ended without declaring completion`,
+  naming the ending and quoting the line it read. That is the intended
+  outcome — the alternative is a review panel, a fixer and a pull-request gate
+  spent on work nobody said was finished. The fix is in the worker's brief or
+  the task, not in the gate;
 - three workflows cap an orchestrator loop: `stack-prs` runs its four loops
   under `stackFuel` (`Just (Fuel 12)`), `ship-feature-lite` runs its one under
   `liteFuel` (`Just (Fuel 3)`), and `grind-tests` runs its review-pass fixer

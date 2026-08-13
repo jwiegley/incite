@@ -80,8 +80,9 @@ binary cannot. Test the Nix path when you are checking deploy behavior.
 
 The most important design pattern is "name the contract once". Examples:
 
-- `continueMarker` is spliced into worker briefs and matched by
-  `decideContinue`.
+- `continueMarker`, `completeMarker` and `blockedMarker` are spliced into
+  worker briefs and matched by `tripEnding`; `waitingRule` is spliced into
+  every one of those briefs and into the loop's own corrective nudge.
 - `reviewHeavyFlow`, `reviewDocsFlow`, and `retroFlow` are plain `Flow` values
   so standalone workflows and acting workflows use the same panel.
 - `docsRule` and `codeRule` make the remediation rule explicit instead of

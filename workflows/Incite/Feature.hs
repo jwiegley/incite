@@ -39,8 +39,15 @@ module Incite.Feature
   , docsPlanLenses
   , grindParadox
   , continueMarker
-  , decideContinue
+  , completeMarker
+  , TripEnding (..)
+  , tripEnding
+  , TripBudget (..)
   , decideTrip
+  , violationBudget
+  , violationNudge
+  , protocolNotice
+  , waitingRule
   , exhaustionNotice
   , isRed
   , decideRed
@@ -61,6 +68,7 @@ module Incite.Feature
   , fixerContinuation
   , orchestrate
   , orchestrateWith
+  , completionGate
   , auditedImplement
   , tripFess
   , workerFuel
@@ -242,6 +250,7 @@ shipFeature =
       >>> editPlan
       >>> steer "Review the plan — state the acceptance bar the pull-request gate will hold, then add any guidance before implementation begins"
       >>> orchestrate auditedImplement
+      >>> completionGate
       >>> reviewChange
       >>> remediate codeRule closeWithChanges
       >>> greenGate codeRule codeChecks
@@ -282,7 +291,7 @@ shipFeature =
 -- __Top-level because it has two callers__ — 'shipFeature' and
 -- 'shipFeatureLite' — and because a brief nothing outside its own @where@ block
 -- can read is a brief no test can hold to the house rules. @test\/Spec.hs@
--- checks its marker contract against 'decideContinue' exactly as it does
+-- checks its marker contract against 'tripEnding' exactly as it does
 -- 'document'\'s.
 implement :: Flow Text Text
 implement = withBackend claudeAgent defaultModel implementLeaf
@@ -328,8 +337,10 @@ implementLeaf =
 
           - `#{continueMarker}` — the plan is not finished. You will be
             called again.
-          - `WORK COMPLETE` — every step is done, the build is green, and
+          - `#{completeMarker}` — every step is done, the build is green, and
             the closing counts are in the tree. Say what changed.
+
+          #{waitingRule}
         |]
     )
     id
@@ -340,12 +351,12 @@ implementLeaf =
 --
 -- __The merge puts the audit ABOVE the summary, and that placement is
 -- load-bearing.__ 'orchestrate' decides another trip by reading the LAST
--- non-empty line of whatever a trip yields ('decideContinue'), so an audit
--- appended below the summary would bury the worker's status line and end every
--- loop on trip one. Above it, the marker stays terminal and the findings are
--- the first thing the next trip reads. @test\/Spec.hs@ holds the round trip —
--- audited output through 'decideContinue' — because both arguments are 'Text'
--- and a flipped merge is not a type error.
+-- non-empty line of whatever a trip yields ('tripEnding'), so an audit
+-- appended below the summary would bury the worker's status line and spend
+-- 'violationBudget' on every trip. Above it, the marker stays terminal and
+-- the findings are the first thing the next trip reads. @test\/Spec.hs@ holds
+-- the round trip — audited output through 'tripEnding' — because both
+-- arguments are 'Text' and a flipped merge is not a type error.
 --
 -- __'shipFeature' only, not 'shipFeatureLite'.__ The lite tier already runs the
 -- fess lens on every commit through its per-commit panel, is capped at
@@ -438,6 +449,7 @@ shipDocs =
       >>> lensEdit [(name, brief body) | (name, body) <- docsPlanLenses]
       >>> steer "Review the plan — add any guidance before writing begins"
       >>> orchestrate document
+      >>> completionGate
       -- The docs lenses read an artifact; what reaches them is the worker's
       -- closing account. 'asDocsSubject' points them at the files instead.
       >>> dimap' asDocsSubject id reviewDocsFlow
@@ -585,8 +597,10 @@ document =
 
           - `#{continueMarker}` — the plan is not finished. You will be called
             again.
-          - `WORK COMPLETE` — every part of the plan is written or answered.
+          - `#{completeMarker}` — every part of the plan is written or answered.
             Say which documents you wrote.
+
+          #{waitingRule}
         |]
     )
     id
@@ -599,17 +613,50 @@ document =
 continueMarker :: Text
 continueMarker = "WORK REMAINS"
 
--- | The pure marker predicate: 'Right' ends the loop, 'Left' keeps it going.
--- Continue only on the explicit marker — see 'decideTrip' for the budget that
--- backs it.
+-- | The marker a worker ends on to declare the loop's job finished. Bound for
+-- 'continueMarker'\'s reason — and it was a bare literal in every brief until
+-- the polarity inverted. While any unrecognised last line ended the loop, a
+-- drifted spelling still ended it; now that such a line is a violation, a
+-- brief spelling its own completion phrase would spend 'violationBudget' on
+-- every trip and yield every run under 'protocolNotice'.
+completeMarker :: Text
+completeMarker = "WORK COMPLETE"
+
+-- | How one trip ended, read off the summary's last non-empty line. A closed
+-- sum rather than the @Either@ this module used to decide on, because the
+-- Either's \"not the continue marker\" branch conflated three endings —
+-- finished, blocked, and confused — and the conflation shipped: a worker on
+-- step 20 of a 27-step plan closed a trip with \"nothing more to do until the
+-- review finishes; the background waiter … will re-invoke me\", the loop read
+-- it as completion, and the run spent the 21-reviewer panel and presented the
+-- PR gate over a tree whose daemon was a stub (run-1786481462687).
+data TripEnding
+  = -- | 'continueMarker': another trip.
+    EndContinue
+  | -- | 'completeMarker': the loop's job is done.
+    EndComplete
+  | -- | 'blockedMarker': a person is needed. The text passes through the loop
+    -- verbatim, because the stage that reads blocks reads the worker's bytes.
+    EndBlocked
+  | -- | None of the three. A protocol violation — re-prompted under
+    -- 'violationNudge' while 'violationBudget' lasts, never silently read as
+    -- any of the others.
+    EndViolation
+  deriving (Bounded, Enum, Eq, Show)
+
+-- | The pure classifier 'decideTrip' and 'completionGate' share.
 --
 -- The match is the briefs' own contract — the marker alone on the last line —
 -- not an infix scan of the whole summary: prose like "no work remains"
--- contains the marker and would otherwise ask for another trip every time.
-decideContinue :: Text -> Either Text Text
-decideContinue out
-  | lastNonEmptyLine out == T.toLower continueMarker = Left out
-  | otherwise = Right out
+-- contains a marker and would otherwise ask for another trip every time.
+tripEnding :: Text -> TripEnding
+tripEnding out
+  | ending == T.toLower continueMarker = EndContinue
+  | ending == T.toLower completeMarker = EndComplete
+  | ending == T.toLower blockedMarker = EndBlocked
+  | otherwise = EndViolation
+  where
+    ending = lastNonEmptyLine out
 
 lastNonEmptyLine :: Text -> Text
 lastNonEmptyLine =
@@ -623,15 +670,50 @@ lastOrDefault :: a -> [a] -> a
 lastOrDefault d [] = d
 lastOrDefault _ xs = last xs
 
+-- | The two budgets 'orchestrateWith' threads beside the summary: trips, and
+-- violation re-prompts. A record rather than a pair — both halves involve a
+-- 'Fuel', and a swap would type-check.
+data TripBudget = TripBudget
+  { tbFuel :: Maybe Fuel
+  -- ^ Trips left. 'Nothing' is no ceiling: the worker decides.
+  , tbViolations :: Fuel
+  -- ^ Re-prompts left for summaries that end on no marker. Total for the
+  -- run and never reset by a valid trip: a worker that keeps dropping its
+  -- status line is not recovering, it is not following the protocol.
+  }
+  deriving (Eq, Show)
+
+-- | How many times a loop corrects a worker whose summary ends on no marker
+-- before it yields under 'protocolNotice'. Two: one nudge fixes a worker
+-- that forgot the contract — the run this guards against closed on a waiting
+-- message one nudge restating 'waitingRule' would have corrected — and the
+-- second covers a retry that mangles the status line while acting on the
+-- first. A third violation wants a person, and every re-prompt here costs a
+-- full worker trip.
+violationBudget :: Fuel
+violationBudget = Fuel 2
+
 -- | The trip-budgeted continuation decision 'orchestrate' loops on. 'Left'
 -- hands the worker's summary back as the next trip's input; 'Right' ends the
 -- loop and yields the summary to the stage after it.
 --
--- 'Nothing' is no ceiling: the loop continues as long as 'decideContinue'\'s
--- marker is present and ends the moment it is not — the worker decides trip
--- count. @'Just' ('Fuel' n)@ caps it: once n trips are spent the last summary
--- yields rather than asking for a trip the budget does not have, so a large
--- job still reaches review instead of aborting with its edits stranded.
+-- __The loop ends only on a summary that DECLARES an ending__ —
+-- 'completeMarker', or 'blockedMarker' passed through verbatim for the stage
+-- that reads blocks. 'continueMarker' asks for a trip the budget may or may
+-- not have: 'tbFuel' 'Nothing' is no ceiling — the worker decides trip count
+-- — and @'Just' ('Fuel' n)@ caps it, yielding the last summary under
+-- 'exhaustionNotice' rather than asking for a trip the budget does not have,
+-- so a large job still reaches review instead of aborting with its edits
+-- stranded.
+--
+-- __A summary that ends on NO marker is a violation, never a completion.__
+-- It is fed back with 'violationNudge' appended — the correction is the last
+-- thing the next trip reads — while 'tbViolations' lasts, and then yields
+-- under 'protocolNotice'. The old decision read any unrecognised last line
+-- as \"done\", which is how a worker that stopped to WAIT on a concurrent
+-- review ended its run's loop on step 20 of 27. A violation spends no
+-- 'tbFuel': the trip bought no work the plan asked for, and a capped tier
+-- should not lose a real trip to a formatting slip.
 --
 -- __Exhaustion yields loudly, never silently.__ A summary that still asked to
 -- continue when the budget ran out is a claim of UNRESOLVED work, and the
@@ -645,14 +727,20 @@ lastOrDefault _ xs = last xs
 -- fuel (mirrored by 'orchestrateWith'), and the upstream newtype saying so in
 -- the type is what keeps a trip count from being confused with any other
 -- integer a workflow threads.
-decideTrip :: Maybe Fuel -> Text -> Either (Maybe Fuel, Text) Text
-decideTrip fuel out = case decideContinue out of
-  Left _ -> case fuel of
-    Nothing -> Left (Nothing, out)
+decideTrip :: TripBudget -> Text -> Either (TripBudget, Text) Text
+decideTrip budget out = case tripEnding out of
+  EndComplete -> Right out
+  EndBlocked -> Right out
+  EndContinue -> case tbFuel budget of
+    Nothing -> Left (budget, out)
     Just (Fuel n)
-      | n > 1 -> Left (Just (Fuel (n - 1)), out)
+      | n > 1 -> Left (budget {tbFuel = Just (Fuel (n - 1))}, out)
       | otherwise -> Right (out <> "\n\n" <> exhaustionNotice)
-  Right _ -> Right out
+  EndViolation
+    | v > 0 -> Left (budget {tbViolations = Fuel (v - 1)}, out <> "\n\n" <> violationNudge)
+    | otherwise -> Right (out <> "\n\n" <> protocolNotice)
+  where
+    Fuel v = tbViolations budget
 
 -- | What 'decideTrip' appends when it yields on a spent budget while the
 -- worker's summary still asked to continue. Under a @##@ heading of its own,
@@ -667,6 +755,60 @@ exhaustionNotice =
   \done — read it as open findings that want a person, however the checks\n\
   \below came out."
 
+-- | What 'decideTrip' appends to the summary it feeds BACK on a violation:
+-- the next trip opens on the worker's own summary and ends on this
+-- correction. Splices all three markers for the drift reason every brief has,
+-- and carries 'waitingRule' because a waiting message is the violation that
+-- shipped. Its own last line must classify as 'EndViolation' — the loop reads
+-- the echo of this text through 'tripEnding' if the worker quotes it — and
+-- @test\/Spec.hs@ pins that for all three notices.
+violationNudge :: Text
+violationNudge =
+  [__i|
+    \#\# status line missing
+
+    Your previous summary did not end with a status line. The orchestrator
+    reads ONLY your last non-empty line, and it re-invoked you because that
+    line was none of the markers it knows:
+
+    - `#{continueMarker}` — the work is not finished; you will be called again.
+    - `#{blockedMarker}` — you cannot continue without a person; say why.
+    - `#{completeMarker}` — the work is done; say what changed.
+
+    #{promptText waitingRule}
+
+    Re-read your summary above, finish or account for what it left open, and
+    end with the status line that is true.
+  |]
+
+-- | What 'decideTrip' appends when it yields on a spent 'violationBudget':
+-- the worker never declared an ending 'tripEnding' knows. Under a @##@
+-- heading of its own, 'exhaustionNotice'\'s shape, so it survives every
+-- downstream stage that keeps the account — and 'completionGate' halts on it,
+-- because a run whose worker never said the work was done must not reach the
+-- stages a completion claim pays for.
+protocolNotice :: Text
+protocolNotice =
+  "## no completion declared\n\
+  \The worker's summary above ended on no status line the orchestrator\n\
+  \recognises, and the correction budget is spent. The worker never declared\n\
+  \the work complete: treat everything above as unfinished work that wants a\n\
+  \person, however any checks below came out."
+
+-- | The rule every continuation clause and 'violationNudge' carry, bound once
+-- so the briefs cannot drift in it: __waiting is not an ending.__ The run
+-- 'TripEnding' exists for closed a trip with \"nothing more to do until the
+-- review finishes; the background waiter and the quiet-watcher will re-invoke
+-- me\" — and nothing did, because nothing else ever does.
+waitingRule :: Prompt
+waitingRule =
+  [__i|
+    If you are waiting on anything — a review, another agent, CI, a background
+    waiter or watcher — nothing but this orchestrator will ever re-invoke you,
+    and it reads only your status line: waiting is `#{continueMarker}`, never
+    completion and never silence.
+  |]
+
 -- | Is this check log a __failing__ one? True exactly when some line, ANSI
 -- stripped and whitespace stripped, opens with the marker
 -- @Agent.Flow.Combinators.execStep@ writes for a non-zero exit.
@@ -680,7 +822,7 @@ exhaustionNotice =
 -- __Line starts, not an infix scan.__ The gate's own report says what a @✗@
 -- line means, and a synthesis leaf quotes check output; an @isInfixOf@ here
 -- would read prose about a failure as a failure and spin the loop until the
--- fuel aborts the run. Same reasoning as 'decideContinue', same failure.
+-- fuel aborts the run. Same reasoning as 'tripEnding', same failure.
 --
 -- It is a monoid homomorphism from log concatenation into @Any@ —
 -- @isRed mempty = False@ and @isRed (a <> b) = isRed a || isRed b@ at a line
@@ -700,9 +842,9 @@ stripAnsi t = case T.breakOn "\ESC[" t of
   (before, "") -> before
   (before, rest) -> before <> stripAnsi (T.drop 1 (T.dropWhile (/= 'm') rest))
 
--- | 'Left' keeps the repair loop going, 'Right' ends it — the mirror of
--- 'decideContinue', and the opposite polarity for the opposite reason. A worker
--- asks to continue; a tree is asked whether it still fails.
+-- | 'Left' keeps the repair loop going, 'Right' ends it — in 'tripEnding'\'s
+-- family, and the opposite polarity for the opposite reason. A worker
+-- declares its ending; a tree is asked whether it still fails.
 decideRed :: Text -> Either Text Text
 decideRed t = if isRed t then Left t else Right t
 
@@ -719,9 +861,10 @@ actingGrant :: Grant
 actingGrant = execGrant ["nix*"]
 
 -- | The ceiling on how many times a worker may hand itself back its own summary.
--- 'Nothing' — the default — is no ceiling: the worker runs until it reports
--- WORK COMPLETE. @'Just' ('Fuel' n)@ caps it at n trips, after which the last
--- summary yields to the next stage rather than aborting.
+-- 'Nothing' — the default — is no ceiling: the worker runs until it declares
+-- 'completeMarker' or 'blockedMarker', or spends 'violationBudget'.
+-- @'Just' ('Fuel' n)@ caps it at n trips, after which the last summary yields
+-- to the next stage rather than aborting.
 workerFuel :: Maybe Fuel
 workerFuel = Nothing
 
@@ -742,7 +885,7 @@ workerFuel = Nothing
 -- made and the panel sees them. What separates exhaustion from convergence is
 -- the yielded text itself: exhaustion yields the summary that asked for another
 -- trip, so its last line is 'continueMarker', where a converged run ends on
--- @WORK COMPLETE@. That text reaches the panel's input and the run transcript,
+-- 'completeMarker'. That text reaches the panel's input and the run transcript,
 -- because those are where the worker's own bytes go. It reaches nothing else:
 -- every stage after the loop writes fresh text, so the run's FINAL ARTIFACT is
 -- 'remediate'\'s closing paragraph and carries neither marker. An operator
@@ -904,7 +1047,9 @@ paradoxRule = grindRule (gsFacts grindParadoxSpec)
 
 -- | Run @worker@ under the orchestrator every acting workflow uses: each trip
 -- is one worker turn taking the previous trip's own summary as its input, and
--- the loop ends the moment that summary does not ask to continue.
+-- the loop ends when that summary DECLARES an ending — 'completeMarker' or
+-- 'blockedMarker'. A summary that ends on no marker is re-prompted under
+-- 'violationNudge' ('decideTrip' says why, and what bounds it).
 --
 -- __'loopUntil', not a fixed unroll.__ Trip count is runtime and the worker
 -- decides it. 'workerFuel' is the ceiling ('Nothing' = no ceiling), not the
@@ -918,12 +1063,21 @@ paradoxRule = grindRule (gsFacts grindParadoxSpec)
 -- never runs in 'grindParadox'. So when 'workerFuel' is @'Just' n@ the loop
 -- threads a trip budget ('decideTrip') that yields the last summary at trip n,
 -- and whatever stage follows reads what landed. When 'workerFuel' is 'Nothing'
--- there is no budget — the loop runs until the worker reports WORK COMPLETE.
+-- there is no trip budget — the loop runs until the worker declares an ending
+-- or spends 'violationBudget'.
 --
--- The 'loopUntil' fuel mirrors 'workerFuel': @'maxBound' \`div\` 2@ when
--- 'Nothing' — practically infinite, the sentinel the unbounded-loop fence in
--- @test\/Spec.hs@ counts, and a value @Agent.Cost.worstCaseCost@ sums exactly
--- (its arithmetic is 'Integer') — and n when @'Just' ('Fuel' n)@.
+-- The 'loopUntil' fuel mirrors 'workerFuel', widened by the violation budget
+-- where finite: @'maxBound' \`div\` 2@ when 'Nothing' — practically infinite,
+-- the BARE sentinel the unbounded-loop fence in @test\/Spec.hs@ matches by
+-- equality, and a value @Agent.Cost.worstCaseCost@ sums exactly (its
+-- arithmetic is 'Integer'); no widening, because a violation yield fires
+-- astronomically short of it — and @n + 'violationBudget'@ when
+-- @'Just' ('Fuel' n)@: the most 'Left's 'decideTrip' can answer is @n - 1@
+-- continues plus every violation re-prompt, so the yielding evaluation is at
+-- latest number @n + violationBudget@ and 'loopUntil'\'s own abort is
+-- unreachable. An unwidened mirror aborts mid-yield with the opaque
+-- @interpret: loopUntil fuel exhausted@, and @test\/Spec.hs@ holds the
+-- boundary case.
 --
 -- @second''@ carries the budget alongside the summary so the worker itself only
 -- ever sees its own text — the briefs' \"your own summary as input\" contract
@@ -950,10 +1104,43 @@ orchestrate = orchestrateWith workerFuel
 -- deciding to spend.
 orchestrateWith :: Maybe Fuel -> Flow Text Text -> Flow Text Text
 orchestrateWith fuel worker =
-  dimap' (\summary -> (fuel, summary)) id
-    ( loopUntil (maybe (maxBound `div` 2) fuelMax fuel)
+  dimap' (\summary -> (TripBudget fuel violationBudget, summary)) id
+    ( loopUntil (maybe (maxBound `div` 2) ((+ fuelMax violationBudget) . fuelMax) fuel)
         ( second'' worker >>> dimap' id (uncurry decideTrip) Id )
     )
+
+-- | Halt the run unless the loop's yield DECLARES completion — the stage
+-- between 'orchestrate' and everything a completion claim pays for.
+--
+-- __'shipFeature' and 'shipDocs' only.__ Both loops are unbounded, so what
+-- they yield ends on 'completeMarker', on 'blockedMarker', or under
+-- 'protocolNotice' — and the last two must not buy a review panel and a PR
+-- gate. Run run-1786481462687 reached its gate on step 20 of a 27-step plan
+-- because a waiting close was read as completion, and the green tree under it
+-- (stubs compile) had nothing to say about the seven steps never started.
+-- Deliberately absent from 'shipFeatureLite' — exhaustion-yield to review is
+-- that tier's designed trade — the grinds, whose artifact is a report with
+-- 'greenGate' guarding the tree, and 'stackPRs', where a block is a designed
+-- ending its promote stage reads.
+--
+-- The halt is 'humanGate'\'s own idiom — a pure 'error', surfacing as a
+-- halted run whose failure text names the ending and quotes the folded last
+-- line — and the stage is a pure @dimap'@ over 'Id': no leaf, no cost, no
+-- skeleton node, which is why only the end-to-end tests in @test\/Spec.hs@
+-- can fence its placement.
+completionGate :: Flow Text Text
+completionGate = dimap' id decide Id
+  where
+    decide out = case tripEnding out of
+      EndComplete -> out
+      ending ->
+        error
+          ( "completionGate: the work loop ended without declaring completion — halting ("
+              <> show ending
+              <> "; the summary's last line, decoration-folded, was \""
+              <> T.unpack (lastNonEmptyLine out)
+              <> "\")"
+          )
 
 -- | __What a stage is pointed at__ when the artifact reaching it is a worker's
 -- closing summary rather than the thing under review.
@@ -1208,7 +1395,7 @@ closeWithChanges =
 --
 -- __Splices 'continueMarker' rather than spelling it__, for the reason
 -- 'document' does: the brief tells the fixer how to ask for another trip and
--- 'decideContinue' decides whether it asked, and the two agree only because
+-- 'tripEnding' decides whether it asked, and the two agree only because
 -- both go through that binding. Spelled out here, a rename would strand the
 -- loop for its whole fuel with nothing in any output naming the cause.
 fixerContinuation :: Prompt
@@ -1221,7 +1408,9 @@ fixerContinuation =
     End with a status line, alone on the last line:
 
     - `#{continueMarker}` — findings are still open. You will be called again.
-    - `WORK COMPLETE` — every finding is fixed or answered; say what changed.
+    - `#{completeMarker}` — every finding is fixed or answered; say what changed.
+
+    #{waitingRule}
   |]
 
 -- | Audit a whole source tree with fourteen lenses, rank what they found, fix
@@ -1370,11 +1559,11 @@ grindFlow GrindSpec {..} =
 -- 'grindFlow', in 'decideRed'\'s family.
 --
 -- The match is a line opening with 'Incite.Review.factsRefusalLine' after the
--- decoration strip 'decideContinue' uses — the brief demands the bare line
+-- decoration strip 'tripEnding' uses — the brief demands the bare line
 -- first, and the facts probes emit it with a colon and an explanation behind
 -- it, so a synthesis quoting a probe block verbatim still reads as the
 -- refusal it is. Line-anchored rather than an infix scan, for
--- 'decideContinue'\'s reason: prose that mentions the refusal mid-sentence
+-- 'tripEnding'\'s reason: prose that mentions the refusal mid-sentence
 -- must not stop a run that read the tree.
 decideFactsResolved :: Text -> Either Text Text
 decideFactsResolved out
@@ -2026,7 +2215,7 @@ stackWorker name body closing =
 --
 -- __Splices 'continueMarker' rather than spelling it__, for the reason
 -- 'document' and 'fixerContinuation' do: the brief tells a worker how to ask for
--- another trip and 'decideContinue' decides whether it asked, and the two agree
+-- another trip and 'tripEnding' decides whether it asked, and the two agree
 -- only because both go through that binding.
 --
 -- __And it names the blocked ending explicitly.__ The other continuation clauses
@@ -2052,27 +2241,30 @@ stackContinuation =
     - `#{blockedMarker}` — you cannot continue without a person: a design
       disagreement, an approved branch you must not rewrite, a runner pool no
       branch edit can fix. Write the block under `\#\# for a person` first.
-    - `WORK COMPLETE` — this stage is finished, and nothing is waiting on
+    - `#{completeMarker}` — this stage is finished, and nothing is waiting on
       anybody.
 
     Never report a block as completion. A later stage reads this line and a
-    block reported as `WORK COMPLETE` is how a run spends CI on work a person
-    was supposed to decide first.
+    block reported as `#{completeMarker}` is how a run spends CI on work a
+    person was supposed to decide first.
+
+    #{waitingRule}
   |]
 
 -- | The marker a worker ends on when it cannot continue without a person.
 --
--- __A third ending, because two were not enough.__ 'decideContinue' asks one
--- question — another trip, or not — and a stacking run can stop for a reason
--- that is neither. A worker with nowhere to put "an approved branch I must not
--- rewrite" either reports a completion it does not have, and the promotion
--- stage then spends CI on it, or spins its fuel until the loop aborts.
+-- __A third ending, because two were not enough.__ A stacking run can stop
+-- for a reason that is neither more work nor completion. A worker with
+-- nowhere to put "an approved branch I must not rewrite" either reports a
+-- completion it does not have, and the promotion stage then spends CI on it,
+-- or spins its fuel until the loop aborts.
 --
--- __Terminal to the loop, and visible to the stage after it.__ Anything that is
--- not 'continueMarker' already ends the loop, so this changes no control flow;
--- what it adds is a token the promotion brief can refuse on and a person can
--- grep for. The distinction was prose before, and prose is not something the
--- next stage can read.
+-- __Terminal to the loop, and visible to the stage after it.__ 'tripEnding'
+-- recognises it as one of the two endings that stop a loop — an unrecognised
+-- last line is a violation that re-prompts, so a blocked line spelled any
+-- other way would burn 'violationBudget' instead of stopping, which is why
+-- the marker must be spliced. What the token adds over prose is something the
+-- promotion brief can refuse on and a person can grep for.
 blockedMarker :: Text
 blockedMarker = "WORK BLOCKED"
 

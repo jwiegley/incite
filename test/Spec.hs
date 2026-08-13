@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Data.Foldable (toList)
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (find, isInfixOf, isSuffixOf, nub, sort, (\\))
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -60,8 +60,16 @@ import Incite.Feature
   , codeChecks
   , codeRule
   , continueMarker
-  , decideContinue
+  , completeMarker
+  , TripEnding (..)
+  , tripEnding
+  , TripBudget (..)
   , decideTrip
+  , violationBudget
+  , violationNudge
+  , protocolNotice
+  , waitingRule
+  , completionGate
   , decideRed
   , decideFactsResolved
   , exhaustionNotice
@@ -214,6 +222,7 @@ tests =
     , codexFessTests
     , grindPanelTests
     , stackTests
+    , completionGateTests
     , liteTests
     , reorientationTests
     , promptLintTests
@@ -233,96 +242,108 @@ tests =
 decideContinueTests :: TestTree
 decideContinueTests =
   testGroup
-    "decideContinue"
+    "tripEnding"
     [ testGroup
-        "continues (Left)"
+        "continues (EndContinue)"
         [ testCase "bare marker on last line" $
-            decideContinue "summary\nWORK REMAINS"
-              @?= Left "summary\nWORK REMAINS"
+            tripEnding "summary\nWORK REMAINS" @?= EndContinue
         , testCase "marker with backtick decoration" $
-            decideContinue "summary\n`WORK REMAINS`"
-              @?= Left "summary\n`WORK REMAINS`"
+            tripEnding "summary\n`WORK REMAINS`" @?= EndContinue
         , testCase "marker with asterisk decoration" $
-            decideContinue "summary\n**WORK REMAINS**"
-              @?= Left "summary\n**WORK REMAINS**"
+            tripEnding "summary\n**WORK REMAINS**" @?= EndContinue
         , testCase "marker with trailing period" $
-            decideContinue "summary\nWORK REMAINS."
-              @?= Left "summary\nWORK REMAINS."
+            tripEnding "summary\nWORK REMAINS." @?= EndContinue
         , testCase "lowercase marker" $
-            decideContinue "summary\nwork remains"
-              @?= Left "summary\nwork remains"
+            tripEnding "summary\nwork remains" @?= EndContinue
         , testCase "marker alone" $
-            decideContinue "WORK REMAINS" @?= Left "WORK REMAINS"
+            tripEnding "WORK REMAINS" @?= EndContinue
         , testCase "trailing empty lines after marker" $
-            decideContinue "summary\n\n\nWORK REMAINS\n\n"
-              @?= Left "summary\n\n\nWORK REMAINS\n\n"
+            tripEnding "summary\n\n\nWORK REMAINS\n\n" @?= EndContinue
         , testCase "marker with trailing whitespace" $
-            decideContinue "summary\nWORK REMAINS   "
-              @?= Left "summary\nWORK REMAINS   "
+            tripEnding "summary\nWORK REMAINS   " @?= EndContinue
         , testCase "marker with underscore decoration" $
-            decideContinue "summary\n_WORK REMAINS_"
-              @?= Left "summary\n_WORK REMAINS_"
+            tripEnding "summary\n_WORK REMAINS_" @?= EndContinue
         ]
     , testGroup
-        "stops (Right)"
-        [ testCase "different marker (WORK COMPLETE)" $
-            decideContinue "summary\nWORK COMPLETE"
-              @?= Right "summary\nWORK COMPLETE"
-        , testCase "marker in prose, not last line" $
-            decideContinue "no work remains" @?= Right "no work remains"
+        "declares an ending (EndComplete / EndBlocked)"
+        [ testCase "completion marker" $
+            tripEnding "summary\nWORK COMPLETE" @?= EndComplete
+        , testCase "completion marker decorated" $
+            tripEnding "summary\n`WORK COMPLETE`" @?= EndComplete
+        , testCase "lowercase completion marker" $
+            tripEnding "summary\nwork complete" @?= EndComplete
+        , testCase "blocked marker" $
+            tripEnding "work\nWORK BLOCKED" @?= EndBlocked
+        , testCase "blocked marker decorated" $
+            tripEnding "work\n`WORK BLOCKED`" @?= EndBlocked
+        ]
+    , -- The violation rows are what run-1786481462687 makes load-bearing. Each
+      -- of these used to END the loop as if it were completion — a waiting
+      -- close on step 20 of a 27-step plan reached the PR gate that way. Now
+      -- every one buys a corrective re-prompt ('decideTrip' bounds them),
+      -- never a silent ending.
+      testGroup
+        "declares nothing (EndViolation)"
+        [ testCase "marker in prose, not last line" $
+            tripEnding "no work remains" @?= EndViolation
         , testCase "empty input" $
-            decideContinue "" @?= Right ""
+            tripEnding "" @?= EndViolation
         , testCase "whitespace only" $
-            decideContinue "   \n  \n  " @?= Right "   \n  \n  "
+            tripEnding "   \n  \n  " @?= EndViolation
         , testCase "marker as substring of last line" $
-            decideContinue "work remains is done"
-              @?= Right "work remains is done"
+            tripEnding "work remains is done" @?= EndViolation
         , testCase "multi-line summary without marker" $
-            decideContinue "line one\nline two\nline three"
-              @?= Right "line one\nline two\nline three"
+            tripEnding "line one\nline two\nline three" @?= EndViolation
         , testCase "marker on non-last line" $
-            decideContinue "WORK REMAINS\nactually done"
-              @?= Right "WORK REMAINS\nactually done"
+            tripEnding "WORK REMAINS\nactually done" @?= EndViolation
+        , testCase "a waiting close is not an ending" $
+            tripEnding "nothing more to do until the review finishes"
+              @?= EndViolation
         ]
     , -- The decoration alphabet, stated from BOTH sides. Every case above is
       -- positive: each says one character is stripped, and together they leave
       -- the set open at the top. Widen the strip to @isPunctuation@ and all of
       -- them stay green while "WORK REMAINS?" starts spinning the loop — the
-      -- runaway 'decideContinue' exists to prevent.
+      -- runaway 'tripEnding' exists to prevent.
       --
       -- So the negative rows are the load-bearing half. They are the characters
       -- a model plausibly emits around a status line and which must NOT be
-      -- read through.
+      -- read through. Under the inverted polarity an undecodable decoration
+      -- costs one re-prompt instead of silently ending the loop as finished —
+      -- the strictly safer misreading.
       testGroup
         "decoration alphabet"
         [ testGroup
             "stripped"
             [ testCase [c] $
-                decideContinue (T.pack (c : "WORK REMAINS" <> [c]))
-                  @?= Left (T.pack (c : "WORK REMAINS" <> [c]))
+                tripEnding (T.pack (c : "WORK REMAINS" <> [c]))
+                  @?= EndContinue
             | c <- "`*_ ."
             ]
         , testGroup
             "not stripped"
             [ testCase [c] $
-                decideContinue (T.pack (c : "WORK REMAINS" <> [c]))
-                  @?= Right (T.pack (c : "WORK REMAINS" <> [c]))
+                tripEnding (T.pack (c : "WORK REMAINS" <> [c]))
+                  @?= EndViolation
             | c <- "?!:;,)]}>\"'#~-+="
             ]
         ]
     ]
 
--- | The budget 'orchestrate' threads through 'decideTrip', stated from both
--- sides: the trips that keep the loop alive, and the ones that end it.
+-- | The budgets 'orchestrate' threads through 'decideTrip', stated from all
+-- sides: the trips that keep the loop alive, the endings that stop it, and
+-- the violations that re-prompt.
 --
--- 'Nothing' is the default — no ceiling — so the load-bearing cases are the
--- 'Just' ones: a worker still reporting 'WORK REMAINS' when the budget is
--- spent. Before the budget existed that was the trip 'loopUntil' aborted on,
+-- 'Nothing' is the default trip ceiling — none — so the load-bearing 'Just'
+-- cases are a worker still reporting 'WORK REMAINS' when the budget is
+-- spent: before the budget existed that was the trip 'loopUntil' aborted on,
 -- stranding every edit the worker had made; now it is the account the review
--- panel reads. The marker is still present and 'decideContinue' still reads
--- it — what changed is that the budget overrides it, so the loop yields
--- rather than asking for a trip it does not have, and 'exhaustionNotice'
--- rides on the yielded summary so the artifact says the budget cut the loop.
+-- panel reads, under 'exhaustionNotice' so the artifact says the budget cut
+-- the loop. The violation cases are this suite's answer to
+-- run-1786481462687: a summary that declares NO ending is re-prompted under
+-- 'violationNudge' while 'violationBudget' lasts and then yields under
+-- 'protocolNotice' — the old decision read it as completion, which is how a
+-- waiting worker's run reached the PR gate on step 20 of 27.
 decideTripTests :: TestTree
 decideTripTests =
   testGroup
@@ -330,14 +351,65 @@ decideTripTests =
     [ testGroup
         "continues (Left)"
         [ testCase "Nothing — no ceiling, marker present" $
-            decideTrip Nothing "summary\nWORK REMAINS"
-              @?= Left (Nothing, "summary\nWORK REMAINS")
+            decideTrip (budgetOf Nothing) "summary\nWORK REMAINS"
+              @?= Left (budgetOf Nothing, "summary\nWORK REMAINS")
         , testCase "Just n with budget to spare" $
-            decideTrip (Just (Fuel 3)) "summary\nWORK REMAINS"
-              @?= Left (Just (Fuel 2), "summary\nWORK REMAINS")
+            decideTrip (budgetOf (Just (Fuel 3))) "summary\nWORK REMAINS"
+              @?= Left (budgetOf (Just (Fuel 2)), "summary\nWORK REMAINS")
         , testCase "Just n decorated marker, budget to spare" $
-            decideTrip (Just (Fuel 2)) "summary\n`WORK REMAINS`"
-              @?= Left (Just (Fuel 1), "summary\n`WORK REMAINS`")
+            decideTrip (budgetOf (Just (Fuel 2))) "summary\n`WORK REMAINS`"
+              @?= Left (budgetOf (Just (Fuel 1)), "summary\n`WORK REMAINS`")
+        ]
+    , testGroup
+        "re-prompts a violation (Left, under the nudge)"
+        [ -- The inversion itself: a summary that declares no ending buys a
+          -- corrective trip, with the worker's own text kept above the nudge
+          -- so the correction is the last thing the next trip reads. The trip
+          -- fuel is UNTOUCHED — the violated trip bought no work the plan
+          -- asked for, and a capped tier should not lose a real trip to a
+          -- formatting slip.
+          testCase "no marker — fed back under the nudge, trip fuel untouched" $
+            decideTrip (TripBudget (Just (Fuel 3)) (Fuel 2)) "no work remains"
+              @?= Left
+                ( TripBudget (Just (Fuel 3)) (Fuel 1)
+                , "no work remains\n\n" <> violationNudge
+                )
+        , testCase "no marker, no ceiling — same re-prompt" $
+            decideTrip (TripBudget Nothing (Fuel 1)) "waiting on the review"
+              @?= Left
+                ( TripBudget Nothing (Fuel 0)
+                , "waiting on the review\n\n" <> violationNudge
+                )
+        , testCase "the spent budget yields under the protocol notice" $ do
+            decideTrip (TripBudget Nothing (Fuel 0)) "no work remains"
+              @?= Right ("no work remains\n\n" <> protocolNotice)
+            assertBool
+              "the notice does not open with its own ## heading"
+              ("## no completion declared" `T.isPrefixOf` protocolNotice)
+            assertBool
+              "the notice does not call the summary unfinished"
+              ("unfinished work" `T.isInfixOf` protocolNotice)
+        , testCase "the nudge names all three markers and the waiting rule" $ do
+            -- The heading first, and it is the escaped @\\#\\#@ in the
+            -- quasi-quote: a @#@ that lost its escape is an interpolation
+            -- hole, and one that kept a backslash is a literal @\\#\\#@ in a
+            -- worker's prompt. Neither is visible from a marker assertion.
+            assertBool
+              "the nudge does not open with its own ## heading"
+              ("## status line missing" `T.isPrefixOf` violationNudge)
+            assertBool "continue marker" (continueMarker `T.isInfixOf` violationNudge)
+            assertBool "blocked marker" (blockedMarker `T.isInfixOf` violationNudge)
+            assertBool "complete marker" (completeMarker `T.isInfixOf` violationNudge)
+            assertBool
+              "the waiting rule"
+              (promptText waitingRule `T.isInfixOf` violationNudge)
+        , -- No notice may itself end on a status line: the loop re-reads a
+          -- worker's echo of the nudge through 'tripEnding', and
+          -- 'completionGate' reads yielded notices the same way — a notice
+          -- ending on a marker would launder the state it reports.
+          testCase "no notice ends on a line that reads as a marker" $
+            [tripEnding n | n <- [violationNudge, protocolNotice, exhaustionNotice]]
+              @?= [EndViolation, EndViolation, EndViolation]
         ]
     , testGroup
         "yields (Right)"
@@ -348,7 +420,7 @@ decideTripTests =
           -- exported binding and a hand-written needle, so a notice gutted to
           -- @\"\"@ cannot pass by both sides moving together.
           testCase "Just 1 — marker with the budget spent yields under the notice" $ do
-            decideTrip (Just (Fuel 1)) "summary\nWORK REMAINS"
+            decideTrip (budgetOf (Just (Fuel 1))) "summary\nWORK REMAINS"
               @?= Right ("summary\nWORK REMAINS\n\n" <> exhaustionNotice)
             assertBool
               "the notice does not open with its own ## heading"
@@ -356,27 +428,34 @@ decideTripTests =
             assertBool
               "the notice does not call the remainder unresolved"
               ("unresolved work" `T.isInfixOf` exhaustionNotice)
-        , -- Nothing never yields on the marker — it ends only on WORK COMPLETE.
+        , -- Nothing never yields on the marker — it ends only on a declared
+          -- ending or a spent violation budget.
           testCase "Nothing — WORK COMPLETE" $
-            decideTrip Nothing "summary\nWORK COMPLETE"
+            decideTrip (budgetOf Nothing) "summary\nWORK COMPLETE"
               @?= Right "summary\nWORK COMPLETE"
         , -- A worker that finished, whatever the budget: no notice, because
-          -- nothing was cut. Same as 'decideContinue'.
+          -- nothing was cut. Same as 'tripEnding'.
           testCase "Just n — WORK COMPLETE with budget to spare" $
-            decideTrip (Just (Fuel 3)) "summary\nWORK COMPLETE"
+            decideTrip (budgetOf (Just (Fuel 3))) "summary\nWORK COMPLETE"
               @?= Right "summary\nWORK COMPLETE"
-        , -- A confused worker (no marker) ends on trip one regardless of budget.
-          testCase "Nothing — no marker" $
-            decideTrip Nothing "no work remains"
-              @?= Right "no work remains"
+        , -- A block ends the loop VERBATIM whatever either budget holds: the
+          -- stack promote brief reads the worker's own bytes, and a notice
+          -- here would sit between it and the block it must refuse on.
+          testCase "blocked — ends the loop verbatim, no notice" $
+            decideTrip (TripBudget (Just (Fuel 1)) (Fuel 0)) "work\nWORK BLOCKED"
+              @?= Right "work\nWORK BLOCKED"
         , -- And spending the LAST trip on a finished worker is not exhaustion:
           -- the budget ran out exactly when the work did, and a notice here
           -- would cry wolf over every job that fit its ceiling.
           testCase "Just 1 — WORK COMPLETE on the last trip carries no notice" $
-            decideTrip (Just (Fuel 1)) "summary\nWORK COMPLETE"
+            decideTrip (budgetOf (Just (Fuel 1))) "summary\nWORK COMPLETE"
               @?= Right "summary\nWORK COMPLETE"
         ]
     ]
+  where
+    -- A fresh budget as 'orchestrateWith' seeds it: the given trip ceiling,
+    -- the full violation allowance.
+    budgetOf fuel = TripBudget fuel violationBudget
 
 -- | The failure marker @Agent.Flow.Combinators.execStep@ emits, recorded from
 -- __its source__ rather than from a rendered log.
@@ -470,9 +549,19 @@ isRedTests =
 continueMarkerTests :: TestTree
 continueMarkerTests =
   testGroup
-    "continueMarker"
-    [ testCase "is WORK REMAINS" $
+    "markers"
+    [ testCase "continueMarker is WORK REMAINS" $
         continueMarker @?= "WORK REMAINS"
+    , testCase "completeMarker is WORK COMPLETE" $
+        completeMarker @?= "WORK COMPLETE"
+    , testCase "blockedMarker is WORK BLOCKED" $
+        blockedMarker @?= "WORK BLOCKED"
+    , -- Pairwise distinct AS 'tripEnding' READS THEM — after case folding —
+      -- not merely as spelled: two markers that collide after the fold would
+      -- make one of the endings unreachable, and no spelling test sees that.
+      testCase "the three markers are distinct after folding" $
+        length (nub [T.toLower continueMarker, T.toLower completeMarker, T.toLower blockedMarker])
+          @?= 3
     ]
 
 -- | The stand-in summary the reframing goldens are recorded against. Nothing
@@ -585,10 +674,13 @@ reframingTests =
 --
 -- __A brief that names the wrong marker strands its loop, and nothing shows
 -- it.__ The brief tells the worker how to ask for another trip and
--- 'decideContinue' decides whether it asked; the two agree only because both go
+-- 'tripEnding' decides whether it asked; the two agree only because both go
 -- through 'continueMarker'. Spell it in a brief instead and the run burns every
 -- trip of its fuel and then aborts, with no output anywhere naming the cause.
--- @plan@ cannot see it — it renders leaf names — so this is the check.
+-- @plan@ cannot see it — it renders leaf names — so this is the check. The
+-- completion marker carries the same contract with the opposite stake since
+-- the polarity inverted: a drifted @WORK COMPLETE@ spelling is a violation on
+-- every trip, and the run yields under 'protocolNotice' instead of ending.
 --
 -- __Both workers, not one.__ 'document' was the only one that could be read
 -- here while @implement@ was bound inside 'Incite.Feature.shipFeature'\'s
@@ -604,23 +696,44 @@ documentTests =
           [ testCase "is one leaf" $ do
               sent <- flowLeafPrompts name worker "THE PLAN"
               length sent @?= 1
-          , -- Round trip through the decider, not a substring check on the marker.
-            -- The brief shows the marker decorated — @`WORK REMAINS`@ — and what
-            -- has to hold is that the decorated form the worker copies is one
-            -- 'decideContinue' reads as "call me again". It fails if the brief
+          , -- Round trip through the classifier, not a substring check on the
+            -- marker. The brief shows the marker decorated — @`WORK REMAINS`@ —
+            -- and what has to hold is that the decorated form the worker copies
+            -- is one 'tripEnding' reads as "call me again". It fails if the brief
             -- wraps the marker in something outside the decoration alphabet, or if
             -- the marker itself grows a character that alphabet does not strip.
             --
             -- The bullet's trailing prose is deliberately not fed in: the brief
             -- says the status line stands alone, so the contract is about the
             -- token.
-            testCase "the marker as the brief decorates it is one decideContinue accepts" $ do
+            testCase "the marker as the brief decorates it is one tripEnding accepts" $ do
               leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
               let decorated = "`" <> continueMarker <> "`"
               assertBool
                 "the brief does not show the marker in the decoration this asserts"
                 (T.isInfixOf decorated leafText)
-              decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+              tripEnding ("work\n" <> decorated) @?= EndContinue
+          , -- The same round trip on the completion side, which the old
+            -- polarity never needed: while any unrecognised last line ended
+            -- the loop, a drifted @WORK COMPLETE@ still ended it. Now it is a
+            -- violation on every trip, so the decorated form each brief shows
+            -- must be one 'tripEnding' reads as done.
+            testCase "the completion marker as the brief decorates it is one tripEnding accepts" $ do
+              leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+              let decorated = "`" <> completeMarker <> "`"
+              assertBool
+                "the brief does not show the completion marker in the decoration this asserts"
+                (T.isInfixOf decorated leafText)
+              tripEnding ("work\n" <> decorated) @?= EndComplete
+          , -- 'waitingRule', spliced not respelled: the violation that shipped
+            -- was a worker ending a trip on "waiting for the review", and the
+            -- rule against it must reach every brief from the one binding the
+            -- nudge also splices. 'proseNormal' so rewrapping is not a failure.
+            testCase "carries the waiting rule" $ do
+              leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+              assertBool
+                "the brief does not carry the waiting rule"
+                (T.isInfixOf (proseNormal (promptText waitingRule)) (proseNormal leafText))
           , -- The input is the plan, not the findings: a worker sits after @steer@
             -- and inside the loop. Findings are 'Incite.Feature.remediate'\'s
             -- input, downstream of the panel.
@@ -684,15 +797,31 @@ documentTests =
            -- another trip; a marker the decider does not read strands that loop
            -- for its whole fuel with nothing in any output naming the cause.
            --
-           -- Round trip through 'decideContinue' rather than a substring check,
+           -- Round trip through 'tripEnding' rather than a substring check,
            -- for 'documentTests'\'s reason: what has to hold is that the
-           -- DECORATED form the brief shows is one the decider accepts.
-           testCase "fixerContinuation shows a marker decideContinue accepts" $ do
+           -- DECORATED form the brief shows is one the classifier accepts.
+           testCase "fixerContinuation shows a marker tripEnding accepts" $ do
             let decorated = "`" <> continueMarker <> "`"
             assertBool
               "the fixer clause does not show the marker in the decoration this asserts"
               (says fixerContinuation decorated)
-            decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+            tripEnding ("work\n" <> decorated) @?= EndContinue
+         , -- The completion side of the same clause, decorated as shown.
+           testCase "fixerContinuation shows a completion marker tripEnding accepts" $ do
+            let decorated = "`" <> completeMarker <> "`"
+            assertBool
+              "the fixer clause does not show the completion marker in the decoration this asserts"
+              (says fixerContinuation decorated)
+            tripEnding ("work\n" <> decorated) @?= EndComplete
+         , -- The fixer loops under 'orchestrate' too, so the waiting rule
+           -- reaches it from the same binding the worker briefs splice.
+           testCase "fixerContinuation carries the waiting rule" $
+            assertBool
+              "the fixer clause does not carry the waiting rule"
+              ( T.isInfixOf
+                  (proseNormal (promptText waitingRule))
+                  (proseNormal (promptText fixerContinuation))
+              )
          , -- The other half of the contract: the terminal line, and what it must
            -- claim. A fixer that says WORK COMPLETE without saying what it closed
            -- leaves the gate as the only evidence anything happened.
@@ -846,7 +975,7 @@ shipFeatureRetroTests =
               "THE PLAN"
         assertBool "the audit is not above the summary" $
           T.isInfixOf ("## trip audit\n\nAUDIT REPORT" :: Text) out
-        decideContinue out @?= Left out
+        tripEnding out @?= EndContinue
     , -- The gate our harness runs sits between remediation and the human gate,
       -- read off the shipped flow. A gate below the human gate verifies a
       -- decision already taken; no leaf name, count or cost distinguishes the
@@ -1811,18 +1940,32 @@ grindPanelTests =
                 , gsSynthesisSuffix = suffix
                 , gsPins = []
                 }
-            -- Total: name each of the four prompts the flow must send (one per
-            -- lens, the synthesis, the fixer) or fail with the count, rather
+            -- Total: name each prompt the flow must send (one per lens, the
+            -- synthesis, then the fixer trips) or fail with the count, rather
             -- than reaching for @!!@\/@head@\/@last@ — the bare-partial idiom
             -- 'onlyFlowLeafPrompt' exists to retire, which had crept back here.
+            --
+            -- __The fixer runs more than once, and that is the re-prompt path
+            -- through a real loop.__ 'leafAnswer' is @\<\<LEAF\>\>@, which
+            -- declares no ending, so the orchestrated fixer spends its whole
+            -- 'violationBudget' being corrected before yielding under
+            -- 'protocolNotice'. The trailing trips are this suite's only
+            -- interpreted proof that the budget bounds the re-prompts at all;
+            -- the arithmetic is derived from the constant, not written as 6.
+            fixerTrips = 1 + fuelMax violationBudget
             shaped label sent = case sent of
-              [firstLens, _, synthesis, fixer] -> pure (firstLens, synthesis, fixer)
+              (firstLens : _ : synthesis : fixer : rest)
+                | length rest == fixerTrips - 1 -> pure (firstLens, synthesis, fixer)
               _ ->
                 assertFailure
                   ( label
                       <> ": grindFlow sent "
                       <> show (length sent)
-                      <> " prompts, expected 4 (two lenses, synthesis, fixer)"
+                      <> " prompts, expected "
+                      <> show (3 + fixerTrips)
+                      <> " (two lenses, synthesis, "
+                      <> show fixerTrips
+                      <> " fixer trips)"
                   )
         (bareFirst, bareSynthesis, bareFixer) <-
           shaped "bare" =<< flowLeafPrompts "grind-synthetic" (grindFlow (specWith mempty)) "STEER"
@@ -2594,10 +2737,13 @@ stackTests =
     , -- The third ending, and the reason it is a token rather than prose: the
       -- stage after a blocked worker reads its last line, and a block reported
       -- as completion is how a run spends CI on work a person owed a decision
-      -- on. 'decideContinue' must end the loop on it (it is not the continue
-      -- marker), and the promotion brief must refuse on it.
+      -- on. 'tripEnding' must recognise it AS a block — an unrecognised last
+      -- line is a violation that re-prompts now, so a blocked line the
+      -- classifier missed would burn the violation budget instead of stopping
+      -- — and the promotion brief must refuse on it.
       testCase "the blocked ending is terminal, distinct, and refused downstream" $ do
-        decideContinue ("work\n" <> blockedMarker) @?= Right ("work\n" <> blockedMarker)
+        tripEnding ("work\n" <> blockedMarker) @?= EndBlocked
+        tripEnding ("work\n`" <> blockedMarker <> "`") @?= EndBlocked
         assertBool "the blocked marker is the continue marker" (blockedMarker /= continueMarker)
         assertBool
           "the continuation clause does not name the blocked marker"
@@ -2665,18 +2811,18 @@ stackTests =
               ]
           , not (says stackRule needle)
           ]
-    , -- Round trip through the decider rather than a substring check, for
+    , -- Round trip through the classifier rather than a substring check, for
       -- 'documentTests'\'s reason: the clause shows the marker decorated, and
       -- what has to hold is that the decorated form a worker copies is one
-      -- 'decideContinue' reads as "call me again". A clause that spelled the
+      -- 'tripEnding' reads as "call me again". A clause that spelled the
       -- marker itself would strand every loop in this workflow for its whole
       -- fuel, with nothing in any output naming the cause.
-      testCase "the continuation clause decorates a marker decideContinue accepts" $ do
+      testCase "the continuation clause decorates a marker tripEnding accepts" $ do
         let decorated = "`" <> continueMarker <> "`"
         assertBool
           "the clause does not show the marker in the decoration this asserts"
           (says stackContinuation decorated)
-        decideContinue ("work\n" <> decorated) @?= Left ("work\n" <> decorated)
+        tripEnding ("work\n" <> decorated) @?= EndContinue
     , -- The third ending is the reason this clause is not 'fixerContinuation'.
       -- A stacking run can be blocked by something no branch edit reaches — a
       -- design disagreement, an approved branch, a starved runner pool — and a
@@ -2728,6 +2874,135 @@ stackTests =
           , not (T.isInfixOf n body)
           ]
     ]
+
+-- | The stage that answers the user's own reading of run-1786481462687: __the
+-- human gate happens when work is complete, and the work was very not
+-- complete.__
+--
+-- 'Incite.Feature.completionGate' is a pure @dimap'@ over 'Id' — no leaf, no
+-- cost, no skeleton node — so nothing that reads names, counts or plans can
+-- see it, and these are the only cases that can. Two halves:
+--
+-- * the decision, over every ending the loop can yield;
+-- * the placement, end-to-end through the shipped workflows, asserting what a
+--   non-completion costs: the worker trips it was given and NOTHING after them
+--   — no review panel, no gate, no PR.
+completionGateTests :: TestTree
+completionGateTests =
+  testGroup
+    "completionGate"
+    [ testCase "a declared completion passes through unchanged" $ do
+        let done = "did the work\n" <> completeMarker
+        flowOutput "gate" completionGate done >>= (@?= done)
+        let decorated = "did the work\n`" <> completeMarker <> "`"
+        flowOutput "gate" completionGate decorated >>= (@?= decorated)
+    , -- Every other ending halts, and the halt names the ending and quotes the
+      -- line it read — an operator reading a failed run learns which of the
+      -- three it was, not merely that something stopped. 'evaluate' because
+      -- the @error@ is pure and lazy: an unforced thunk would let this pass
+      -- with the gate deleted.
+      testCase "every other ending halts the run, naming what it read" $
+        mapM_
+          ( \(label, text, ending) -> do
+              outcome <- try (flowOutput "gate" completionGate text >>= evaluate . T.length)
+              case outcome of
+                Right _ ->
+                  assertFailure
+                    (label <> " passed the completion gate instead of halting the run")
+                Left (ErrorCall msg) -> do
+                  assertBool
+                    (label <> " halted, but not at the completion gate: " <> msg)
+                    ("completionGate" `isInfixOf` msg)
+                  assertBool
+                    (label <> " halted without naming the ending: " <> msg)
+                    (show ending `isInfixOf` msg)
+          )
+          [ ("a blocked close", "work\n" <> blockedMarker, EndBlocked)
+          ,
+            ( "a summary under the protocol notice"
+            , "no status\n\n" <> protocolNotice
+            , EndViolation
+            )
+          ,
+            ( "the waiting close that shipped"
+            , "nothing more to do until the review finishes"
+            , EndViolation
+            )
+          ,
+            ( "a summary still asking for a trip"
+            , "work\n" <> continueMarker
+            , EndContinue
+            )
+          ]
+    , -- __The placement, and what it saves — stated as the difference between
+      -- two runs of the same workflow.__ Every leaf answers by name, so the
+      -- worker's close is the one answer that differs: a waiting sentence in
+      -- one run, 'completeMarker' in the other. The waiting run must halt at
+      -- the gate having paid for the worker's trips and their audits and
+      -- NOTHING else, and every leaf the completed run went on to reach is
+      -- exactly what run-1786481462687 spent on a plan seven steps from done
+      -- — a 21-reviewer panel, a fixer, a retrospective and a PR gate.
+      --
+      -- The saved set is DERIVED from the completed run rather than typed
+      -- here: a renamed reviewer, a new lens or a reordered tail all stay
+      -- inside the fence, and no spelling in "Incite.Review" is transcribed
+      -- into this file. The trip count comes from 'violationBudget' — the loop
+      -- corrects the worker its whole allowance before yielding, and only the
+      -- yield reaches the gate.
+      testGroup
+        "placement"
+        [ testCase (T.unpack (wfName wf) <> ": a waiting close halts the run, and costs only its trips") $ do
+          let answerWith close n = if n == workerLeaf then close else "<<" <> n <> ">>"
+          -- The completed run first: it names what a non-completion must not
+          -- reach, and it must itself reach something, or the case is vacuous.
+          completedSeen <- newIORef []
+          _ <-
+            try @ErrorCall
+              ( runByLeafRecording
+                  wf
+                  (answerWith ("did the work\n" <> completeMarker))
+                  "THE REQUEST"
+                  completedSeen
+              )
+          completed <- readIORef completedSeen
+          -- Everything the completed run sent AFTER its last loop leaf — the
+          -- exploration and planning stages ahead of the loop are paid by both
+          -- runs and are not what the gate saves.
+          let loopLeaves = workerLeaf : workerCompanions
+              saved =
+                nub (reverse (takeWhile (`notElem` loopLeaves) (reverse completed)))
+          assertBool
+            "the completed run reached no stage after the loop, so this case proves nothing"
+            (not (null saved))
+
+          waitingSeen <- newIORef []
+          outcome <-
+            try (runByLeafRecording wf (answerWith waitingClose) "THE REQUEST" waitingSeen)
+          waiting <- readIORef waitingSeen
+          case outcome of
+            Right _ ->
+              assertFailure
+                (T.unpack (wfName wf) <> " ran to completion on a worker that never declared it")
+            Left (ErrorCall msg) ->
+              assertBool ("halted, but not at the completion gate: " <> msg) $
+                "completionGate" `isInfixOf` msg
+          length (filter (== workerLeaf) waiting) @?= 1 + fuelMax violationBudget
+          report
+            [ "a stage after the loop ran on a summary that declared nothing: " <> n
+            | n <- nub waiting
+            , n `elem` saved
+            ]
+        | (wf, workerLeaf, workerCompanions) <-
+            [ (shipFeature, "implement", ["trip-fess"])
+            , (shipDocs, "document", [])
+            ]
+        ]
+    ]
+  where
+    -- The close that shipped: a worker reporting that it is waiting on a
+    -- review, in a run where nothing but the orchestrator will ever call it
+    -- again. Under the old polarity this text ENDED the loop.
+    waitingClose = "nothing more to do until the review finishes"
 
 -- | Fences the tier that trades coverage for price, on what that trade buys and
 -- on what it must not cost.
@@ -2798,10 +3073,74 @@ liteTests =
         assertBool ("liteFuel is " <> show cap <> ", which leaves no trip short of the cap") (stopAt >= 1)
         converged <- flowOutput "lite" (orchestrateWith liteFuel (tripWorker doneThen)) "THE PLAN"
         converged @?= tripSummary stopAt "WORK COMPLETE"
-        decideContinue converged @?= Right converged
+        tripEnding converged @?= EndComplete
         assertBool
           "a converged run carries the exhaustion notice"
           (not (exhaustionNotice `T.isInfixOf` converged))
+    , -- __The re-prompt path, driven through the real interpreter.__ A worker
+      -- whose first trip ends on a waiting sentence — the exact close that
+      -- reached run-1786481462687's PR gate — is corrected, not believed: the
+      -- loop feeds its summary back under 'Incite.Feature.violationNudge',
+      -- and the next trip that declares completion converges normally. The
+      -- nudge is asserted IN THE WORKER'S INPUT, because that is the whole
+      -- mechanism: a correction the worker never reads is a log line, not a
+      -- protocol.
+      testCase "a waiting close is re-prompted under the nudge, then converges" $ do
+        -- Not 'tripWorker': the worker here answers off its own INPUT, which
+        -- is exactly the observable — it declares completion only on reading
+        -- the nudge, so the converged output below is possible only if the
+        -- correction reached it.
+        let answer prev
+              | violationNudge `T.isInfixOf` prev = "saw the nudge\n" <> completeMarker
+              | otherwise = "waiting on the review"
+        out <-
+          flowOutput
+            "lite"
+            (orchestrateWith liteFuel (dimap' id answer Id))
+            "THE PLAN"
+        out @?= "saw the nudge\n" <> completeMarker
+        tripEnding out @?= EndComplete
+        assertBool
+          "the nudge leaked into the converged summary"
+          (not (violationNudge `T.isInfixOf` out))
+    , -- __The mirror arithmetic, at its boundary.__ 'orchestrateWith' widens
+      -- 'loopUntil'\'s fuel to @n + violationBudget@; a worker that violates
+      -- on every trip under @'Just' ('Fuel' 1)@ spends the whole widening —
+      -- violation, violation, yield — and an unwidened mirror aborts the run
+      -- here with @interpret: loopUntil fuel exhausted@ instead of yielding
+      -- under the notice.
+      testCase "a worker that never declares an ending yields under the protocol notice" $ do
+        out <-
+          flowOutput
+            "lite"
+            (orchestrateWith (Just (Fuel 1)) (tripWorker (const "no status")))
+            "THE PLAN"
+        let trips = 1 + fuelMax violationBudget
+        out @?= tripSummary trips "no status" <> "\n\n" <> protocolNotice
+        tripEnding out @?= EndViolation
+    , -- __The violation budget never resets.__ A valid marker between two
+      -- violations does not refill the allowance: with @'Just' ('Fuel' 3)@ and
+      -- a worker answering violation, marker, violation, violation, the run
+      -- yields on the fourth trip under the protocol notice — trip fuel spent
+      -- 1 of 3, violations 3 of 2 would be required to continue.
+      testCase "the violation budget spans the run, not the trip" $ do
+        let close n = if n == 2 then continueMarker else "no status"
+        out <-
+          flowOutput
+            "lite"
+            (orchestrateWith (Just (Fuel 3)) (tripWorker close))
+            "THE PLAN"
+        out @?= tripSummary 4 "no status" <> "\n\n" <> protocolNotice
+    , -- __A block ends a capped loop verbatim__, whatever the budgets hold:
+      -- no notice, no re-prompt, the worker's own bytes — the stack promote
+      -- stage reads them.
+      testCase "a blocked close ends the loop verbatim" $ do
+        out <-
+          flowOutput
+            "lite"
+            (orchestrateWith liteFuel (tripWorker (const "WORK BLOCKED")))
+            "THE PLAN"
+        out @?= tripSummary 1 "WORK BLOCKED"
     , -- __Where the marker is legible, and where it is not.__ The two cases
       -- above fence what the LOOP yields. This one fences what becomes of that
       -- text afterwards, because @docs\/operations.md@ tells an operator where
@@ -4092,6 +4431,51 @@ runByLeaf wf answer input = do
         (wfFlow wf)
         input
   (,) final <$> readIORef sent
+
+-- | 'runByLeaf' for a run expected to HALT, recording each leaf name into the
+-- caller's ref as it is prompted.
+--
+-- 'runByLeaf' returns its record with the final artifact, which an exception
+-- takes with it — and \"which leaves ran before the halt\" is the whole
+-- question a 'Incite.Feature.completionGate' case asks. The ref is the
+-- caller's so it survives the 'ErrorCall', and the exec and ask handlers stay
+-- 'runByLeaf'\'s: a gate the run should never reach answers green, so a case
+-- that halts EARLY cannot pass because a later stage failed for its own
+-- reasons.
+runByLeafRecording :: Workflow -> (Text -> Text) -> Text -> IORef [Text] -> IO Text
+runByLeafRecording wf answer input seen = do
+  (final, _) <-
+    interpret
+      ( \sc op x ->
+          let name = leafNameOf (opTag op)
+           in leafRunner
+                LeafHandlers
+                  { lhPrompt = \rendered -> do
+                      -- Forced BEFORE the name is recorded, and both halves
+                      -- matter. Forced, because 'Incite.Feature.completionGate'
+                      -- halts with a pure 'error' inside a @dimap'@: the halt
+                      -- fires when a downstream stage renders that text into
+                      -- its prompt, and a handler that ignores @rendered@
+                      -- leaves the thunk unforced and the run finishes as if
+                      -- the gate were not there. Before, because a leaf whose
+                      -- prompt raises while rendering was never sent — an
+                      -- agent is paid for prompts that exist, and recording it
+                      -- would report the panel as spent when the run stopped
+                      -- at the first attempt to write to it.
+                      _ <- evaluate (T.length rendered)
+                      modifyIORef' seen (<> [name])
+                      pure (answer name)
+                  , lhExec = \_ -> pure (ExecOutcome {eoExit = 0, eoStdout = "", eoStderr = ""})
+                  , lhAsk = \_ -> pure (Answer "")
+                  }
+                sc
+                op
+                x
+      )
+      (wfFlow wf)
+      input
+  _ <- evaluate (T.length final)
+  pure final
 
 -- | 'workflowLeafPrompts' for a workflow that is __one leaf__, failing rather
 -- than picking one when it is not. @prompt-lint@ is a single @ste@ refinement
