@@ -154,12 +154,12 @@ The `workflows` list in `workflows/Main.hs` is the inventory. The full table —
 what each of the 13 workflows does — lives in one place:
 [`docs/workflows.md`](docs/workflows.md#exposed-inventory).
 
-Two safety facts worth keeping here rather than only there: five workflows are
-**world-acting** and the rest touch nothing. `ship-feature`, `ship-feature-lite`
-and `ship-docs` run
-under `actingGrant` (`execGrant ["nix*"]`), `grind-paradox` under `grindGrant`
-and `stack-prs` under `stackGrant`, the last two derived from their own check
-lists rather than written beside them. Every grant gates only *our* `Exec`
+Two safety facts worth keeping here rather than only there: eight workflows are
+**world-acting** and the rest touch nothing. `ship-feature-lite` and `ship-docs`
+run under `actingGrant` (`execGrant ["nix*"]`); `ship-feature` composes it with
+`retroGrant` (`execGrant ["date*"]`), which `retro` carries bare for its
+`RETRO-<date>.md` write; the three grinds and `stack-prs` run under grants
+derived from their own check lists rather than written beside them. Every grant gates only *our* `Exec`
 leaves; the agent's own `git`, `gh` and `gt` run as its tools, behind its
 permission modal. And always run from the repo root: `promptFile` resolves a
 path against the package root at compile time and the working directory at
@@ -167,7 +167,9 @@ run time, so the two must be the same directory.
 
 World-acting runs leave `.agent-functor-worktree-*` / `.agent-functor-worker-*`
 directories behind if killed mid-run; gitignored, safe to delete. The
-`.agent-functor/` run-record store is also gitignored.
+`.agent-functor/` run-record store is also gitignored, and so are the
+`RETRO-<date>.md` files the retrospectives write at the root — artifacts for a
+person, deliberately untracked.
 
 ## Conventions
 

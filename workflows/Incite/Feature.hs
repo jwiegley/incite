@@ -62,6 +62,8 @@ module Incite.Feature
   , fixerContinuation
   , orchestrate
   , orchestrateWith
+  , auditedImplement
+  , tripFess
   , workerFuel
   , liteFuel
   , stackFuel
@@ -139,6 +141,8 @@ import Agent.Run (Workflow, workflowG, workflowGReq, workflowReq)
 import Incite.Backend (backends, codexScope, fable5, opencodeScope, reviewer)
 import Incite.Review
   ( Subject (OfTree)
+  , fessOfTrip
+  , retroGrant
   , auditReportDir
   , docsStrategyOfPlan
   , emissionLenses
@@ -204,10 +208,23 @@ planFeature =
 -- it. Reviewers are read-only by construction, so nothing can fix its own
 -- findings.
 --
--- __The question in front of the work is 'planSteer'__, which asks for a
--- specific sentence rather than for guidance in general: the bar the change has
--- to clear. The argument is on the binding. The gate at the far end is an
--- ordinary yes\/no.
+-- __Three of its stages answer the 2026-08-12 retrospective__, one per
+-- mechanism finding of the run that ended in a no at this workflow's own gate:
+--
+-- * 'auditedImplement' — \"the audit deferred to end-of-run instead of running
+--   per step\": the honesty check now runs at every trip boundary, small
+--   enough that no safeguard blocks it, early enough that findings land before
+--   the commit they concern.
+-- * 'greenGate' over 'codeChecks', before the gate — \"verification, if it
+--   ran, was never written into the tree\": the ✓ lines the person reads at
+--   the gate are the harness's own exit codes, not the fixer's word. A red
+--   tree costs 'repairFuel' repair trips and then aborts, instead of reaching
+--   the gate wearing a confident paragraph.
+-- * 'planSteer' — the person's half: the plan checkpoint asks for the
+--   acceptance bar up front rather than for guidance in general, which is a
+--   question an empty submit answers honestly. It is a binding shared by all
+--   three acting workflows, because the same four-second empty steer was
+--   available in each of them.
 shipFeature :: Workflow
 shipFeature =
   workflowGReq
@@ -217,15 +234,20 @@ shipFeature =
       worker until it reports the plan finished; review the result with the
       full 21-reviewer panel, remediate the findings, human gate, then a PR
     |]
-    actingGrant
+    -- 'actingGrant' plus the retro report's @date@: the retrospective stage
+    -- runs 'Incite.Review.retroFlow' inline, and its report leaf reads the day
+    -- before writing RETRO-<date>.md. Composed rather than widened in place —
+    -- 'shipDocs' holds no retrospective and keeps the narrower grant.
+    (actingGrant <> retroGrant)
     $ explorePlan
       >>> editPlan
       >>> steer (planSteer "implementation")
-      >>> orchestrate implement
+      >>> orchestrate auditedImplement
       >>> reviewChange
       >>> remediate codeRule closeWithChanges
+      >>> greenGate codeRule codeChecks
       >>> retrospective
-      >>> humanGate "Open a pull request for these changes?"
+      >>> humanGate "Open a pull request for these changes? A no ends the run — name the defect in your answer, so the next session starts from a finding rather than from a bare refusal."
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- The panel's lenses are written for a diff, and the artifact here is the
@@ -289,16 +311,65 @@ implementLeaf =
           successor: what you changed, what is left, and what it needs to
           know to continue.
 
+          Two rules of the record, and a run was lost to each:
+
+          - A claim that a mechanism fired — terminated, killed, scrubbed,
+            cleaned up — quotes the log line that shows the firing. The
+            eventual outcome is not the mechanism: a process that returned
+            is not a process that was killed, and the correction costs a
+            later session more than the check costs you.
+          - Before you claim the last step, run the suites and write the
+            closing counts into the final commit body or the progress log —
+            with a note for any path `git status` still shows — and only
+            then write the summary. A green that lives only in a summary is
+            a green nobody can check, and the record's last count wins the
+            argument against you.
+
           End with a status line, alone on the last line:
 
           - `#{continueMarker}` — the plan is not finished. You will be
             called again.
-          - `WORK COMPLETE` — every step is done, the suites are green, and
-            their counts are already written down where the loop above says
-            they go. Say what changed.
+          - `WORK COMPLETE` — every step is done, the build is green, and
+            the closing counts are in the tree. Say what changed.
         |]
     )
     id
+
+-- | 'implement' with the honesty audit at its heels: each trip is the worker,
+-- then "Incite.Review".'fessOfTrip' reading the trip's claims against the tree,
+-- with the report prepended to the summary the next trip receives.
+--
+-- __The merge puts the audit ABOVE the summary, and that placement is
+-- load-bearing.__ 'orchestrate' decides another trip by reading the LAST
+-- non-empty line of whatever a trip yields ('decideContinue'), so an audit
+-- appended below the summary would bury the worker's status line and end every
+-- loop on trip one. Above it, the marker stays terminal and the findings are
+-- the first thing the next trip reads. @test\/Spec.hs@ holds the round trip —
+-- audited output through 'decideContinue' — because both arguments are 'Text'
+-- and a flipped merge is not a type error.
+--
+-- __'shipFeature' only, not 'shipFeatureLite'.__ The lite tier already runs the
+-- fess lens on every commit through its per-commit panel, is capped at
+-- 'liteFuel' trips, and ends on a gate nothing authors; a second audit there
+-- buys a copy of a check it has. This workflow is the one whose worker runs
+-- unbounded and whose close is read by a person at a gate.
+auditedImplement :: Flow Text Text
+auditedImplement = implement >>> keeping auditThenSummary tripFess
+  where
+    auditThenSummary summary audit = "## trip audit\n\n" <> audit <> "\n\n" <> summary
+
+-- | The one leaf that runs 'fessOfTrip': read-only, and pinned to claude-agent.
+--
+-- Both scopes are 'fessAudit'\'s, for its reasons. Read-only because an auditor
+-- that can edit is an auditor that can fix its own findings before reporting
+-- them. Pinned because the fess rubric is the pairing 'Incite.Review.admits'
+-- refuses on codex, and a backend a fan-out cannot be given must not be
+-- reachable by inheritance either — this leaf sits outside every fan-out, so
+-- inheritance is exactly how it would get there.
+tripFess :: Flow Text Text
+tripFess =
+  withBackend claudeAgent defaultModel
+    (withMode Plan (refineWith "trip-fess" (brief fessOfTrip) id))
 
 -- | Close a run with "Incite.Review".'retroFlow'\'s three columns, appended to
 -- the work rather than replacing it.
@@ -407,9 +478,15 @@ shipDocs =
 -- the whole difference between a tier that ships a small change and a tier that
 -- ships whatever the last agent said it did.
 --
--- 'shipFeature' needs no such stage for the same reason it can afford the heavy
--- panel: it ends at a 'humanGate' and a pull request, so a person and CI read
--- the change before anything merges. Nothing reads a lite run but the tree.
+-- 'shipFeature' carries the same gate now, and the history of that sentence is
+-- worth keeping: this haddock used to argue it needed none, because a person
+-- and CI read the change before anything merges. The 2026-08-12 retrospective
+-- refuted it with a run — the fixer closed with counts that existed only in its
+-- summary (\"369/0\" appearing nowhere in the tree), the person had nothing
+-- checkable to read at the gate, and answered no in 25 seconds over four-plus
+-- hours of work. A person at a gate is not verification; a person at a gate
+-- READING verification is. Nothing reads a lite run but the tree, so the gate
+-- was always non-negotiable here.
 --
 -- __And still no 'humanGate' and no 'submitPR'.__ 'shipDocs'\'s argument
 -- exactly: an unattended run auto-answers the gate — @gateAnswer@ defaults to
