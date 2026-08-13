@@ -202,6 +202,7 @@ tests =
     , documentTests
     , remediateTests
     , retrospectiveTests
+    , accountTests
     , lensSetViolationsTests
     , lensesOfTests
     , codexFessTests
@@ -821,6 +822,63 @@ retrospectiveTests =
     [ testCase "appends the retro under its own heading, below the work" $ do
         out <- flowOutput "retrospective" retrospective "THE WORK"
         out @?= "THE WORK\n\n## retrospective\n\n" <> leafAnswer
+    ]
+
+-- | What a run has to leave in writing at each of its boundaries: the bar
+-- stated before the work, and the defect named if the pull request is declined.
+--
+-- __One retrospective's findings, fenced where each of them lives.__ They are
+-- one group because they share a failure mode rather than a module: every one
+-- of these sentences is one somebody has to be ASKED for, and each went missing
+-- by the question quietly becoming general — \"any guidance\" instead of the
+-- bar, \"the build is green\" instead of the counts, @no@ instead of the
+-- defect. A general question is answerable without saying anything, which is
+-- what makes the drift invisible in a run that otherwise looks complete.
+accountTests :: TestTree
+accountTests =
+  testGroup
+    "the account a run leaves"
+    [ -- The question a person answers before any work starts. Read off the leaf
+      -- NAME rather than off 'Incite.Feature.planSteer', because the name is
+      -- what @Agent.Flow.Combinators.steer@ puts to the operator and what @plan@
+      -- renders — a workflow rewired to a hand-written literal stays green here
+      -- only by asking for the same thing.
+      --
+      -- __Quantified over all three acting workflows__ though one retrospective
+      -- prompted it. The three questions differ by a noun and nothing else, and
+      -- a rule fenced only on the workflow known to have needed it is how the
+      -- other two drift back to asking for \"any guidance\" — a question an
+      -- operator can answer honestly in four seconds by pressing enter, leaving
+      -- no stage downstream with a bar to judge the work against.
+      --
+      -- The count is asserted too: a steer that vanished satisfies every phrase
+      -- check in this case vacuously.
+      testCase "every plan steer asks for the acceptance bar" $
+        report
+          [ complaint
+          | wf <- [shipFeature, shipDocs, shipFeatureLite]
+          , let steers = [n | n <- leafNames (wfFlow wf), T.isPrefixOf "steer:" n]
+          , complaint <-
+              [ wfName wf <> " has " <> countWord (length steers) <> " steer leaves, not one"
+              | length steers /= 1
+              ]
+                <> [ wfName wf <> "'s steer does not ask for the acceptance bar: " <> tshow n
+                   | n <- steers
+                   , not (T.isInfixOf "acceptance bar" n)
+                   ]
+          ]
+    , -- The question at the other end, and the only text a rejected run leaves:
+      -- @humanGate@ halts on any answer outside its approval list and quotes
+      -- that answer into the halt. A bare @no@ therefore IS the artifact — which
+      -- is why the question has to ask for more than one.
+      testCase "the pull-request gate asks a refusal to name the defect" $ do
+        let gates = [n | n <- leafNames (wfFlow shipFeature), T.isPrefixOf "gate:" n]
+        length gates @?= 1
+        report
+          [ "the gate does not ask a refusal to name the defect: " <> tshow n
+          | n <- gates
+          , not (T.isInfixOf "the defect that stops it" n)
+          ]
     ]
 
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the

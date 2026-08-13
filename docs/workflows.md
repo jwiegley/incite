@@ -141,6 +141,24 @@ are still mediated by the backend's tool permission flow.
   before the argument existed, and `test/Spec.hs` pins that against a golden
   recorded beforehand.
 
+Two of those pieces are questions put to a person, and each asks for a named
+sentence rather than for approval in general:
+
+- `planSteer` — the checkpoint between the plan and the work, which all three
+  acting workflows ask through, differing only in the noun for what follows
+  (`"implementation"`, `"writing"`). It asks for **the acceptance bar this
+  change must clear**. A `steer` passes the plan through unchanged on an empty
+  submit, so a question that asked for guidance in general could be answered by
+  pressing enter — after which no stage downstream has a bar to judge the work
+  against, and the gate at the far end has to invent one.
+- `prGate` — `ship-feature`'s pull-request gate. It asks a refusal to **name the
+  defect that stops it**. `humanGate` halts on any answer outside its approval
+  list and quotes that answer into the halt, so the text of a `no` is the whole
+  record a rejected run leaves; a bare `no` leaves the next session to re-derive
+  the reason from the change.
+
+`test/Spec.hs` reads both questions off the shipped flows' leaf names.
+
 ## Small changes
 
 `ship-feature-lite` is the acting shape for a change that does not need the

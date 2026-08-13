@@ -57,6 +57,8 @@ module Incite.Feature
   , docsRule
   , codeRule
   , actingGrant
+  , planSteer
+  , prGate
   , closeWithChanges
   , fixerContinuation
   , orchestrate
@@ -202,6 +204,11 @@ planFeature =
 -- reviewers, then one synthesis — and @remediate@ is the only leaf that acts on
 -- it. Reviewers are read-only by construction, so nothing can fix its own
 -- findings.
+--
+-- __The two questions it asks a person are 'planSteer' and 'prGate'__, and each
+-- asks for a specific sentence rather than for approval in general: the bar the
+-- change has to clear, before the work, and the defect that stops it, if the
+-- pull request is declined. Both arguments are on the bindings.
 shipFeature :: Workflow
 shipFeature =
   workflowGReq
@@ -214,12 +221,12 @@ shipFeature =
     actingGrant
     $ explorePlan
       >>> editPlan
-      >>> steer "Review the plan — add any guidance before implementation begins"
+      >>> steer (planSteer "implementation")
       >>> orchestrate implement
       >>> reviewChange
       >>> remediate codeRule closeWithChanges
       >>> retrospective
-      >>> humanGate "Open a pull request for these changes?"
+      >>> humanGate prGate
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- The panel's lenses are written for a diff, and the artifact here is the
@@ -359,7 +366,7 @@ shipDocs =
     actingGrant
     $ explorePlan
       >>> lensEdit [(name, brief body) | (name, body) <- docsPlanLenses]
-      >>> steer "Review the plan — add any guidance before writing begins"
+      >>> steer (planSteer "writing")
       >>> orchestrate document
       -- The docs lenses read an artifact; what reaches them is the worker's
       -- closing account. 'asDocsSubject' points them at the files instead.
@@ -423,7 +430,7 @@ shipFeatureLite =
     |]
     actingGrant
     $ planLeaf
-      >>> steer "Review the plan — add any guidance before implementation begins"
+      >>> steer (planSteer "implementation")
       >>> orchestrateWith liteFuel implement
       -- The panel's lenses are written for a diff, and the artifact here is the
       -- worker's closing summary: 'asReviewSubject' points them at the tree,
@@ -634,6 +641,47 @@ decideRed t = if isRed t then Left t else Right t
 -- modal.
 actingGrant :: Grant
 actingGrant = execGrant ["nix*"]
+
+-- | The question at the plan checkpoint, parameterised by the noun for what
+-- happens next — @\"implementation\"@ for the two code tiers, @\"writing\"@ for
+-- 'shipDocs'.
+--
+-- __It asks for the acceptance bar, not for \"any guidance\".__
+-- 'Agent.Flow.Combinators.steer' passes the plan through unchanged on an empty
+-- submit, so a question that asks for guidance in general is one an operator can
+-- honestly answer in four seconds by pressing enter — and then nothing in the
+-- run states what the change has to clear. Every stage downstream is an agent
+-- judging its own work against a bar nobody wrote down, and the gate at the far
+-- end has to invent one to answer. The bar is the one thing the operator knows
+-- and no leaf can derive, and 'steer' makes the answer part of the artifact the
+-- worker implements from.
+--
+-- A function of the noun rather than three literals: the three acting workflows
+-- differ only in what follows the checkpoint, and three copies of one question
+-- drift into three different questions — which is how two of them came to ask
+-- for nothing in particular.
+planSteer :: Text -> Text
+planSteer what =
+  "Review the plan — state the acceptance bar this change must clear, and any \
+  \other guidance, before "
+    <> what
+    <> " begins"
+
+-- | The question at 'shipFeature'\'s pull-request gate.
+--
+-- __A refusal has to name a defect.__ 'Agent.Flow.Combinators.humanGate' halts
+-- the workflow on any answer outside its approval list and quotes that answer
+-- into the halt, so the text of a @no@ is the only thing a rejected run leaves
+-- behind — and a bare @no@ leaves the next session the whole change to re-derive
+-- a reason for. Naming the defect costs the operator a sentence and turns the
+-- halt into the one artifact that says what to fix.
+--
+-- Asking is all this can do: the gate accepts the answer either way. What it
+-- removes is the reading under which a bare @no@ was the complete answer.
+prGate :: Text
+prGate =
+  "Open a pull request for these changes? If not, answer with the defect that \
+  \stops it — named, so the next session knows what to fix"
 
 -- | The ceiling on how many times a worker may hand itself back its own summary.
 -- 'Nothing' — the default — is no ceiling: the worker runs until it reports
