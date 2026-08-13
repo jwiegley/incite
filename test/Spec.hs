@@ -908,6 +908,17 @@ accountTests =
             ]
         | (name, worker) <- [("implement", implement), ("document", document)]
         ]
+    , -- The honesty rubric's own version of the same gap. A mechanism is claimed
+      -- from the log line that shows it fire; the outcome afterwards proves
+      -- nothing, because the process may have exited on its own and the field
+      -- may have been empty already. 'saysLoosely' rather than 'says': the file
+      -- is hard-wrapped markdown and both needles straddle a line break in it.
+      testCase "a mechanism that fired is claimed with its log line" $
+        report
+          [ "the fess rubric does not say " <> tshow needle
+          | needle <- ["is proved by the log line showing it fire", "Quote that line"]
+          , not (saysLoosely fess needle)
+          ]
     ]
 
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the
