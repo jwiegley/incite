@@ -825,7 +825,8 @@ retrospectiveTests =
     ]
 
 -- | What a run has to leave in writing at each of its boundaries: the bar
--- stated before the work, and the defect named if the pull request is declined.
+-- stated before the work, the audit run at every step of it, and the defect
+-- named if the pull request is declined.
 --
 -- __One retrospective's findings, fenced where each of them lives.__ They are
 -- one group because they share a failure mode rather than a module: every one
@@ -879,6 +880,23 @@ accountTests =
           | n <- gates
           , not (T.isInfixOf "the defect that stops it" n)
           ]
+    , -- The rule the WORKER is told, read off the rendered leaf for
+      -- 'documentTests'\'s reason: the sentence lives in @commands/wiggum.md@,
+      -- which both briefs splice, and what has to hold is that it reaches the
+      -- agent — not that one file in this repository still contains it.
+      -- Quantified over both workers because both splice that file; @document@'s
+      -- instance is a standing guarantee rather than a regression pin.
+      testGroup
+        "the closing account the worker is told to write"
+        [ testCase name $ do
+          leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+          report
+            [ T.pack name <> " does not say " <> tshow needle
+            | needle <- ["One step, one commit, one audit"]
+            , not (T.isInfixOf needle (proseNormal leafText))
+            ]
+        | (name, worker) <- [("implement", implement), ("document", document)]
+        ]
     ]
 
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the

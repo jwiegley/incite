@@ -14,8 +14,14 @@ Follow the **`post-commit-audit`** procedure. It is the single description of wh
 checks to run, what to pass them, and how to poll — do not restate or improvise it
 here, and do not substitute your own idea of a check for it.
 
-Two things it leaves to you, because they belong to this loop and not to the audit:
+Three things it leaves to you, because they belong to this loop and not to the audit:
 
+- **How often to audit.** One step, one commit, one audit: the beat is every step
+  boundary, so a plan of fourteen steps holds fourteen audits. Do not collect the
+  steps and audit once at the close. An audit deferred to the end reports on
+  claims already written into commits nobody will revisit, and it is the audit
+  most likely never to run at all. Each step's findings land against the step that
+  caused them.
 - **How the findings get fixed** — see below. The audit hands them back; it does
   not say who applies them.
 - **When to stop auditing.** Its rule is that a commit fixing an audit finding is
