@@ -825,16 +825,16 @@ retrospectiveTests =
     ]
 
 -- | What a run has to leave in writing at each of its boundaries: the bar
--- stated before the work, the audit and the counts written down during and
--- after it, and the defect named if the pull request is declined.
+-- stated before the work, and the audit and the counts written down during and
+-- after it.
 --
 -- __One retrospective's findings, fenced where each of them lives.__ They are
 -- one group because they share a failure mode rather than a module: every one
 -- of these sentences is one somebody has to be ASKED for, and each went missing
--- by the question quietly becoming general — \"any guidance\" instead of the
--- bar, \"the build is green\" instead of the counts, @no@ instead of the
--- defect. A general question is answerable without saying anything, which is
--- what makes the drift invisible in a run that otherwise looks complete.
+-- by the ask quietly becoming general — \"any guidance\" instead of the bar,
+-- \"the build is green\" instead of the counts. A general question is
+-- answerable without saying anything, which is what makes the drift invisible
+-- in a run that otherwise looks complete.
 accountTests :: TestTree
 accountTests =
   testGroup
@@ -867,18 +867,6 @@ accountTests =
                    | n <- steers
                    , not (T.isInfixOf "acceptance bar" n)
                    ]
-          ]
-    , -- The question at the other end, and the only text a rejected run leaves:
-      -- @humanGate@ halts on any answer outside its approval list and quotes
-      -- that answer into the halt. A bare @no@ therefore IS the artifact — which
-      -- is why the question has to ask for more than one.
-      testCase "the pull-request gate asks a refusal to name the defect" $ do
-        let gates = [n | n <- leafNames (wfFlow shipFeature), T.isPrefixOf "gate:" n]
-        length gates @?= 1
-        report
-          [ "the gate does not ask a refusal to name the defect: " <> tshow n
-          | n <- gates
-          , not (T.isInfixOf "the defect that stops it" n)
           ]
     , -- The rules the WORKER is told, read off the rendered leaf for
       -- 'documentTests'\'s reason: these sentences live in @commands/wiggum.md@,

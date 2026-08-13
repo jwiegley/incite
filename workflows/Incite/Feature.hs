@@ -58,7 +58,6 @@ module Incite.Feature
   , codeRule
   , actingGrant
   , planSteer
-  , prGate
   , closeWithChanges
   , fixerContinuation
   , orchestrate
@@ -205,10 +204,10 @@ planFeature =
 -- it. Reviewers are read-only by construction, so nothing can fix its own
 -- findings.
 --
--- __The two questions it asks a person are 'planSteer' and 'prGate'__, and each
--- asks for a specific sentence rather than for approval in general: the bar the
--- change has to clear, before the work, and the defect that stops it, if the
--- pull request is declined. Both arguments are on the bindings.
+-- __The question in front of the work is 'planSteer'__, which asks for a
+-- specific sentence rather than for guidance in general: the bar the change has
+-- to clear. The argument is on the binding. The gate at the far end is an
+-- ordinary yes\/no.
 shipFeature :: Workflow
 shipFeature =
   workflowGReq
@@ -226,7 +225,7 @@ shipFeature =
       >>> reviewChange
       >>> remediate codeRule closeWithChanges
       >>> retrospective
-      >>> humanGate prGate
+      >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- The panel's lenses are written for a diff, and the artifact here is the
@@ -667,22 +666,6 @@ planSteer what =
   \other guidance, before "
     <> what
     <> " begins"
-
--- | The question at 'shipFeature'\'s pull-request gate.
---
--- __A refusal has to name a defect.__ 'Agent.Flow.Combinators.humanGate' halts
--- the workflow on any answer outside its approval list and quotes that answer
--- into the halt, so the text of a @no@ is the only thing a rejected run leaves
--- behind — and a bare @no@ leaves the next session the whole change to re-derive
--- a reason for. Naming the defect costs the operator a sentence and turns the
--- halt into the one artifact that says what to fix.
---
--- Asking is all this can do: the gate accepts the answer either way. What it
--- removes is the reading under which a bare @no@ was the complete answer.
-prGate :: Text
-prGate =
-  "Open a pull request for these changes? If not, answer with the defect that \
-  \stops it — named, so the next session knows what to fix"
 
 -- | The ceiling on how many times a worker may hand itself back its own summary.
 -- 'Nothing' — the default — is no ceiling: the worker runs until it reports
