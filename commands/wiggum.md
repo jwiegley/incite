@@ -61,3 +61,22 @@ back rather than accepting the deferral.
 
 Then resume — that commit is not audited again and gets no second subagent, per
 the rule above. Perfect is the enemy of good.
+
+## Closing out: the counts go into the tree before the summary
+
+After the last code commit, and **before you compose any summary of the work**,
+run every suite the change touches and write what came back into the document you
+have been maintaining, or into the body of that final commit. Counts, not
+adjectives: `cabal test — 412 cases, 0 failures`, `nix flake check — green`. A
+suite you did not run is written down as not run.
+
+Name, beside them, anything the run wrote or relied on that the tree does not
+carry — a gitignored path like `.agent-functor/`, a scratch directory, a generated
+fixture, a local checkout a check resolves against — and say what is in it. A
+green that depends on a file nobody else has is not a green anyone else can
+reproduce, and the next session finds that out by failing.
+
+The tree, not only the summary, because the summary is not in the tree. A session
+ends and its scrollback goes with it; what survives is what somebody can `grep`
+for later. A reviewer asked to approve on greens they cannot open can only answer
+no, and that no is your close-out's failure rather than the change's.

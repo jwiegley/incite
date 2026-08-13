@@ -294,8 +294,9 @@ implementLeaf =
 
           - `#{continueMarker}` — the plan is not finished. You will be
             called again.
-          - `WORK COMPLETE` — every step is done and the build is green.
-            Say what changed.
+          - `WORK COMPLETE` — every step is done, the suites are green, and
+            their counts are already written down where the loop above says
+            they go. Say what changed.
         |]
     )
     id

@@ -825,8 +825,8 @@ retrospectiveTests =
     ]
 
 -- | What a run has to leave in writing at each of its boundaries: the bar
--- stated before the work, the audit run at every step of it, and the defect
--- named if the pull request is declined.
+-- stated before the work, the audit and the counts written down during and
+-- after it, and the defect named if the pull request is declined.
 --
 -- __One retrospective's findings, fenced where each of them lives.__ They are
 -- one group because they share a failure mode rather than a module: every one
@@ -880,19 +880,30 @@ accountTests =
           | n <- gates
           , not (T.isInfixOf "the defect that stops it" n)
           ]
-    , -- The rule the WORKER is told, read off the rendered leaf for
-      -- 'documentTests'\'s reason: the sentence lives in @commands/wiggum.md@,
-      -- which both briefs splice, and what has to hold is that it reaches the
-      -- agent — not that one file in this repository still contains it.
+    , -- The rules the WORKER is told, read off the rendered leaf for
+      -- 'documentTests'\'s reason: these sentences live in @commands/wiggum.md@,
+      -- which both briefs splice, and what has to hold is that they reach the
+      -- agent — not that one file in this repository still contains them.
       -- Quantified over both workers because both splice that file; @document@'s
       -- instance is a standing guarantee rather than a regression pin.
+      --
+      -- Two rules, one case, because they are one discipline: the audit runs at
+      -- the boundary of every step rather than once at the close, and the suite
+      -- counts are written into the tree before any summary is composed. Both
+      -- failures look identical from outside — a confident final paragraph over
+      -- work nothing in the tree can confirm.
       testGroup
         "the closing account the worker is told to write"
         [ testCase name $ do
           leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
           report
             [ T.pack name <> " does not say " <> tshow needle
-            | needle <- ["One step, one commit, one audit"]
+            | needle <-
+                [ "One step, one commit, one audit"
+                , "before you compose any summary"
+                , "Counts, not adjectives"
+                , "that the tree does not carry"
+                ]
             , not (T.isInfixOf needle (proseNormal leafText))
             ]
         | (name, worker) <- [("implement", implement), ("document", document)]
