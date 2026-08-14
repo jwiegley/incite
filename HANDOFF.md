@@ -563,8 +563,30 @@ keep current — which is precisely the input step 10's escalation target needs.
   variant. That is suggestive, **not** conclusive: a vendor-staging tree is not
   the built binary. Settle it by capturing the wire, not by grepping again.
 
-**Consequence for step 10.** Its design is unblocked on claude-agent and only
-on claude-agent. A scope-level escalation keyed on `used / size` is exact where
+**Where the wrong premise came from, so nobody re-litigates it.** `totalTokens`
+is not a field the ACP schema has anywhere. It appears in exactly three places,
+all of them **upstream's own hand-written fixtures**:
+
+```
+test/Agent/McpSpec.hs:588           captureUpdate app (OtherUpdate "usage_update" (object ["totalTokens" .= (7 :: Int)]))
+test/Agent/Acp/ProtocolSpec.hs:539  summariseUpdate (OtherUpdate "usage_update" (object ["totalTokens" .= (99 :: Int)])) `shouldBe` Nothing
+test/Agent/Acp/ProtocolSpec.hs:583  transcriptUpdate (OtherUpdate "usage_update" (object ["totalTokens" .= (5 :: Int)])) `shouldBe` Nothing
+```
+
+Those fixtures were read as if they were captured samples. They are not — they
+invent a field name for a payload whose schema nobody had opened. And they are
+**unfalsifiable**: all three assert `Nothing`, which `summariseUpdate` and
+`transcriptUpdate` return for the `usage_update` tag whatever the object holds,
+so the fixtures would still pass carrying any field name at all. Do not treat a
+fixture in that file as evidence of a wire shape.
+
+**Consequence for step 10, and it is smaller than the plan implies.** Upstream
+already parses the notification into `OtherUpdate "usage_update" obj` with the
+raw JSON object in hand at the discard site (`Protocol.hs:701`) — there is no
+typed decoder to design around, just a discarded `obj` that already contains
+`used` and `size`. Step 10 is a typed decode of two mandatory integers plus
+somewhere to put them, not a protocol overhaul. Its design is unblocked on
+claude-agent and only on claude-agent. A scope-level escalation keyed on `used / size` is exact where
 the notification arrives and silent where it does not, so it needs a stated
 fallback for a backend that never sends one — do not assume roster-wide cover.
 
