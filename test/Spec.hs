@@ -5370,4 +5370,51 @@ backendTests =
       testCase "claudeAgentBackend name matches first entry" $
         leafNameText (fst claudeAgentBackend)
           @?= leafNameText (fst (NE.head backends))
+    , -- __The droid decision has no code to hold it.__ Nothing in
+      -- "Incite.Backend" names droid — the reason it is not a fourth roster
+      -- slot lives only in the module header — so a slot added later satisfies
+      -- every other case in this group while the header goes on saying droid
+      -- was refused. Nothing compiles a comment; this is the one thing that
+      -- reads the sentence and the roster together.
+      testCase "droid stays out of the roster, and the module says why" $ do
+        src <- haddockProse <$> TIO.readFile "workflows/Incite/Backend.hs"
+        -- The reader proved before the rule is quantified over it: with the
+        -- sentence gone this would hold vacuously for a roster that had grown
+        -- a droid slot and never mentioned it.
+        assertBool "Incite.Backend records no droid decision — retire or repoint this fence" $
+          "droid is deliberately not among the backends here" `T.isInfixOf` src
+        assertBool "the module says droid stays out, but a backend entry is named droid" $
+          "droid" `notElem` map (leafNameText . fst) (NE.toList (backendsFor False))
+    , -- __What the opencode-default rationale is allowed to claim.__ It argues
+      -- from an absence of observed failure, and an absence is only as wide as
+      -- the run stores someone actually opened: the evidence here is one
+      -- machine's @.agent-functor\/runs@. The prose this replaced said "No
+      -- fleet machine has hit that failure mode" and that preflight would
+      -- refuse "every opencode leaf on every opencode machine" — both
+      -- statements about machines nobody read, in a comment nothing compiles.
+      testCase "the opencode-default rationale claims no more than it read" $ do
+        src <- haddockProse <$> TIO.readFile "workflows/Incite/Backend.hs"
+        assertBool "the rationale no longer names the evidence it argues from" $
+          ".agent-functor/runs" `T.isInfixOf` src
+        report
+          [ "workflows/Incite/Backend.hs asserts across machines it never read: " <> tshow claim
+          | claim <- ["No fleet machine", "every opencode machine"]
+          , claim `T.isInfixOf` src
+          ]
     ]
+  where
+    -- Haddock read back as running prose: comment markers dropped, the wrapping
+    -- undone, and the markup that only decorates an identifier (@\@…\@@, the
+    -- escaped slash) removed — so a claim spanning a line break is one string
+    -- to search for. 'proseNormal' is the Markdown counterpart and cannot serve
+    -- here: it leaves every @--@ in place, which is exactly where the wrapping
+    -- falls.
+    haddockProse =
+      T.unwords
+        . T.words
+        . T.filter (`notElem` ("@\\" :: String))
+        . T.unwords
+        . map (T.drop 2)
+        . filter (T.isPrefixOf "--")
+        . map T.strip
+        . T.lines

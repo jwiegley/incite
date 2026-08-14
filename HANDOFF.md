@@ -340,3 +340,51 @@ factored out of the existing grind-paradox / review-audit machinery.
     `/tmp/grind-residual/` renders stay ephemeral on purpose — they are
     re-derivable from any checkout of the committed tree, unlike the
     baseline, which is the diff anchor.
+
+## Adopted from upstream by the 288→307 bump (90fde09) — operator-owned
+
+Three behaviours of `agent-functor` that commit 90fde09 (`5eec06c`→`1fca34f`,
+revCount 288→307) brings into every incite run. **None is a defect introduced
+by incite** — nothing in this repository changed but `flake.lock` and one
+haddock. They are recorded here rather than fixed because each needs a change
+in `/home/isaac/_/agent-functor/master` **plus a push**, and push from this
+machine is blocked on a smartcard PIN. Owned by the operator.
+
+- **MEDIUM — the empty-turn retry can re-run side effects.** Upstream
+  `49f1d20`, `src/Agent/Run.hs:1724`
+  (`turnArtifact =<< withEmptyRetry onChunk (modedOutcome (cnLabel conn) Edit
+  Nothing <$> promptOn sess onChunk brief)`), policy at
+  `src/Agent/Run.hs:3934` `withEmptyRetry` and `:3951` `modedOutcome`.
+  Mechanism: a turn is classified `TurnEmpty` on `T.null (T.strip (out t))` —
+  **message text alone**. No check for tool activity in the turn. On
+  `TurnEmpty` the whole turn is re-issued with the same brief on the same
+  session. Concrete failure: incite's world-acting workflows (`shipFeature`,
+  `retro`) have the agent run its own `git`/`gh` inside those turns, so a turn
+  that commits or pushes and then ends with a bare `end_turn` and no text is
+  read as "cleanly empty" and re-prompted — duplicate commits, a second
+  `gh pr create`. Before the bump this halted and an operator decided whether
+  to `resume`; now the re-execution is silent apart from one parenthetical
+  stream line (`asking once more before giving up`). Fix shape: gate the retry
+  on a turn that also did no tool work, not on empty text.
+- **MEDIUM — a mid-session IOException now loses its label.** Upstream
+  `96800fe`, `src/Agent/Acp/Subprocess.hs:75`
+  (``bracket (startProcess pc `catch` launchFailed) stopProcess launched``).
+  Narrowing the `IOException` catch to the spawn is correct for the
+  misdiagnosis it fixes, but the exception that motivated it — an operator-gate
+  EOF — is mid-session, so it now propagates unlabelled to the top-level
+  handler: `src/Agent/Run.hs:1114`
+  `outcomeStatus (Left e) = (RG.Failed (haltReason e), Nothing)` records
+  `Failed "<stdin>: hGetLine: end of file"` and drops the run graph
+  (`Nothing`). The old message misdiagnosed the cause but carried
+  `claude-agent/fable:`; the new one is honest and names neither backend nor
+  leaf — in a 21-leaf three-backend `panelAcross` fan-out whose siblings the
+  throw cancels. Fix shape: keep the narrowed launch handler and add a
+  session-scoped handler that re-labels with `cnLabel`.
+- **LOW — the retry adds load exactly when the backend is unwell.** Upstream
+  `49f1d20` again. The flake it answers (opencode returning `end_turn` with
+  nothing) correlates with backend distress, and a `parList` panel where every
+  leaf gains one extra prompt at that moment is extra load on a backend that
+  may already be rate-limited — the 429-into-aborted-run mode `AGENTS.md`
+  warns about for concurrency. Bounded to one retry per leaf, so tail-case
+  only, but it can turn one lost lens into a lost run. Fix shape: back the
+  retry off, or make it not fire when a sibling has already retried.
