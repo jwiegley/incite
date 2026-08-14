@@ -418,9 +418,12 @@ window. Part A is done. **Part B is not started.**
   was passed inline (`BLOCK_OPENCODE=1 …`) for the blocked runs.
 - [x] 5. Commit lock + haddock. DONE — `c23e241`.
 - [x] 6. Post-commit audit + one fix pass. DONE — see below.
-- [~] 7. **Compaction on `partitionReview`/`boundedSplit`.** IN THE WORKING TREE,
-  **NOT WRITTEN BY THIS SESSION AND NOT COMMITTED** — see "Another writer owns
-  `Review.hs` and `Spec.hs`" below before touching either file.
+- [~] 7. **Compaction on `partitionReview`/`boundedSplit`.** CODE COMPLETE AND
+  GREEN IN THE WORKING TREE, **STILL NOT COMMITTED** — the commit was declined
+  (see "Step 7 verified and fix-passed" below). The implementation was not
+  written by this session; the goldens, the `goldensRead` fix and every check
+  below were. Read "Another writer owns `Review.hs` and `Spec.hs`" before
+  touching either file.
 - [ ] 8. **`--without-backend` + `passMainWith`, upstream.** NOT STARTED.
 - [x] 9. **Capture live `usage_update` payloads.** DONE as a design question,
   and the answer **refutes the plan's premise**: a payload DOES carry a
@@ -603,7 +606,9 @@ order:
    (which respects the operator decision recorded above). **This session did
    not write any of it.**
 3. `flake.lock` moved **308 → 309** (`9cec91d` → `ca258f6`) on its own, with no
-   action from this session — the same way 308 arrived mid-session before it.
+   action from this session — the same way 308 arrived mid-session before it,
+   and it moved again to **310** (`e4aedca`) two minutes after the watch below
+   ended. See the next section.
 4. This session made one 4-line export edit to `Review.hs`. **It was reverted by
    the other writer**, confirmed by `grep` finding none of the four names in
    either file afterwards.
@@ -622,7 +627,100 @@ say this is not new — `git stash list` still holds two, both labelled
   path pointed at `/home/isaac/_/flake.engineering/lanes-matic/`, a different
   repository — so it was **not** identified as the writer. Nothing here proves
   what wrote those lines.
-- The arrived step-7 code is **unverified and incomplete**: it was never
-  compiled by this session, and its golden cases read
-  `test/golden/compaction-diff.txt` and `test/golden/compaction-prose.txt`,
-  **neither of which exists** — so that suite cannot pass as it stands.
+- The arrived step-7 code was **unverified and incomplete** when that was
+  written. It has since been compiled, completed and run green — see the next
+  section. It was still not this session's code, and it is still uncommitted.
+
+## Step 7 verified and fix-passed, still uncommitted — 2026-08-14
+
+**State.** HEAD is still `ca95eee`. Nothing from step 7 is committed. The
+working tree holds `workflows/Incite/Review.hs`, `test/Spec.hs` (modified), the
+two goldens (staged `A `), and `flake.lock` (modified). The implementation
+arrived from another writer; the goldens, the `goldensRead` fix and the fix
+pass below are this repo's own work.
+
+**Lock.** `flake.lock` is at agent-functor **310 / `e4aedca`**, not the 309 /
+`ca258f6` an earlier draft of this section recorded — the other writer re-locked
+at `14:01:46`, after the fingerprint watch that had been reported as
+"quiescent" ended at `13:59:39`. That watch proved a quiet ten minutes, not a
+stopped writer. The `309 → 310` delta was read before anything was measured
+against it: `Agent.Acp.Protocol` gains a cmark-based `unfence`/`consoleBodyLines`
+so a tool result's markdown fence never reaches the console as literal
+backticks, plus `Agent.Tui.{App,Highlight,Theme}` and their specs. No change to
+any API incite's flows call.
+
+**Counts, re-measured on the tree as it stands (lock 310, fix pass applied):**
+
+- `nix develop -c cabal run incite-test` — **317 tests, 0 failures**.
+- `BLOCK_OPENCODE=1 nix develop -c cabal run incite-test` — **317, 0**.
+- `nix flake check` — **exit 0**; `checks.unit-test` BUILT and ran. The package
+  and devShell attributes say `(build skipped)` and are NOT evidence they build.
+- 297 → 317 is the arrived `compaction` group (14) plus this pass's six.
+
+**The fix pass (five review findings, all in the compaction code):**
+
+1. `splitFor` cut diffs with `T.lines`, which drops a trailing newline — and
+   every real `git show` ends in one. Both kinds now cut with `T.splitOn "\n"`,
+   the exact inverse of the `T.intercalate "\n"` that upstream's `Coarsen` uses
+   to merge units back, so the reassembly law holds for every input rather than
+   only for a sample built without a trailing newline.
+2. `splitFor ProsePayload` cut on the blank line, so a JSONL transcript or a log
+   — no blank line anywhere — yielded ONE unit, and `Coarsen` only ever merges.
+   The single leaf would have been handed the whole oversized artifact the
+   combinator exists to avoid handing anyone. Prose now cuts at the line.
+3. Nothing checked whether a diff leaf obeyed "keep it verbatim". The original
+   now rides an `Id` branch past the fan and `verbatimCheck` counts, in the
+   reduce, how many changed lines came back character for character. No leaf is
+   sent the original; the count is mechanical, not the model's account of itself.
+4. `compactionBanner` carried a local `tshowInt`, duplicating the module's
+   `count`. Deleted.
+5. `Payload` and `Subject` had bare deriving clauses; both are `deriving stock`.
+
+**Two findings from the same review were rejected, with reasons, so nobody
+re-raises them cold.** (a) "A body line beginning `diff --git ` splits a file
+mid-hunk" — it cannot: every body line in a unified diff carries a ` `, `+` or
+`-` prefix, so a column-zero `diff --git ` is always a real file header. The
+finding's own example, `+diff --git a/tests/x.patch …`, does not match the
+prefix test it claims to trip. (b) "Delete the whole compaction API, it has no
+shipped caller" — the absence of a caller is the recorded operator decision
+(compacting for uniformity drags a panel down to the smallest window in the
+roster), not an oversight; it is stated in `compacted`'s haddock. Deleting the
+step the task list asks for is not a simplification of it.
+
+**Recording the goldens.** There is no re-record harness — goldens are files on
+disk, and that repl invocation IS the procedure:
+
+```
+nix develop -c cabal repl lib:incite-workflows -v0
+TIO.writeFile "test/golden/compaction-diff.txt"  (promptText (compactionBrief DiffPayload  "<<PART>>"))
+TIO.writeFile "test/golden/compaction-prose.txt" (promptText (compactionBrief ProsePayload "<<PART>>"))
+```
+
+682 and 480 bytes; unchanged by the fix pass, since no brief was reworded. Both
+were red-trialled (append a byte → `the briefs are byte-for-byte the recorded
+ones` fails; revert → OK, md5 `fa54b7e0007145402226cc4db2f85b42` and
+`8db8b506867898e88c35ffed8f14d133`).
+
+**A trap worth the paragraph, because it cost a check cycle.** `cabal test`
+reads the working directory; `nix flake check` builds from a source derivation
+carrying **git-tracked files only**. With the goldens written but untracked,
+`cabal test` was green while `nix flake check` failed both golden fences. `git
+add` fixed it. A new golden is invisible to the sandbox until it is staged.
+The same rule caught gap 2 of the arrival: the arrived code fenced its goldens
+in its own `compactionGoldens` but never added them to `goldensRead`, which the
+global `every golden on disk is one this suite fences` case then failed.
+`goldensRead` now folds in `map snd compactionGoldens` rather than spelling the
+paths a second time.
+
+**Why it is not committed.** Two commit attempts were made in the earlier pass
+and both were refused — one blocked by the permission classifier, one declined
+by the operator. Neither was retried, and this pass did not retry either. If the
+operator wants it committed: `flake.lock` first and alone (308 → 310), then step
+7 as one commit over `workflows/Incite/Review.hs`, `test/Spec.hs` and the two
+goldens — **by explicit pathspec, never `git commit -a`**, because the tree is
+shared with a live writer. The message must say the implementation arrived from
+another writer and that this repo verified, completed and fix-passed it rather
+than authored it.
+
+**No post-commit audit ran, because no commit landed.** The audit beat is per
+commit; there is nothing for it to report on.

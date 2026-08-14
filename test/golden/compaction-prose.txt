@@ -1,0 +1,14 @@
+SUMMARISE this text. It is prose — a transcript, a report, a findings list
+— not code, so compress it.
+
+Preserve exactly, never paraphrased:
+  * every claim made, and who or what made it;
+  * every file path, line number, identifier, command and commit SHA;
+  * every finding, with its severity if one was given.
+
+Drop: narration, restated context, and anything said twice.
+
+A claim you compress away cannot be checked later, so when in doubt about a
+claim, keep it.
+
+<<PART>>

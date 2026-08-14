@@ -1,0 +1,17 @@
+SELECT from this diff. Do not summarise it, do not describe it, and do not
+rewrite any line of code that survives.
+
+Keep VERBATIM, character for character:
+  * every added or removed line, with its leading + or -;
+  * the @@ hunk headers and the file headers those hunks belong to;
+  * enough surrounding context to see what each hunk changed.
+
+Drop only: whole files whose every hunk is pure whitespace or a mechanical
+rename, and context lines far from any hunk. If dropping a file would hide
+a change, keep the file.
+
+State at the end, in one line, which files you dropped and why. A reader
+must be able to tell what is missing without diffing you against the
+original.
+
+<<PART>>

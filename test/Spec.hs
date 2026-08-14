@@ -15,7 +15,8 @@ import Test.Tasty.HUnit
 
 import Control.Exception (ErrorCall (..), evaluate, try)
 
-import Agent.Bounds (Fuel (..))
+import Agent.Bounds (Fuel (..), coarsenTo)
+import Agent.Positions (Positions (Positions))
 import Agent.Cost (Cost (..), renderCost, worstCaseCost)
 import Agent.Grant (Grant, permitExec)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped, (>>>))
@@ -150,6 +151,12 @@ import Incite.Prompts
   )
 import Incite.Review
   ( Subject (..)
+  , Payload (..)
+  , compacted
+  , compactionBanner
+  , compactionBrief
+  , splitFor
+  , verbatimCheck
   , admits
   , auditReportDir
   , forbiddenPairings
@@ -229,6 +236,7 @@ tests =
     , promptLintTests
     , packagingTests
     , backendTests
+    , compactionTests
     , scopeTests
     , qaFenceTests
     , haskellRouteTests
@@ -3666,7 +3674,8 @@ splicedPromptPaths =
     . T.lines
 
 -- | Where the recorded prompt bytes live, and the golden the @prompt-lint@
--- fence reads. Every other golden is a reframing\'s, named in 'reframings'.
+-- fence reads. Every other golden is a reframing\'s, named in 'reframings', or
+-- a compaction brief\'s, named in 'compactionGoldens'.
 goldenDir :: FilePath
 goldenDir = "test/golden"
 
@@ -3682,8 +3691,18 @@ promptLintGolden = goldenDir <> "/prompt-lint-brief.txt"
 -- as well, so the same trick here finds things that are not reads. The list is
 -- checked against the __directory__ instead, which is the set
 -- @extra-source-files@ has to carry in any case.
+-- The compaction briefs come in as 'compactionGoldens' rather than as two more
+-- string literals here, so the roster this fence checks and the roster
+-- @every payload kind has a recorded brief@ checks against @[minBound ..]@ are
+-- the same list. Spelled twice, a new 'Payload' could be recorded, fenced by
+-- its own group, and still fail here for a reason that has nothing to do with
+-- it.
 goldensRead :: [FilePath]
-goldensRead = promptLintGolden : remediateGolden : [path | (_, _, path) <- reframings]
+goldensRead =
+  promptLintGolden
+    : remediateGolden
+    : map snd compactionGoldens
+      <> [path | (_, _, path) <- reframings]
 
 -- | The entries of the cabal file\'s @extra-source-files@ stanza: the indented
 -- non-comment lines after it, up to the next column-zero line.
@@ -5418,3 +5437,281 @@ backendTests =
         . filter (T.isPrefixOf "--")
         . map T.strip
         . T.lines
+
+-- | The sample a compaction is exercised over: a two-file unified diff with a
+-- preamble, in the shape @git show@ produces.
+--
+-- Hand-written rather than captured, because what it has to contain is a
+-- structure, not a real change: a commit message BEFORE the first
+-- @diff --git@ (the part a naive split drops on the floor), two file sections
+-- so a bound of 1 has something to coarsen, and a @-@\/@+@ pair whose defect
+-- lives in the exact characters — @>@ where @>=@ belongs — which is the token a
+-- summary would eat.
+sampleDiff :: Text
+sampleDiff =
+  T.intercalate
+    "\n"
+    [ "commit deadbeef"
+    , "    Tighten the bound"
+    , ""
+    , "diff --git a/src/A.hs b/src/A.hs"
+    , "--- a/src/A.hs"
+    , "+++ b/src/A.hs"
+    , "@@ -1,3 +1,3 @@"
+    , " prelude"
+    , "-  | n > limit = Nothing"
+    , "+  | n >= limit = Nothing"
+    , " trailing"
+    , "diff --git a/src/B.hs b/src/B.hs"
+    , "--- a/src/B.hs"
+    , "+++ b/src/B.hs"
+    , "@@ -9,2 +9,2 @@"
+    , "-old"
+    , "+new"
+    ]
+
+-- | The prose counterpart: paragraphs separated by a blank line, one of which
+-- carries the identifiers a summary is forbidden to paraphrase away.
+sampleProse :: Text
+sampleProse =
+  T.intercalate
+    "\n\n"
+    [ "The run completed with two findings."
+    , "MEDIUM at src/Agent/Run.hs:1724 — withEmptyRetry keys on message text."
+    , "LOW — the retry adds load when the backend is already unwell."
+    ]
+
+-- | Prose the way a transcript, a log or a JSONL capture actually arrives: one
+-- event per line, no blank line anywhere. Six lines, so a bound of 3 coarsens
+-- to exactly 3 parts.
+--
+-- This is the shape a blank-line split cannot split at all, and the reason
+-- 'splitFor' cuts prose at the line instead.
+lineOrientedProse :: Text
+lineOrientedProse =
+  T.intercalate
+    "\n"
+    [ "{\"t\":1,\"leaf\":\"review:qa\",\"event\":\"start\"}"
+    , "{\"t\":2,\"leaf\":\"review:qa\",\"event\":\"tool\",\"cmd\":\"git diff\"}"
+    , "{\"t\":3,\"leaf\":\"review:qa\",\"event\":\"finding\",\"sev\":\"MEDIUM\"}"
+    , "{\"t\":4,\"leaf\":\"review:fess\",\"event\":\"start\"}"
+    , "{\"t\":5,\"leaf\":\"review:fess\",\"event\":\"finding\",\"sev\":\"LOW\"}"
+    , "{\"t\":6,\"leaf\":\"review:fess\",\"event\":\"done\"}"
+    ]
+
+-- | A diff compaction of the shape the brief asks for: whole files dropped,
+-- every surviving changed line character for character.
+selectedDiff :: Text
+selectedDiff =
+  T.intercalate
+    "\n"
+    [ "diff --git a/src/A.hs b/src/A.hs"
+    , "@@ -1,3 +1,3 @@"
+    , "-  | n > limit = Nothing"
+    , "+  | n >= limit = Nothing"
+    , "Dropped: src/B.hs (mechanical rename)."
+    ]
+
+-- | The same compaction as a model that ignored the brief produces: the change
+-- described in words, with none of the tokens a defect lives in.
+summarisedDiff :: Text
+summarisedDiff = "The change tightens the bounds check in A.hs and renames a binding in B.hs."
+
+-- | __Compaction, and the one property the whole thing rests on.__
+--
+-- 'Incite.Review.compacted' exists so a payload too big for a window can still
+-- be reviewed. That is only worth anything if compaction is __lossless at the
+-- split__ — upstream's @boundedSplit@ under @Coarsen@ promises to re-partition
+-- LARGER with no content dropped, and 'splitFor' is what feeds it. A split that
+-- silently ate the commit message, or a file section, would leave every lens
+-- downstream reviewing a hole and reporting no finding in it.
+--
+-- So the ordering of these cases is deliberate: the loss-free law first,
+-- because a golden over a brief nobody can trust the input of is decoration.
+compactionTests :: TestTree
+compactionTests =
+  testGroup
+    "compaction"
+    [ testGroup
+        "the split drops nothing"
+        [ -- __The law, stated as reassembly.__ Not "the parts are non-empty"
+          -- and not "there are N of them": those pass for a split that dropped
+          -- the preamble. Rejoining the parts must give back the original
+          -- exactly, which is the only statement that catches a lost line
+          -- wherever it fell.
+          -- Quantified over BOTH payload kinds and over the shapes real input
+          -- arrives in, because the law was previously true only of a sample
+          -- built without a trailing newline: `T.lines "x\n" == ["x"]`, and
+          -- every `git show` ends in a newline, so the law as first stated held
+          -- for the test and not for the flow.
+          testCase "every payload kind rejoins to exactly the original" $
+            sequence_
+              [ T.intercalate "\n" (splitFor kind t) @?= t
+              | kind <- [minBound .. maxBound]
+              , t <-
+                  [ ""
+                  , sampleDiff
+                  , sampleDiff <> "\n" -- what git actually emits
+                  , sampleProse
+                  , sampleProse <> "\n"
+                  , lineOrientedProse
+                  , "no headers at all"
+                  , "a\r\nb\r\n" -- CRLF: the \r stays with its line
+                  , "\n\n\n"
+                  ]
+              ]
+        , -- The preamble is called out on its own because it is the part a
+          -- split-on-header implementation loses first, and losing it loses
+          -- every claim the commit message made — which is what the fess lens
+          -- reads.
+          testCase "the text before the first diff --git is its own part, not dropped" $ do
+            let parts = splitFor DiffPayload sampleDiff
+            assertBool "no part carries the commit message" $
+              any ("commit deadbeef" `T.isInfixOf`) parts
+            assertBool "the preamble was merged into the first file section" $
+              not (any (\p -> "commit deadbeef" `T.isInfixOf` p && "diff --git" `T.isInfixOf` p) parts)
+        , testCase "one part per file section, plus the preamble" $
+            length (splitFor DiffPayload sampleDiff) @?= 3
+        , testCase "prose splits by line, blank lines and all" $ do
+            let parts = splitFor ProsePayload sampleProse
+            length parts @?= 5 -- three paragraphs and the two blank lines between them
+            assertBool "an identifier-bearing paragraph was dropped" $
+              any ("src/Agent/Run.hs:1724" `T.isInfixOf`) parts
+        , -- __The split that does not split is the whole failure.__ Coarsen
+          -- only ever MERGES, so a payload that yields one unit stays one unit
+          -- and the single leaf under it is handed the entire oversized
+          -- artifact — silently, under a banner honestly reporting "1 part(s)".
+          -- A blank-line split does exactly that to a transcript or a log,
+          -- which is the payload kind the prose strategy names as its use.
+          testCase "line-oriented prose with no blank line still splits" $ do
+            assertBool "prose with no blank line collapsed to one unit" $
+              length (splitFor ProsePayload lineOrientedProse) > 1
+            sent <- flowLeafPrompts "compact" (compacted ProsePayload (coarsenTo 3)) lineOrientedProse
+            length sent @?= 3
+        , -- A split is run over whatever it is handed, including the shapes a
+          -- caller does not think about. None of these may crash or invent
+          -- content.
+          testCase "degenerate inputs do not lose or invent content" $ do
+            splitFor DiffPayload "" @?= []
+            splitFor ProsePayload "" @?= []
+            splitFor ProsePayload "one line" @?= ["one line"]
+        ]
+    , testGroup
+        "the artifact says it is a compaction"
+        [ -- __Without this the combinator is a liability rather than a
+          -- feature.__ Findings on a compaction read exactly like findings on
+          -- the code, so a lens reporting "nothing here" about a hunk it was
+          -- never shown is a false negative wearing a model's name. The banner
+          -- is the only thing that tells the synthesis, and the reader, which
+          -- of the two it is holding.
+          testCase "the banner announces the compaction, its strategy, its parts and its bound" $ do
+            let rendered = compactionBanner DiffPayload (coarsenTo 5) (Positions ["a", "b"])
+            mapM_
+              (\needle -> assertBool ("banner omits " <> T.unpack needle) (needle `T.isInfixOf` rendered))
+              [ "COMPACTION"
+              , "not the artifact itself"
+              , "SELECTION"
+              , "2"
+              , "5"
+              , "absence of a finding here is not"
+              ]
+        , testCase "the strategy named is the strategy the payload kind gets" $ do
+            assertBool "diff banner does not say SELECTION" $
+              "SELECTION" `T.isInfixOf` compactionBanner DiffPayload (coarsenTo 1) (Positions ["x"])
+            assertBool "prose banner does not say SUMMARY" $
+              "SUMMARY" `T.isInfixOf` compactionBanner ProsePayload (coarsenTo 1) (Positions ["x"])
+        , testCase "the part count reported is the part count carried" $
+            mapM_
+              ( \n ->
+                  assertBool ("banner miscounts " <> show n) $
+                    (" " <> tshow n <> " part(s)") `T.isInfixOf` compactionBanner ProsePayload (coarsenTo 9) (Positions (replicate n "p"))
+              )
+              [1 :: Int, 2, 7]
+        ]
+    , testGroup
+        "the compaction is checked, not taken on trust"
+        [ -- __The banner warns about what was dropped; this catches what was
+          -- REWRITTEN.__ A model that summarises a diff anyway produces prose
+          -- about code, and every downstream lens then reviews a paraphrase
+          -- and finds nothing — a false negative wearing a model's name. The
+          -- count is the only thing in the flow that is not the model's own
+          -- account of what it did.
+          testCase "a faithful selection is counted as one" $ do
+            let out = verbatimCheck DiffPayload sampleDiff selectedDiff
+            assertBool "no fidelity count reported" $ "2 of 4" `T.isInfixOf` out
+            assertBool "the compaction itself was not passed through" $
+              selectedDiff `T.isInfixOf` out
+        , testCase "a summarised diff counts zero surviving lines" $
+            assertBool "a summary was not caught" $
+              "0 of 4" `T.isInfixOf` verbatimCheck DiffPayload sampleDiff summarisedDiff
+        , -- Full marks for a compaction that dropped nothing, which also fences
+          -- the denominator: @+++ @\/@--- @ file headers are +\/- prefixed too,
+          -- and counting them would say 8 of 8 for the same sample.
+          testCase "an identity compaction scores full marks, headers excluded" $
+            assertBool "denominator is not the count of changed lines" $
+              "4 of 4" `T.isInfixOf` verbatimCheck DiffPayload sampleDiff sampleDiff
+        , -- A summary is TOLD to paraphrase, so a verbatim count over prose
+          -- would report a failure every time and mean nothing.
+          testCase "prose carries no verbatim count" $
+            verbatimCheck ProsePayload sampleProse "a summary" @?= "a summary"
+        , testCase "a diff with no changed lines carries no count" $
+            verbatimCheck DiffPayload "commit deadbeef\n" "whatever" @?= "whatever"
+        ]
+    , testGroup
+        "the fan-out"
+        [ -- The bound is the contract with the window: at most this many parts,
+          -- each compacted on its own, so no leaf in the flow is ever sent the
+          -- oversized whole.
+          testCase "sends one leaf per part and never more than the bound" $ do
+            sent <- flowLeafPrompts "compact" (compacted DiffPayload (coarsenTo 2)) sampleDiff
+            length sent @?= 2
+        , testCase "every line of the original reaches some leaf" $ do
+            sent <- flowLeafPrompts "compact" (compacted DiffPayload (coarsenTo 2)) sampleDiff
+            let whole = T.unlines sent
+            mapM_
+              (\l -> assertBool ("no leaf was sent: " <> T.unpack l) (l `T.isInfixOf` whole))
+              (filter (not . T.null) (T.lines sampleDiff))
+        , -- __The strategies must not be swappable by accident.__ A diff brief
+          -- that said "summarise" would pass every structural case above and
+          -- destroy the feature: the lenses would review prose about code.
+          testCase "the diff brief demands verbatim and forbids summarising" $ do
+            let body = promptText (compactionBrief DiffPayload "PART")
+            assertBool "diff brief does not forbid summarising" $ "Do not summarise" `T.isInfixOf` body
+            assertBool "diff brief does not demand verbatim" $ "VERBATIM" `T.isInfixOf` body
+            assertBool "diff brief drops its part" $ "PART" `T.isInfixOf` body
+        , testCase "the prose brief asks for summary and protects identifiers" $ do
+            let body = promptText (compactionBrief ProsePayload "PART")
+            assertBool "prose brief does not ask to summarise" $ "SUMMARISE" `T.isInfixOf` body
+            assertBool "prose brief does not protect identifiers" $
+              "line number" `T.isInfixOf` body
+            assertBool "prose brief drops its part" $ "PART" `T.isInfixOf` body
+        , -- Recorded off the shipped briefs, per payload kind, so a reworded
+          -- strategy shows up as a diff in review rather than as a quiet change
+          -- of what every compaction does. The needle cases above say what the
+          -- words must MEAN; these say the bytes did not move under anyone.
+          testCase "the briefs are byte-for-byte the recorded ones" $
+            mapM_
+              ( \(kind, path) -> do
+                  recorded <- TIO.readFile path
+                  promptText (compactionBrief kind "<<PART>>") @?= recorded
+              )
+              compactionGoldens
+        , -- What keeps the golden list honest. It is hand-written, so a third
+          -- Payload constructor would otherwise ship with no recorded brief and
+          -- nothing would say so.
+          testCase "every payload kind has a recorded brief" $
+            map fst compactionGoldens @?= [minBound .. maxBound]
+        ]
+    ]
+
+-- | The recorded brief bytes, one per 'Payload' constructor.
+--
+-- The list is hand-written, so it can fall behind the type. @every payload kind
+-- has a recorded brief@ is what stops that: it compares this list against
+-- @[minBound .. maxBound]@, so a third constructor with no golden fails rather
+-- than silently going unfenced.
+compactionGoldens :: [(Payload, FilePath)]
+compactionGoldens =
+  [ (DiffPayload, goldenDir <> "/compaction-diff.txt")
+  , (ProsePayload, goldenDir <> "/compaction-prose.txt")
+  ]
