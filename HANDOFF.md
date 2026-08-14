@@ -418,10 +418,17 @@ window. Part A is done. **Part B is not started.**
   was passed inline (`BLOCK_OPENCODE=1 …`) for the blocked runs.
 - [x] 5. Commit lock + haddock. DONE — `c23e241`.
 - [x] 6. Post-commit audit + one fix pass. DONE — see below.
-- [ ] 7. **Compaction on `partitionReview`/`boundedSplit`.** NOT STARTED.
+- [~] 7. **Compaction on `partitionReview`/`boundedSplit`.** IN THE WORKING TREE,
+  **NOT WRITTEN BY THIS SESSION AND NOT COMMITTED** — see "Another writer owns
+  `Review.hs` and `Spec.hs`" below before touching either file.
 - [ ] 8. **`--without-backend` + `passMainWith`, upstream.** NOT STARTED.
-- [ ] 9. **Capture live `usage_update` payloads.** NOT STARTED.
-- [ ] 10. **Escalation target on the scope, upstream.** NOT STARTED.
+- [x] 9. **Capture live `usage_update` payloads.** DONE as a design question,
+  and the answer **refutes the plan's premise**: a payload DOES carry a
+  denominator. See "Step 9 answered" below. What is still owed is a captured
+  wire sample for codex and opencode — not needed to unblock step 10 on
+  claude-agent.
+- [ ] 10. **Escalation target on the scope, upstream.** NOT STARTED, but now
+  UNBLOCKED for claude-agent by step 9's answer.
 
 ## Handoff notes
 
@@ -472,10 +479,9 @@ Ground facts, re-verified at lock 308 unless noted:
   window size. `Cost.hs` costs leaves and turns, never tokens.
 - **`usage_update` is still discarded**, `src/Agent/Acp/Protocol.hs:701`
   ("token bookkeeping; pure noise in the console") — the line moved 700→701 in
-  the 308 bump but the behaviour did not. The only samples in the tree are
-  upstream's own fixtures: a bare `totalTokens` with **no denominator**. Step 9
-  exists to find out whether a live payload carries one; step 10's design
-  depends entirely on that answer.
+  the 308 bump but the behaviour did not. **The premise that followed this in
+  earlier drafts — "a bare `totalTokens` with no denominator" — is WRONG; see
+  "Step 9 answered" below.**
 - **`partitionReview`, `boundedSplit`, `reviewScales`, `joinWindows`,
   `chunksOf`** all exist at `src/Agent/Flow/Combinators.hs:185-222`, and
   `Agent.Bounds` has `Coarsen | FailWidth | Sample`. `boundedSplit` under
@@ -510,3 +516,91 @@ compacting for uniformity drags a whole panel down to the smallest window in
 the roster, so a large diff pulls a 1M `fable5` down to codex's window. A
 three-backend panel over a compaction is not obviously better than a
 two-backend panel at full fidelity. Ask; do not let the code choose silently.
+
+## Step 9 answered — a live `usage_update` DOES carry a denominator
+
+Session of 2026-08-14. **This refutes the premise steps 9 and 10 were written
+on.** The plan assumed a payload is a bare `totalTokens` with nothing to divide
+by, so a context-fraction could only ever be estimated. It is not.
+
+Read off the ACP SDK schema that ships inside the adapter incite actually runs
+for `claude-agent` — `claude-agent-acp` 0.64.0. Re-find it after any bump with:
+
+```
+grep -rl usage_update "$(dirname "$(readlink -f "$(which claude-agent-acp)")")"/../lib/node_modules
+# schema:  .../@agentclientprotocol/sdk/schema/schema.json
+# typings: .../@agentclientprotocol/sdk/dist/schema/types.gen.d.ts
+```
+
+The `SessionUpdate` union carries a `usage_update` variant described **"Context
+window and cost update for the session."**, and its payload is:
+
+```
+UsageUpdate = { used: uint64   -- "Tokens currently in context."
+              , size: uint64   -- "Total context window size in tokens."
+              , cost?: Cost|null  -- "Cumulative session cost (optional)."
+              }
+required: ["used", "size"]
+```
+
+`used` and `size` are **both mandatory** (`"required": ["used", "size"]` in
+`schema.json`); only `cost` is optional. So the live context fraction is
+`used / size`, exact, per session, with no estimation and no model table to
+keep current — which is precisely the input step 10's escalation target needs.
+
+**What is NOT established, and do not write it down as if it were:**
+
+- **No captured wire sample exists**, here or anywhere in `.agent-functor/`.
+  It cannot: upstream drops the notification at `Protocol.hs:701` before
+  anything writes it, so the run store has never held one. The evidence above
+  is the protocol contract, which is authoritative for field names, types and
+  required-ness — it is not a recording.
+- **Whether `codex-acp` and `opencode` emit `usage_update` at all is unknown.**
+  Searching `codex-acp` 0.13.0's vendor-staging tree
+  (`/nix/store/165mwgzy…-codex-acp-0.13.0-vendor-staging`) finds `UsageUpdate`
+  only in codex's OWN app-server SDK (`sdk/python/src/codex_app_server/…`),
+  a different protocol, and no ACP `agent-client-protocol` crate carrying the
+  variant. That is suggestive, **not** conclusive: a vendor-staging tree is not
+  the built binary. Settle it by capturing the wire, not by grepping again.
+
+**Consequence for step 10.** Its design is unblocked on claude-agent and only
+on claude-agent. A scope-level escalation keyed on `used / size` is exact where
+the notification arrives and silent where it does not, so it needs a stated
+fallback for a backend that never sends one — do not assume roster-wide cover.
+
+## Another writer owns `Review.hs` and `Spec.hs` — read this before editing them
+
+Session of 2026-08-14, and it cost this session its step-7 work. Observed, in
+order:
+
+1. `git status` at session start: **clean**, at `25fc32f`.
+2. Partway in, `test/Spec.hs` and `workflows/Incite/Review.hs` held **~378
+   uncommitted lines** implementing step 7 as a general `Payload`/`compacted`
+   combinator over `partitionReview` — with haddocks, a `compactionTests`
+   group, and a deliberate decision NOT to wire it into any shipped tier
+   (which respects the operator decision recorded above). **This session did
+   not write any of it.**
+3. `flake.lock` moved **308 → 309** (`9cec91d` → `ca258f6`) on its own, with no
+   action from this session — the same way 308 arrived mid-session before it.
+4. This session made one 4-line export edit to `Review.hs`. **It was reverted by
+   the other writer**, confirmed by `grep` finding none of the four names in
+   either file afterwards.
+
+So edits to those two files may be silently discarded. The prior stash entries
+say this is not new — `git stash list` still holds two, both labelled
+`UNSOLICITED: … added by an unsandboxed review-lite/review-docs agent session`.
+
+**What a successor must do before resuming step 7:**
+
+- Do **not** `git commit -a`. Commit by explicit pathspec, or you will commit
+  another agent's in-flight work under your own message.
+- Establish who the writer is and stop it, or take the work into a worktree of
+  your own. `ps aux | grep agent-functor` during this session showed a live
+  `agent-functor run ship-feature` (PID 1905258), but its `--capture-context`
+  path pointed at `/home/isaac/_/flake.engineering/lanes-matic/`, a different
+  repository — so it was **not** identified as the writer. Nothing here proves
+  what wrote those lines.
+- The arrived step-7 code is **unverified and incomplete**: it was never
+  compiled by this session, and its golden cases read
+  `test/golden/compaction-diff.txt` and `test/golden/compaction-prose.txt`,
+  **neither of which exists** — so that suite cannot pass as it stands.
