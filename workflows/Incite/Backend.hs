@@ -178,6 +178,46 @@ opencodeBackend = opencodeBackendFor blockOpencode
 -- @backendsFor False@ built on the CAF returned @[claude-agent, codex, codex]@
 -- under @BLOCK_OPENCODE@ — the very duplicate 'backendsFor' documents itself as
 -- dropping — so the one test written to be environment-independent was not.
+--
+-- __The unblocked entry stays on 'defaultModel' by decision, not by absence of
+-- an alternative.__ It reads like the unfinished half of 'gpt55', so the reason
+-- is recorded here rather than left to be re-derived. @opencodeModel@ is legal:
+-- upstream moved @SelectsModel \'Opencode@ out of its @TypeError@ branch to
+-- @()@ in @c879ee1@, once it found the model picker had merely moved to
+-- @configOptions@ and was selectable all along. The menu is not thin either —
+-- @doctor@ on the machine this was written on reports 77 wire-selectable
+-- opencode models against codex's 20.
+--
+-- What stops us pinning one is that __opencode ids are provider-qualified and
+-- install-specific__: @google\/gemini-3.1-pro-preview@, @xai\/grok-4.6@,
+-- @zai-coding-plan\/glm-5.3@. Which providers appear depends on the credentials
+-- and config of the install, so the id is readable only off @agent-functor
+-- doctor@ __on a machine that has opencode__ — and a pin is a repository-wide
+-- constant applied to every such machine. Pin an id no local @doctor@ run
+-- verified and 'Agent.Op.matchModelKey' finds no match, so preflight refuses
+-- every opencode leaf on every opencode machine: the pin trades a working
+-- default for a fleet-wide outage on the strength of one laptop's menu.
+--
+-- 'gpt55' is the counter-precedent, and it is a counter-precedent because the
+-- failure had already happened. There, inheriting the settings file failed
+-- __every__ codex turn with @Internal error@ and silently took three of
+-- @review-lite@\'s five lenses with it; naming a model was the only way to stop
+-- an interactive tool's config from deciding what a review panel runs. No fleet
+-- machine has hit that failure mode on opencode — its default resolves and its
+-- turns complete. Absent that evidence the pin buys nothing and risks the
+-- outage above. Revisit when a specific opencode default is __observed__ to
+-- fail a turn, and pin the id read off that machine's own @doctor@.
+--
+-- __@droid@ stays out of the roster on the same evidence rule.__ Upstream ships
+-- 'Agent.Backend.droid' and @droidModel@, but marks droid's model-selection
+-- mechanism __unverified__ — no install was available to probe — and unverified
+-- there means permissive, so the type system would wave a @droidModel@ pin
+-- through and leave preflight to discover the truth at run time. @doctor@ here
+-- reports droid as not available at all (@execvp: does not exist@). A fourth
+-- roster slot whose model mechanism nobody has confirmed, on a backend no
+-- machine in the fleet can launch, would widen every @panelAcross@
+-- cross-product with a leaf that cannot run — the same arithmetic
+-- 'backendsFor' refuses when it drops the blocked duplicate.
 opencodeBackendFor :: Bool -> (LeafName, Flow Text Text -> Flow Text Text)
 opencodeBackendFor True = codexBackend
 opencodeBackendFor False = ("opencode", withBackend opencode defaultModel)
