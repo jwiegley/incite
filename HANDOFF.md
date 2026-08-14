@@ -388,3 +388,125 @@ machine is blocked on a smartcard PIN. Owned by the operator.
   warns about for concurrency. Bounded to one retry per leaf, so tail-case
   only, but it can turn one lost lens into a lost run. Fix shape: back the
   retry off, or make it not fire when a sibling has already retried.
+
+# Bump + context-overflow plan — handoff
+
+Second plan in this file, started 2026-08-14. Two parts: **A** lands the
+agent-functor lock bump and records why opencode stays on `defaultModel`;
+**B** gives the repo something to do when a payload will not fit a context
+window. Part A is done. **Part B is not started.**
+
+## Task list
+
+- [x] 1. Re-confirm the ground facts. DONE — tree was exactly as the plan
+  recorded it (`d1ebfe4`, only `flake.lock` dirty at 5eec06c→1fca34f), so no
+  re-derivation was needed. Re-checked again after the tree moved to 308: the
+  facts below still hold.
+- [x] 2. Haddock on `opencodeBackendFor`'s `False` clause recording that
+  `defaultModel` is a decision taken WITH `opencodeModel` available. DONE in
+  `c23e241`, then **corrected in `c027f4c`** after the audit — see below. The
+  plan said the backend advertises 74 models; live `doctor` says **77**, and
+  upstream's own haddock still says 74 at `src/Agent/Backend.hs:389`. Both were
+  true when written; the number is install-specific and nothing gates it.
+- [x] 3. `nix flake check`. DONE, exit 0. Reported per attribute in `9a256a6`'s
+  body, not as one word: `checks.unit-test` BUILT and ran; `ste-prompts` was
+  previously built; the package and devShell attributes say `(build skipped)`
+  — Determinate Nix 3.22.0 evaluates but does not build them under flake check,
+  so their ticks are NOT evidence they build.
+- [x] 4. Suite in blocked roster mode. DONE. Note the plan assumed
+  `BLOCK_OPENCODE` was set on this machine; **it is unset in the shell**, and
+  was passed inline (`BLOCK_OPENCODE=1 …`) for the blocked runs.
+- [x] 5. Commit lock + haddock. DONE — `c23e241`.
+- [x] 6. Post-commit audit + one fix pass. DONE — see below.
+- [ ] 7. **Compaction on `partitionReview`/`boundedSplit`.** NOT STARTED.
+- [ ] 8. **`--without-backend` + `passMainWith`, upstream.** NOT STARTED.
+- [ ] 9. **Capture live `usage_update` payloads.** NOT STARTED.
+- [ ] 10. **Escalation target on the scope, upstream.** NOT STARTED.
+
+## Handoff notes
+
+- Three commits, oldest first:
+  - `c23e241` — the 288→307 bump (`5eec06c`→`1fca34f`) plus the step-2 haddock.
+  - `c027f4c` — the audit fix pass. Not itself audited, per the loop's rule.
+  - `9a256a6` — the 307→308 bump (`1fca34f`→`9cec91d`, upstream "yolo"),
+    observability only: `Agent.Tui.Theme`, `otherToolLines` so a non-shell /
+    non-read / non-edit tool call's result reaches the live console, and
+    highlight/markdown changes. **This bump is NOT part of the plan** — it
+    appeared in the tree mid-session and was committed with its reason recorded
+    rather than folded silently into another commit, per the convention the
+    267→272 note above set.
+- **Closing counts, at `9a256a6`:**
+  - `nix flake check` — exit 0, with the per-attribute qualifiers above.
+  - `BLOCK_OPENCODE=1 nix develop -c cabal test` — **297 tests, 0 failures**.
+  - `nix develop -c cabal test` — **297 tests, 0 failures**.
+  - 295 → 297 is the two fences step 6 added. Both roster modes give the same
+    count because the roster-dependent cases assert the roster they are in.
+- **`.agent-functor/` is gitignored and the tree does not carry it.** It holds
+  this session's `review-lite` run-1 transcript and the **25 completed
+  `@opencode` leaf records** that `Incite.Backend`'s haddock cites as its
+  evidence for "opencode's default resolves and its turns complete". A fresh
+  clone has neither, so that haddock sentence is not re-checkable from the tree
+  alone — which is why it now names the path it argues from.
+- **What the audit caught, because the pattern is the lesson.** Every finding
+  was prose claiming more than its evidence, none was a code defect (the diff
+  was comment lines):
+  - two false statements about where the upstream range lands (`96800fe` is in
+    `Agent/Acp/Subprocess.hs`, not `Agent/Run.hs`; `662c17b` is library code
+    incite consumes, not the "mutation tooling" the message swept it into);
+  - `nix flake check` reported as "all packages" green off ticks that say
+    `(build skipped)`;
+  - two haddock overreaches quantified across machines nobody had read.
+  The commit messages of `c23e241` and `9a256a6` were amended to state what the
+  tools actually printed. **Do not report a `(build skipped)` as a build.**
+- **Both new fences were red-trialled**, not assumed: reinstating "every
+  opencode machine" fails `test/Spec.hs:3651`; weakening the droid header
+  sentence fails `test/Spec.hs:5384`. A fence over prose is worth nothing until
+  it has been seen to fail.
+
+## Part B — what a successor needs before starting
+
+Ground facts, re-verified at lock 308 unless noted:
+
+- **No context-window tracking exists upstream.** `Capabilities` records
+  `capModels`, `capModelSupport`, `capLoadSession`, `capHonorsClientFs` — no
+  window size. `Cost.hs` costs leaves and turns, never tokens.
+- **`usage_update` is still discarded**, `src/Agent/Acp/Protocol.hs:701`
+  ("token bookkeeping; pure noise in the console") — the line moved 700→701 in
+  the 308 bump but the behaviour did not. The only samples in the tree are
+  upstream's own fixtures: a bare `totalTokens` with **no denominator**. Step 9
+  exists to find out whether a live payload carries one; step 10's design
+  depends entirely on that answer.
+- **`partitionReview`, `boundedSplit`, `reviewScales`, `joinWindows`,
+  `chunksOf`** all exist at `src/Agent/Flow/Combinators.hs:185-222`, and
+  `Agent.Bounds` has `Coarsen | FailWidth | Sample`. `boundedSplit` under
+  `Coarsen` re-partitions LARGER with no content dropped. incite references
+  none of them — `partitionReview split bound name brief reduce` is the whole
+  of step 7's fold: split into ≤bound chunks, prompt each, reduce.
+- **`BLOCK_OPENCODE` has never existed upstream** — it is incite-local, an
+  `unsafePerformIO` CAF at `workflows/Incite/Backend.hs`. Step 8 deletes it.
+  There are **53 references** to it across `test/Spec.hs` (31),
+  `workflows/Incite/Backend.hs` (14), `docs/workflows.md` (6), `HANDOFF.md` and
+  `workflows/Incite/Review.hs` (1 each) — the plan said ~25, so budget for
+  twice that.
+- **The bare-`Bool` signatures** on `backendsFor`, `opencodeBackendFor` and
+  `blockOpencode` are a standing hit under the local Haskell addendum
+  (boolean blindness). Deliberately left alone: step 8 removes the parameter
+  entirely, and fixing it first would only collide.
+- **Live `doctor` on this machine**: `claude-agent` has `opus[1m]` and
+  `claude-fable-5[1m]`, so `fable5` already resolves to a 1M model; `codex` has
+  20 models and **no 1M sibling to escalate to**; `opencode` is the only
+  non-claude 1M home (`google/gemini-3.1-pro-preview`, `google/gemini-3.7-flash`,
+  `xai/grok-4.6`); `droid` is not installed (`execvp: does not exist`).
+
+**The blocker on steps 8 and 10**: both land in
+`/home/isaac/_/agent-functor/master`, where push is blocked on a smartcard PIN.
+An agent can author those commits but cannot push them or re-lock incite
+against them, so each ends handed to the operator, with the matching lock bump
+a separate commit afterwards. Step 7 is the only Part B item that needs no
+upstream change — start there.
+
+**One decision for the operator, which step 7 must not settle in code**:
+compacting for uniformity drags a whole panel down to the smallest window in
+the roster, so a large diff pulls a 1M `fable5` down to codex's window. A
+three-backend panel over a compaction is not obviously better than a
+two-backend panel at full fidelity. Ask; do not let the code choose silently.
