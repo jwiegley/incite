@@ -14,9 +14,12 @@ A property test earns its place when one of these holds.
 - The input space is too large for examples to mean anything: arbitrary
   strings, arbitrary lists, arbitrary trees.
 
-First read the property tests that already exist, so you do not propose one
-the suite already has. Grep for the property-test vocabulary of each framework
-the project facts name.
+First establish which property-test framework this project uses, if any, and
+read the property tests that already exist, so you do not propose one the
+suite already has. Grep for that framework's vocabulary. Where the project has
+no property library at all, say so in one line with the evidence: the
+candidates below are still worth naming, and a reader has to know that acting
+on them means adopting a dependency first.
 
 Then read the production code for candidates that today have only
 example-based tests. The usual homes: parsers, encoders and decoders, state

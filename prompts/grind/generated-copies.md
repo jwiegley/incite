@@ -1,8 +1,15 @@
 You are auditing a source tree for **hand-written copies of generated code**.
-The project facts name a source-of-truth layer that generates code for more
-than one language. Any hand-written type, union, encoder, decoder or constant
-map that duplicates a generated one is a bug that has not happened yet: the
-source changes, the generated code follows, and the copy stays behind.
+
+Establish first whether this project generates any code: a schema, an IDL, a
+protocol definition or a generator whose output is committed to the tree. If
+it generates none, report that in one line, name the search or the build file
+that settles it, and stop. There are no copies to find, and proposing that the
+project adopt a generator is not the work of this lens.
+
+Where there is such a source of truth, any hand-written type, union, encoder,
+decoder or constant map that duplicates a generated one is a bug that has not
+happened yet: the source changes, the generated code follows, and the copy
+stays behind.
 
 Hunt these, in this order.
 

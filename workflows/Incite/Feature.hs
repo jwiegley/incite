@@ -64,6 +64,7 @@ module Incite.Feature
   , docsRule
   , codeRule
   , actingGrant
+  , planSteer
   , closeWithChanges
   , fixerContinuation
   , orchestrate
@@ -227,11 +228,11 @@ planFeature =
 --   the gate are the harness's own exit codes, not the fixer's word. A red
 --   tree costs 'repairFuel' repair trips and then aborts, instead of reaching
 --   the gate wearing a confident paragraph.
--- * The steer and gate texts — the person's half: the plan steer asks for the
---   acceptance bar up front, and the gate question asks that a no carry the
---   defect's name, because 'Agent.Flow.Combinators.humanGate' records the
---   whole answer in the halt reason and a bare no tells the next session
---   nothing.
+-- * 'planSteer' — the person's half: the plan checkpoint asks for the
+--   acceptance bar up front rather than for guidance in general, which is a
+--   question an empty submit answers honestly. It is a binding shared by all
+--   three acting workflows, because the same four-second empty steer was
+--   available in each of them.
 shipFeature :: Workflow
 shipFeature =
   workflowGReq
@@ -248,14 +249,14 @@ shipFeature =
     (actingGrant <> retroGrant)
     $ explorePlan
       >>> editPlan
-      >>> steer "Review the plan — state the acceptance bar the pull-request gate will hold, then add any guidance before implementation begins"
+      >>> steer (planSteer "implementation")
       >>> orchestrate auditedImplement
       >>> completionGate
       >>> reviewChange
       >>> remediate codeRule closeWithChanges
       >>> greenGate codeRule codeChecks
       >>> retrospective
-      >>> humanGate "Open a pull request for these changes? A no ends the run — name the defect in your answer, so the next session starts from a finding rather than from a bare refusal."
+      >>> humanGate "Open a pull request for these changes?"
       >>> submitPR "Add --json flag" "Drafted by the ship-feature workflow."
   where
     -- The panel's lenses are written for a diff, and the artifact here is the
@@ -447,7 +448,7 @@ shipDocs =
     actingGrant
     $ explorePlan
       >>> lensEdit [(name, brief body) | (name, body) <- docsPlanLenses]
-      >>> steer "Review the plan — add any guidance before writing begins"
+      >>> steer (planSteer "writing")
       >>> orchestrate document
       >>> completionGate
       -- The docs lenses read an artifact; what reaches them is the worker's
@@ -518,7 +519,7 @@ shipFeatureLite =
     |]
     actingGrant
     $ planLeaf
-      >>> steer "Review the plan — add any guidance before implementation begins"
+      >>> steer (planSteer "implementation")
       >>> orchestrateWith liteFuel implement
       -- The panel's lenses are written for a diff, and the artifact here is the
       -- worker's closing summary: 'asReviewSubject' points them at the tree,
@@ -859,6 +860,31 @@ decideRed t = if isRed t then Left t else Right t
 -- modal.
 actingGrant :: Grant
 actingGrant = execGrant ["nix*"]
+
+-- | The question at the plan checkpoint, parameterised by the noun for what
+-- happens next — @\"implementation\"@ for the two code tiers, @\"writing\"@ for
+-- 'shipDocs'.
+--
+-- __It asks for the acceptance bar, not for \"any guidance\".__
+-- 'Agent.Flow.Combinators.steer' passes the plan through unchanged on an empty
+-- submit, so a question that asks for guidance in general is one an operator can
+-- honestly answer in four seconds by pressing enter — and then nothing in the
+-- run states what the change has to clear. Every stage downstream is an agent
+-- judging its own work against a bar nobody wrote down, and the gate at the far
+-- end has to invent one to answer. The bar is the one thing the operator knows
+-- and no leaf can derive, and 'steer' makes the answer part of the artifact the
+-- worker implements from.
+--
+-- A function of the noun rather than three literals: the three acting workflows
+-- differ only in what follows the checkpoint, and three copies of one question
+-- drift into three different questions — which is how two of them came to ask
+-- for nothing in particular.
+planSteer :: Text -> Text
+planSteer what =
+  "Review the plan — state the acceptance bar this change must clear, and any \
+  \other guidance, before "
+    <> what
+    <> " begins"
 
 -- | The ceiling on how many times a worker may hand itself back its own summary.
 -- 'Nothing' — the default — is no ceiling: the worker runs until it declares

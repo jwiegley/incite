@@ -14,8 +14,14 @@ Follow the **`post-commit-audit`** procedure. It is the single description of wh
 checks to run, what to pass them, and how to poll — do not restate or improvise it
 here, and do not substitute your own idea of a check for it.
 
-Two things it leaves to you, because they belong to this loop and not to the audit:
+Three things it leaves to you, because they belong to this loop and not to the audit:
 
+- **How often to audit.** One step, one commit, one audit: the beat is every step
+  boundary, so a plan of fourteen steps holds fourteen audits. Do not collect the
+  steps and audit once at the close. An audit deferred to the end reports on
+  claims already written into commits nobody will revisit, and it is the audit
+  most likely never to run at all. Each step's findings land against the step that
+  caused them.
 - **How the findings get fixed** — see below. The audit hands them back; it does
   not say who applies them.
 - **When to stop auditing.** Its rule is that a commit fixing an audit finding is
@@ -55,3 +61,22 @@ back rather than accepting the deferral.
 
 Then resume — that commit is not audited again and gets no second subagent, per
 the rule above. Perfect is the enemy of good.
+
+## Closing out: the counts go into the tree before the summary
+
+After the last code commit, and **before you compose any summary of the work**,
+run every suite the change touches and write what came back into the document you
+have been maintaining, or into the body of that final commit. Counts, not
+adjectives: `cabal test — 412 cases, 0 failures`, `nix flake check — green`. A
+suite you did not run is written down as not run.
+
+Name, beside them, anything the run wrote or relied on that the tree does not
+carry — a gitignored path like `.agent-functor/`, a scratch directory, a generated
+fixture, a local checkout a check resolves against — and say what is in it. A
+green that depends on a file nobody else has is not a green anyone else can
+reproduce, and the next session finds that out by failing.
+
+The tree, not only the summary, because the summary is not in the tree. A session
+ends and its scrollback goes with it; what survives is what somebody can `grep`
+for later. A reviewer asked to approve on greens they cannot open can only answer
+no, and that no is your close-out's failure rather than the change's.

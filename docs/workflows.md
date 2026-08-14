@@ -25,7 +25,7 @@ text.
 | Workflow | Kind | Shape |
 |---|---|---|
 | `plan-feature` | prompt-only | explore with four stances, plan, then edit the plan through six code-oriented lenses |
-| `ship-feature` | world-acting | `plan-feature`, steer (asks for the acceptance bar), orchestrated code implementation with a per-trip `trip-fess` claims audit, `reviewHeavyFlow`, remediation, a real-exit-code `nix flake check` gate, retrospective, human gate (a no should name the defect), PR |
+| `ship-feature` | world-acting | `plan-feature`, steer (asks for the acceptance bar), orchestrated code implementation with a per-trip `trip-fess` claims audit, `reviewHeavyFlow`, remediation, a real-exit-code `nix flake check` gate, retrospective, human gate, PR |
 | `ship-feature-lite` | world-acting | plan without the exploration stances, steer, code implementation under an orchestrator capped at three trips, the five-lens per-commit panel, remediation, then a real-exit-code `nix flake check` gate with `repairFuel` trips — and it stops there, with no human gate and no PR |
 | `ship-docs` | world-acting | explore, plan, documentation-strategy and SimpleEnglish plan edits, steer, orchestrated documentation, `reviewDocsFlow`, remediation |
 | `stack-prs` | world-acting | explore, plan, slice and SimpleEnglish plan edits, steer, approval gate, bootstrap, orchestrated branch cutting, a real-exit-code `verify-stack.sh` gate, `reviewHeavyFlow`, remediation, orchestrated draft-and-triage rounds, a second gate, then bottom-first promotion behind a real-exit-code `ci-budget.sh` gate — every acting leaf, the fixer and the repair leaf included, pinned to claude-agent through `stackPin`. Run it with the sandbox OFF |
@@ -169,6 +169,19 @@ are still mediated by the backend's tool permission flow.
   `continueMarker`); with no clause the leaf is byte-for-byte what it was
   before the argument existed, and `test/Spec.hs` pins that against a golden
   recorded beforehand.
+
+One of those pieces is a question put to a person, and it asks for a named
+sentence rather than for guidance in general:
+
+- `planSteer` — the checkpoint between the plan and the work, which all three
+  acting workflows ask through, differing only in the noun for what follows
+  (`"implementation"`, `"writing"`). It asks for **the acceptance bar this
+  change must clear**. A `steer` passes the plan through unchanged on an empty
+  submit, so a question that asked for guidance in general could be answered by
+  pressing enter — after which no stage downstream has a bar to judge the work
+  against, and the gate at the far end has to invent one.
+
+`test/Spec.hs` reads the question off the shipped flows' leaf names.
 
 ## Small changes
 
@@ -452,11 +465,11 @@ its closing summary. One change per mechanism finding:
   own log showed 5004 ms against a 1 s ceiling. The implement brief requires a
   claim that a mechanism fired to quote the log line showing the firing, and
   `fessOfTrip` checks for exactly that gap on every trip.
-- *the person's half* — the plan steer passed empty in 4 seconds and the gate
-  answer was a bare `no`. The steer now asks for the acceptance bar up front,
-  and the gate question asks that a refusal name the defect — `humanGate`
-  records the whole answer in the halt reason, so a named defect survives to
-  the next session.
+- *the person's half* — the plan steer passed empty in 4 seconds. `planSteer`
+  now asks for the acceptance bar up front, in all three acting workflows. The
+  gate at the far end stays a plain yes/no: it was rewritten to ask that a
+  refusal name the defect, and that question is not one this operator intends
+  to answer.
 
 ## Documentation workflow
 

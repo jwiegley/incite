@@ -215,6 +215,7 @@ tests =
     , documentTests
     , remediateTests
     , retrospectiveTests
+    , accountTests
     , retroReportTests
     , shipFeatureRetroTests
     , lensSetViolationsTests
@@ -1025,14 +1026,21 @@ shipFeatureRetroTests =
               ]
           , not (T.isInfixOf (T.unwords (T.words needle)) (T.unwords (T.words leafText)))
           ]
-    , -- The person's half, held where it lives: the leaf NAMES carry the steer
-      -- and gate texts, so the ask for an acceptance bar and for a named defect
-      -- are properties of the shipped flow rather than of documentation.
-      testCase "the steer asks for the acceptance bar and the gate for a named defect" $ do
+    , -- The person's half, held where it lives: the leaf NAME carries the steer
+      -- text, so the ask for an acceptance bar is a property of the shipped
+      -- flow rather than of documentation.
+      --
+      -- The gate at the far end asked a refusal to name the defect and no
+      -- longer does — a question written for an answer the operator has said
+      -- they will never give is a longer prompt for the same yes\/no.
+      -- 'accountTests' fences the steer over all three acting workflows; this
+      -- case is the ship-feature instance of it, kept beside the two structural
+      -- answers it was written with.
+      testCase "the steer asks for the acceptance bar" $ do
         let names = leafNames (wfFlow shipFeature)
         report
           [ "no leaf name carries " <> tshow needle
-          | needle <- ["acceptance bar", "name the defect"]
+          | needle <- ["acceptance bar"]
           , not (any (T.isInfixOf needle) names)
           ]
     ]
@@ -1097,6 +1105,91 @@ retrospectiveTests =
     [ testCase "appends the retro under its own heading, below the work" $ do
         out <- flowOutput "retrospective" retrospective "THE WORK"
         out @?= "THE WORK\n\n## retrospective\n\n" <> leafAnswer
+    ]
+
+-- | What a run has to leave in writing at each of its boundaries: the bar
+-- stated before the work, and the audit and the counts written down during and
+-- after it.
+--
+-- __One retrospective's findings, fenced where each of them lives.__ They are
+-- one group because they share a failure mode rather than a module: every one
+-- of these sentences is one somebody has to be ASKED for, and each went missing
+-- by the ask quietly becoming general — \"any guidance\" instead of the bar,
+-- \"the build is green\" instead of the counts. A general question is
+-- answerable without saying anything, which is what makes the drift invisible
+-- in a run that otherwise looks complete.
+accountTests :: TestTree
+accountTests =
+  testGroup
+    "the account a run leaves"
+    [ -- The question a person answers before any work starts. Read off the leaf
+      -- NAME rather than off 'Incite.Feature.planSteer', because the name is
+      -- what @Agent.Flow.Combinators.steer@ puts to the operator and what @plan@
+      -- renders — a workflow rewired to a hand-written literal stays green here
+      -- only by asking for the same thing.
+      --
+      -- __Quantified over all three acting workflows__ though one retrospective
+      -- prompted it. The three questions differ by a noun and nothing else, and
+      -- a rule fenced only on the workflow known to have needed it is how the
+      -- other two drift back to asking for \"any guidance\" — a question an
+      -- operator can answer honestly in four seconds by pressing enter, leaving
+      -- no stage downstream with a bar to judge the work against.
+      --
+      -- The count is asserted too: a steer that vanished satisfies every phrase
+      -- check in this case vacuously.
+      testCase "every plan steer asks for the acceptance bar" $
+        report
+          [ complaint
+          | wf <- [shipFeature, shipDocs, shipFeatureLite]
+          , let steers = [n | n <- leafNames (wfFlow wf), T.isPrefixOf "steer:" n]
+          , complaint <-
+              [ wfName wf <> " has " <> countWord (length steers) <> " steer leaves, not one"
+              | length steers /= 1
+              ]
+                <> [ wfName wf <> "'s steer does not ask for the acceptance bar: " <> tshow n
+                   | n <- steers
+                   , not (T.isInfixOf "acceptance bar" n)
+                   ]
+          ]
+    , -- The rules the WORKER is told, read off the rendered leaf for
+      -- 'documentTests'\'s reason: these sentences live in @commands/wiggum.md@,
+      -- which both briefs splice, and what has to hold is that they reach the
+      -- agent — not that one file in this repository still contains them.
+      -- Quantified over both workers because both splice that file; @document@'s
+      -- instance is a standing guarantee rather than a regression pin.
+      --
+      -- Two rules, one case, because they are one discipline: the audit runs at
+      -- the boundary of every step rather than once at the close, and the suite
+      -- counts are written into the tree before any summary is composed. Both
+      -- failures look identical from outside — a confident final paragraph over
+      -- work nothing in the tree can confirm.
+      testGroup
+        "the closing account the worker is told to write"
+        [ testCase name $ do
+          leafText <- onlyFlowLeafPrompt name worker "THE PLAN"
+          report
+            [ T.pack name <> " does not say " <> tshow needle
+            | needle <-
+                [ "One step, one commit, one audit"
+                , "before you compose any summary"
+                , "Counts, not adjectives"
+                , "that the tree does not carry"
+                ]
+            , not (T.isInfixOf needle (proseNormal leafText))
+            ]
+        | (name, worker) <- [("implement", implement), ("document", document)]
+        ]
+    , -- The honesty rubric's own version of the same gap. A mechanism is claimed
+      -- from the log line that shows it fire; the outcome afterwards proves
+      -- nothing, because the process may have exited on its own and the field
+      -- may have been empty already. 'saysLoosely' rather than 'says': the file
+      -- is hard-wrapped markdown and both needles straddle a line break in it.
+      testCase "a mechanism that fired is claimed with its log line" $
+        report
+          [ "the fess rubric does not say " <> tshow needle
+          | needle <- ["is proved by the log line showing it fire", "Quote that line"]
+          , not (saysLoosely fess needle)
+          ]
     ]
 
 -- | One row per law of 'preambleOf': a set of preambles that breaks it, the

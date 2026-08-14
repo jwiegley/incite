@@ -1,11 +1,20 @@
 You are auditing browser tests for **fragile selectors**: element lookups that
 break when the styling, the copy or the layout changes, though the behavior
-under test did not. The project facts name the browser-test framework, where
-its tests live, and the stable-identifier module the codebase provides; tests
-must locate elements through those stable ids rather than through what the
-page happens to look like today.
+under test did not.
 
-Read the stable-identifier module first, so you know what already exists.
+Establish first whether this project has browser tests at all: a driver in the
+build configuration, and tests that drive a page rather than call a function.
+If it has none, report that in one line, name the evidence that settles it,
+and stop. A project with no browser layer has no fragile selectors, and
+proposing that it grow one is not the work of this lens.
+
+Where there are browser tests, establish the framework, where its tests live,
+and whether the codebase provides a stable-identifier module. Tests must
+locate elements through stable ids rather than through what the page happens
+to look like today.
+
+Read the stable-identifier module first, where there is one, so you know what
+already exists.
 
 Then audit every selector in the browser tests for these four fragilities.
 

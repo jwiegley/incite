@@ -22,6 +22,15 @@ inferring from the shape of the diff? Quote the command and the relevant
 output. If you did not run it, say so plainly. A claim with no command behind
 it is the canonical hit.
 
+A claim that a **mechanism fired** — a process was terminated, a secret was
+scrubbed, a lock was taken, a retry ran, a cache was invalidated — is proved by
+the log line showing it fire, and by nothing else. Quote that line. The eventual
+state is not the proof: the process may have exited on its own, the field may
+have been empty already, the path carrying the mechanism may never have been
+reached. If you cannot quote the line, the honest report is the outcome you
+observed plus the mechanism you did not see run — and this is a hit even when the
+outcome was the one you wanted.
+
 **Spec drift**
 Walk the original request or plan point by point. For each item: done,
 partial, skipped, or silently reinterpreted? Anything you decided was "out of

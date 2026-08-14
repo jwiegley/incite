@@ -5,8 +5,11 @@ what global state does this test touch, and does it clean up.
 
 Hunt these four classes.
 
-1. **Serial tests that could run parallel.** Find every test module not opted
-   into the framework's parallel mode. For each, read what it touches. A
+1. **Serial tests that could run parallel.** Establish whether the test
+   framework has a parallel mode at all — where it has none, say so in one
+   line with the evidence and go to class 2, because there is nothing to opt
+   into. Where it has one, find every test module not opted in. For each, read
+   what it touches. A
    database behind the test framework's per-test sandbox supports parallel
    runs; true global state — a named table, an application-wide config write,
    a registered process name — does not. Report the modules that qualify, and

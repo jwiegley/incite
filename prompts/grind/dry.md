@@ -3,8 +3,11 @@ three or more times. The rule of thumb is the count, not the size. Three copies
 of two lines is a finding; two copies of two hundred lines usually is not,
 because two things can be told apart and kept in step.
 
-The emitters are the prime suspect in any code generator, because a new backend
-starts as a copy of an old one. Hunt these five.
+Where the tree holds a code generator, its emitters are the prime suspect,
+because a new backend starts as a copy of an old one. Classes 1 to 3 below are
+about emitters: a project with no generator answers those three as absent in
+one line, with the evidence, and works classes 4 and 5, which every tree has.
+Hunt these five.
 
 1. **Helper functions repeated across emitters.** Indentation helpers, name
    sanitizers, reserved-word escapers, case converters, comma joiners,
