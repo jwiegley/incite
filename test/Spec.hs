@@ -22,7 +22,7 @@ import Agent.Grant (Grant, permitExec)
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', foldLeavesScoped, (>>>))
 import Agent.Flow.Skeleton (FlowF (..), Rooted (..), toSkeleton)
 import Agent.Interpret (LeafHandlers (..), interpret, leafRunner)
-import Agent.Op (ExecOutcome (..), LeafName, Scope (..), agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
+import Agent.Op (ExecOutcome (..), LeafName, AgentChain (..), Scope (..), agentChainText, agentSpecText, leafNameOf, leafNameText, opTag, opTagPrefixed, scopeDeclText)
 import Agent.Oracle (Answer (..))
 import Agent.Prompt (Prompt, prompt, promptText)
 import Agent.Run (Workflow (..))
@@ -1849,7 +1849,25 @@ leafKinds flow = [opTagPrefixed t | FLeaf t <- toList (skeleton (toSkeleton flow
 scopedLeaves :: Flow Text Text -> [(Text, Text)]
 scopedLeaves = foldLeavesScoped (\sc op -> [(leafNameOf (opTag op), agentOf sc)])
   where
-    agentOf = maybe runDefault agentSpecText . scopeAgent
+    -- The HEAD of the scope's chain: where the leaf runs. A fallback is where it
+    -- would run instead, which is a different question and has its own reader
+    -- ('chainedLeaves') — folding the chain in here would make every pin in
+    -- every table below read as two.
+    agentOf = maybe runDefault (agentSpecText . acHead) . scopeAgent
+
+-- | 'scopedLeaves', but reporting each leaf's __whole__ agent chain: the model
+-- it runs on, then every model it falls back to, joined by @|@.
+--
+-- A separate reader because it answers a separate question, and because the
+-- answer is invisible to every other instrument in this file. A fallback changes
+-- no leaf name, no leaf text, no node count, no cost estimate — and not even
+-- 'scopedLeaves', which reports the head. Dropped in a refactor, it would show
+-- up only as a run dying on a spent allowance, which is exactly the failure it
+-- was added to prevent.
+chainedLeaves :: Flow Text Text -> [(Text, Text)]
+chainedLeaves = foldLeavesScoped (\sc op -> [(leafNameOf (opTag op), agentOf sc)])
+  where
+    agentOf = maybe runDefault agentChainText . scopeAgent
 
 -- | The backend half of what 'scopedLeaves' reports. 'agentSpecText' renders a
 -- named model as @backend\/model@, so a pin like @withBackend codex someModel@
@@ -4751,6 +4769,35 @@ scopeTests =
               length stances @?= length stanceNames
               length (nub stances)
                 @?= (if blockOpencode then length stanceNames - 1 else length stanceNames)
+    , -- THE SPENT ALLOWANCE. A Claude subscription meters Fable 5 separately,
+      -- and running out of it is invisible until the first turn: the model stays
+      -- in the advertised menu and `set_config_option` still succeeds, then
+      -- `session/prompt` answers -32603 with `data.errorKind = "rate_limit"`. A
+      -- throw cancels its siblings, so that killed whole panels — twelve
+      -- `grind-tests` lenses in flight, lost to an allowance that had nothing to
+      -- do with any of them.
+      --
+      -- Quantified over the whole inventory rather than over the leaves that are
+      -- on Fable today: the point is that NO shipped leaf is left one metered
+      -- allowance away from taking a run down with it, which a list of today's
+      -- pins would stop saying the moment a thirteenth lens arrived.
+      testCase "no shipped leaf runs on Fable with nothing to fall back to" $
+        [ (wfName wf, leaf, agent)
+        | wf <- mirrorWorkflows
+        , (leaf, agent) <- chainedLeaves (wfFlow wf)
+        , "fable" `T.isInfixOf` agent
+        , not ("|" `T.isInfixOf` agent)
+        ]
+          @?= []
+    , -- The pin itself, named, because the law above is satisfied by falling
+      -- back to ANY second model and this repository's argument is specifically
+      -- for Opus: every leaf on this pin is a reviewer or a planner, where a
+      -- missed defect costs more than the tokens saved. Falling back to a
+      -- cheaper model would leave a twelve-lens panel reporting twelve reviewers
+      -- while running twelve lesser opinions.
+      testCase "the Fable pin falls back to Opus, not to something cheaper" $
+        lookup "architect" (chainedLeaves (wfFlow planFeature))
+          @?= Just "claude-agent/fable|claude-agent/opus"
     , -- THE UNPINNED BACKEND. A codex leaf that names no model runs on whatever
       -- @~\/.codex\/config.toml@ happens to say, and @codex-acp@ cannot drive a
       -- model it has no built-in metadata for (see 'Incite.Backend.gpt55'). One

@@ -43,6 +43,7 @@ import Agent.Backend
   , codex
   , codexModel
   , defaultModel
+  , fallingBackTo
   , opencode
   , withBackend
   )
@@ -51,11 +52,42 @@ import Agent.Flow.Combinators (refineWith)
 import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief)
 
--- | Fable 5 by match key: resolved against what this install's
--- @claude-agent-acp@ advertises ('Agent.Op.matchModelKey'); preflight refuses
--- loudly rather than guessing if the key is ambiguous.
+-- | Fable 5 by match key, __falling back to Opus when the Fable allowance is
+-- spent__: resolved against what this install's @claude-agent-acp@ advertises
+-- ('Agent.Op.matchModelKey'); preflight refuses loudly rather than guessing if
+-- either key is ambiguous.
+--
+-- __What the fallback is for, precisely.__ A Claude subscription meters Fable 5
+-- separately, and running out of it is not an error the run can see coming:
+-- @agent-functor doctor@ still lists @claude-fable-5[1m]@ in the menu, and
+-- @session\/set_config_option@ still succeeds. The refusal arrives at the first
+-- @session\/prompt@ —
+--
+-- > {"code":-32603,
+-- >  "message":"Internal error: You've reached your Fable 5 limit. …",
+-- >  "data":{"errorKind":"rate_limit"}}
+--
+-- — and before this pin carried a fallback that killed the whole run. Not one
+-- leaf: a throw cancels its siblings, so a @grind-tests@ panel with twelve
+-- lenses in flight lost all twelve to an allowance that had nothing to do with
+-- any of them. 'Agent.Backend.fallingBackTo' fires on that error kind and only
+-- that one, so an ordinary broken turn still halts loudly.
+--
+-- __Opus rather than Sonnet__, and not for the obvious reason. Every leaf this
+-- pin serves is a __reviewer or a planner__ — a lens that misses a defect costs
+-- more than the tokens it saved, which is the same argument that puts the codex
+-- side of these panels on 'gpt55' at @xhigh@. A fallback that quietly halves the
+-- reading is a panel reporting twelve reviewers while running twelve cheaper
+-- opinions; if the cheaper answer were good enough here, it would be the pin.
+--
+-- __The cost, stated.__ @claude-agent\/opus@ is now a preflighted requirement
+-- and a second @claude-agent-acp@ process for the whole run, spawned whether or
+-- not Fable ever runs dry — that is what makes the fallback real at the moment
+-- it is needed rather than a promise checked too late. @opus@ is unambiguous
+-- against this install's menu (@[default, opus[1m], claude-fable-5[1m], sonnet,
+-- haiku]@); read it off @agent-functor doctor@ before changing either key.
 fable5 :: Model 'ClaudeAgent 'Named
-fable5 = claudeModel "fable"
+fable5 = claudeModel "fable" `fallingBackTo` claudeModel "opus"
 
 -- | The model every codex leaf in this repository runs on, __named rather than
 -- inherited__.
