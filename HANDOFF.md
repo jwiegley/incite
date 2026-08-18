@@ -340,3 +340,387 @@ factored out of the existing grind-paradox / review-audit machinery.
     `/tmp/grind-residual/` renders stay ephemeral on purpose — they are
     re-derivable from any checkout of the committed tree, unlike the
     baseline, which is the diff anchor.
+
+## Adopted from upstream by the 288→307 bump (90fde09) — operator-owned
+
+Three behaviours of `agent-functor` that commit 90fde09 (`5eec06c`→`1fca34f`,
+revCount 288→307) brings into every incite run. **None is a defect introduced
+by incite** — nothing in this repository changed but `flake.lock` and one
+haddock. They are recorded here rather than fixed because each needs a change
+in `/home/isaac/_/agent-functor/master` **plus a push**, and push from this
+machine is blocked on a smartcard PIN. Owned by the operator.
+
+- **MEDIUM — the empty-turn retry can re-run side effects.** Upstream
+  `49f1d20`, `src/Agent/Run.hs:1724`
+  (`turnArtifact =<< withEmptyRetry onChunk (modedOutcome (cnLabel conn) Edit
+  Nothing <$> promptOn sess onChunk brief)`), policy at
+  `src/Agent/Run.hs:3934` `withEmptyRetry` and `:3951` `modedOutcome`.
+  Mechanism: a turn is classified `TurnEmpty` on `T.null (T.strip (out t))` —
+  **message text alone**. No check for tool activity in the turn. On
+  `TurnEmpty` the whole turn is re-issued with the same brief on the same
+  session. Concrete failure: incite's world-acting workflows (`shipFeature`,
+  `retro`) have the agent run its own `git`/`gh` inside those turns, so a turn
+  that commits or pushes and then ends with a bare `end_turn` and no text is
+  read as "cleanly empty" and re-prompted — duplicate commits, a second
+  `gh pr create`. Before the bump this halted and an operator decided whether
+  to `resume`; now the re-execution is silent apart from one parenthetical
+  stream line (`asking once more before giving up`). Fix shape: gate the retry
+  on a turn that also did no tool work, not on empty text.
+- **MEDIUM — a mid-session IOException now loses its label.** Upstream
+  `96800fe`, `src/Agent/Acp/Subprocess.hs:75`
+  (``bracket (startProcess pc `catch` launchFailed) stopProcess launched``).
+  Narrowing the `IOException` catch to the spawn is correct for the
+  misdiagnosis it fixes, but the exception that motivated it — an operator-gate
+  EOF — is mid-session, so it now propagates unlabelled to the top-level
+  handler: `src/Agent/Run.hs:1114`
+  `outcomeStatus (Left e) = (RG.Failed (haltReason e), Nothing)` records
+  `Failed "<stdin>: hGetLine: end of file"` and drops the run graph
+  (`Nothing`). The old message misdiagnosed the cause but carried
+  `claude-agent/fable:`; the new one is honest and names neither backend nor
+  leaf — in a 21-leaf three-backend `panelAcross` fan-out whose siblings the
+  throw cancels. Fix shape: keep the narrowed launch handler and add a
+  session-scoped handler that re-labels with `cnLabel`.
+- **LOW — the retry adds load exactly when the backend is unwell.** Upstream
+  `49f1d20` again. The flake it answers (opencode returning `end_turn` with
+  nothing) correlates with backend distress, and a `parList` panel where every
+  leaf gains one extra prompt at that moment is extra load on a backend that
+  may already be rate-limited — the 429-into-aborted-run mode `AGENTS.md`
+  warns about for concurrency. Bounded to one retry per leaf, so tail-case
+  only, but it can turn one lost lens into a lost run. Fix shape: back the
+  retry off, or make it not fire when a sibling has already retried.
+
+# Bump + context-overflow plan — handoff
+
+Second plan in this file, started 2026-08-14. Two parts: **A** lands the
+agent-functor lock bump and records why opencode stays on `defaultModel`;
+**B** gives the repo something to do when a payload will not fit a context
+window. Part A is done. **Part B is not started.**
+
+## Task list
+
+- [x] 1. Re-confirm the ground facts. DONE — tree was exactly as the plan
+  recorded it (`d1ebfe4`, only `flake.lock` dirty at 5eec06c→1fca34f), so no
+  re-derivation was needed. Re-checked again after the tree moved to 308: the
+  facts below still hold.
+- [x] 2. Haddock on `opencodeBackendFor`'s `False` clause recording that
+  `defaultModel` is a decision taken WITH `opencodeModel` available. DONE in
+  `c23e241`, then **corrected in `c027f4c`** after the audit — see below. The
+  plan said the backend advertises 74 models; live `doctor` says **77**, and
+  upstream's own haddock still says 74 at `src/Agent/Backend.hs:389`. Both were
+  true when written; the number is install-specific and nothing gates it.
+- [x] 3. `nix flake check`. DONE, exit 0. Reported per attribute in `9a256a6`'s
+  body, not as one word: `checks.unit-test` BUILT and ran; `ste-prompts` was
+  previously built; the package and devShell attributes say `(build skipped)`
+  — Determinate Nix 3.22.0 evaluates but does not build them under flake check,
+  so their ticks are NOT evidence they build.
+- [x] 4. Suite in blocked roster mode. DONE. Note the plan assumed
+  `BLOCK_OPENCODE` was set on this machine; **it is unset in the shell**, and
+  was passed inline (`BLOCK_OPENCODE=1 …`) for the blocked runs.
+- [x] 5. Commit lock + haddock. DONE — `c23e241`.
+- [x] 6. Post-commit audit + one fix pass. DONE — see below.
+- [~] 7. **Compaction on `partitionReview`/`boundedSplit`.** CODE COMPLETE AND
+  GREEN IN THE WORKING TREE, **STILL NOT COMMITTED** — the commit was declined
+  (see "Step 7 verified and fix-passed" below). The implementation was not
+  written by this session; the goldens, the `goldensRead` fix and every check
+  below were. Read "Another writer owns `Review.hs` and `Spec.hs`" before
+  touching either file.
+- [ ] 8. **`--without-backend` + `passMainWith`, upstream.** NOT STARTED.
+- [x] 9. **Capture live `usage_update` payloads.** DONE as a design question,
+  and the answer **refutes the plan's premise**: a payload DOES carry a
+  denominator. See "Step 9 answered" below. What is still owed is a captured
+  wire sample for codex and opencode — not needed to unblock step 10 on
+  claude-agent.
+- [ ] 10. **Escalation target on the scope, upstream.** NOT STARTED, but now
+  UNBLOCKED for claude-agent by step 9's answer.
+
+## Handoff notes
+
+- Three commits, oldest first:
+  - `c23e241` — the 288→307 bump (`5eec06c`→`1fca34f`) plus the step-2 haddock.
+  - `c027f4c` — the audit fix pass. Not itself audited, per the loop's rule.
+  - `9a256a6` — the 307→308 bump (`1fca34f`→`9cec91d`, upstream "yolo"),
+    observability only: `Agent.Tui.Theme`, `otherToolLines` so a non-shell /
+    non-read / non-edit tool call's result reaches the live console, and
+    highlight/markdown changes. **This bump is NOT part of the plan** — it
+    appeared in the tree mid-session and was committed with its reason recorded
+    rather than folded silently into another commit, per the convention the
+    267→272 note above set.
+- **Closing counts, at `9a256a6`:**
+  - `nix flake check` — exit 0, with the per-attribute qualifiers above.
+  - `BLOCK_OPENCODE=1 nix develop -c cabal test` — **297 tests, 0 failures**.
+  - `nix develop -c cabal test` — **297 tests, 0 failures**.
+  - 295 → 297 is the two fences step 6 added. Both roster modes give the same
+    count because the roster-dependent cases assert the roster they are in.
+- **`.agent-functor/` is gitignored and the tree does not carry it.** It holds
+  this session's `review-lite` run-1 transcript and the **25 completed
+  `@opencode` leaf records** that `Incite.Backend`'s haddock cites as its
+  evidence for "opencode's default resolves and its turns complete". A fresh
+  clone has neither, so that haddock sentence is not re-checkable from the tree
+  alone — which is why it now names the path it argues from.
+- **What the audit caught, because the pattern is the lesson.** Every finding
+  was prose claiming more than its evidence, none was a code defect (the diff
+  was comment lines):
+  - two false statements about where the upstream range lands (`96800fe` is in
+    `Agent/Acp/Subprocess.hs`, not `Agent/Run.hs`; `662c17b` is library code
+    incite consumes, not the "mutation tooling" the message swept it into);
+  - `nix flake check` reported as "all packages" green off ticks that say
+    `(build skipped)`;
+  - two haddock overreaches quantified across machines nobody had read.
+  The commit messages of `c23e241` and `9a256a6` were amended to state what the
+  tools actually printed. **Do not report a `(build skipped)` as a build.**
+- **Both new fences were red-trialled**, not assumed: reinstating "every
+  opencode machine" fails `test/Spec.hs:3651`; weakening the droid header
+  sentence fails `test/Spec.hs:5384`. A fence over prose is worth nothing until
+  it has been seen to fail.
+
+## Part B — what a successor needs before starting
+
+Ground facts, re-verified at lock 308 unless noted:
+
+- **No context-window tracking exists upstream.** `Capabilities` records
+  `capModels`, `capModelSupport`, `capLoadSession`, `capHonorsClientFs` — no
+  window size. `Cost.hs` costs leaves and turns, never tokens.
+- **`usage_update` is still discarded**, `src/Agent/Acp/Protocol.hs:701`
+  ("token bookkeeping; pure noise in the console") — the line moved 700→701 in
+  the 308 bump but the behaviour did not. **The premise that followed this in
+  earlier drafts — "a bare `totalTokens` with no denominator" — is WRONG; see
+  "Step 9 answered" below.**
+- **`partitionReview`, `boundedSplit`, `reviewScales`, `joinWindows`,
+  `chunksOf`** all exist at `src/Agent/Flow/Combinators.hs:185-222`, and
+  `Agent.Bounds` has `Coarsen | FailWidth | Sample`. `boundedSplit` under
+  `Coarsen` re-partitions LARGER with no content dropped. incite references
+  none of them — `partitionReview split bound name brief reduce` is the whole
+  of step 7's fold: split into ≤bound chunks, prompt each, reduce.
+- **`BLOCK_OPENCODE` has never existed upstream** — it is incite-local, an
+  `unsafePerformIO` CAF at `workflows/Incite/Backend.hs`. Step 8 deletes it.
+  There are **53 references** to it across `test/Spec.hs` (31),
+  `workflows/Incite/Backend.hs` (14), `docs/workflows.md` (6), `HANDOFF.md` and
+  `workflows/Incite/Review.hs` (1 each) — the plan said ~25, so budget for
+  twice that.
+- **The bare-`Bool` signatures** on `backendsFor`, `opencodeBackendFor` and
+  `blockOpencode` are a standing hit under the local Haskell addendum
+  (boolean blindness). Deliberately left alone: step 8 removes the parameter
+  entirely, and fixing it first would only collide.
+- **Live `doctor` on this machine**: `claude-agent` has `opus[1m]` and
+  `claude-fable-5[1m]`, so `fable5` already resolves to a 1M model; `codex` has
+  20 models and **no 1M sibling to escalate to**; `opencode` is the only
+  non-claude 1M home (`google/gemini-3.1-pro-preview`, `google/gemini-3.7-flash`,
+  `xai/grok-4.6`); `droid` is not installed (`execvp: does not exist`).
+
+**The blocker on steps 8 and 10**: both land in
+`/home/isaac/_/agent-functor/master`, where push is blocked on a smartcard PIN.
+An agent can author those commits but cannot push them or re-lock incite
+against them, so each ends handed to the operator, with the matching lock bump
+a separate commit afterwards. Step 7 is the only Part B item that needs no
+upstream change — start there.
+
+**One decision for the operator, which step 7 must not settle in code**:
+compacting for uniformity drags a whole panel down to the smallest window in
+the roster, so a large diff pulls a 1M `fable5` down to codex's window. A
+three-backend panel over a compaction is not obviously better than a
+two-backend panel at full fidelity. Ask; do not let the code choose silently.
+
+## Step 9 answered — a live `usage_update` DOES carry a denominator
+
+Session of 2026-08-14. **This refutes the premise steps 9 and 10 were written
+on.** The plan assumed a payload is a bare `totalTokens` with nothing to divide
+by, so a context-fraction could only ever be estimated. It is not.
+
+Read off the ACP SDK schema that ships inside the adapter incite actually runs
+for `claude-agent` — `claude-agent-acp` 0.64.0. Re-find it after any bump with:
+
+```
+grep -rl usage_update "$(dirname "$(readlink -f "$(which claude-agent-acp)")")"/../lib/node_modules
+# schema:  .../@agentclientprotocol/sdk/schema/schema.json
+# typings: .../@agentclientprotocol/sdk/dist/schema/types.gen.d.ts
+```
+
+The `SessionUpdate` union carries a `usage_update` variant described **"Context
+window and cost update for the session."**, and its payload is:
+
+```
+UsageUpdate = { used: uint64   -- "Tokens currently in context."
+              , size: uint64   -- "Total context window size in tokens."
+              , cost?: Cost|null  -- "Cumulative session cost (optional)."
+              }
+required: ["used", "size"]
+```
+
+`used` and `size` are **both mandatory** (`"required": ["used", "size"]` in
+`schema.json`); only `cost` is optional. So the live context fraction is
+`used / size`, exact, per session, with no estimation and no model table to
+keep current — which is precisely the input step 10's escalation target needs.
+
+**What is NOT established, and do not write it down as if it were:**
+
+- **No captured wire sample exists**, here or anywhere in `.agent-functor/`.
+  It cannot: upstream drops the notification at `Protocol.hs:701` before
+  anything writes it, so the run store has never held one. The evidence above
+  is the protocol contract, which is authoritative for field names, types and
+  required-ness — it is not a recording.
+- **Whether `codex-acp` and `opencode` emit `usage_update` at all is unknown.**
+  Searching `codex-acp` 0.13.0's vendor-staging tree
+  (`/nix/store/165mwgzy…-codex-acp-0.13.0-vendor-staging`) finds `UsageUpdate`
+  only in codex's OWN app-server SDK (`sdk/python/src/codex_app_server/…`),
+  a different protocol, and no ACP `agent-client-protocol` crate carrying the
+  variant. That is suggestive, **not** conclusive: a vendor-staging tree is not
+  the built binary. Settle it by capturing the wire, not by grepping again.
+
+**Where the wrong premise came from, so nobody re-litigates it.** `totalTokens`
+is not a field the ACP schema has anywhere. It appears in exactly three places,
+all of them **upstream's own hand-written fixtures**:
+
+```
+test/Agent/McpSpec.hs:588           captureUpdate app (OtherUpdate "usage_update" (object ["totalTokens" .= (7 :: Int)]))
+test/Agent/Acp/ProtocolSpec.hs:539  summariseUpdate (OtherUpdate "usage_update" (object ["totalTokens" .= (99 :: Int)])) `shouldBe` Nothing
+test/Agent/Acp/ProtocolSpec.hs:583  transcriptUpdate (OtherUpdate "usage_update" (object ["totalTokens" .= (5 :: Int)])) `shouldBe` Nothing
+```
+
+Those fixtures were read as if they were captured samples. They are not — they
+invent a field name for a payload whose schema nobody had opened. And they are
+**unfalsifiable**: all three assert `Nothing`, which `summariseUpdate` and
+`transcriptUpdate` return for the `usage_update` tag whatever the object holds,
+so the fixtures would still pass carrying any field name at all. Do not treat a
+fixture in that file as evidence of a wire shape.
+
+**Consequence for step 10, and it is smaller than the plan implies.** Upstream
+already parses the notification into `OtherUpdate "usage_update" obj` with the
+raw JSON object in hand at the discard site (`Protocol.hs:701`) — there is no
+typed decoder to design around, just a discarded `obj` that already contains
+`used` and `size`. Step 10 is a typed decode of two mandatory integers plus
+somewhere to put them, not a protocol overhaul. Its design is unblocked on
+claude-agent and only on claude-agent. A scope-level escalation keyed on `used / size` is exact where
+the notification arrives and silent where it does not, so it needs a stated
+fallback for a backend that never sends one — do not assume roster-wide cover.
+
+## Another writer owns `Review.hs` and `Spec.hs` — read this before editing them
+
+Session of 2026-08-14, and it cost this session its step-7 work. Observed, in
+order:
+
+1. `git status` at session start: **clean**, at `25fc32f`.
+2. Partway in, `test/Spec.hs` and `workflows/Incite/Review.hs` held **~378
+   uncommitted lines** implementing step 7 as a general `Payload`/`compacted`
+   combinator over `partitionReview` — with haddocks, a `compactionTests`
+   group, and a deliberate decision NOT to wire it into any shipped tier
+   (which respects the operator decision recorded above). **This session did
+   not write any of it.**
+3. `flake.lock` moved **308 → 309** (`9cec91d` → `ca258f6`) on its own, with no
+   action from this session — the same way 308 arrived mid-session before it,
+   and it moved again to **310** (`e4aedca`) two minutes after the watch below
+   ended. See the next section.
+4. This session made one 4-line export edit to `Review.hs`. **It was reverted by
+   the other writer**, confirmed by `grep` finding none of the four names in
+   either file afterwards.
+
+So edits to those two files may be silently discarded. The prior stash entries
+say this is not new — `git stash list` still holds two, both labelled
+`UNSOLICITED: … added by an unsandboxed review-lite/review-docs agent session`.
+
+**What a successor must do before resuming step 7:**
+
+- Do **not** `git commit -a`. Commit by explicit pathspec, or you will commit
+  another agent's in-flight work under your own message.
+- Establish who the writer is and stop it, or take the work into a worktree of
+  your own. `ps aux | grep agent-functor` during this session showed a live
+  `agent-functor run ship-feature` (PID 1905258), but its `--capture-context`
+  path pointed at `/home/isaac/_/flake.engineering/lanes-matic/`, a different
+  repository — so it was **not** identified as the writer. Nothing here proves
+  what wrote those lines.
+- The arrived step-7 code was **unverified and incomplete** when that was
+  written. It has since been compiled, completed and run green — see the next
+  section. It was still not this session's code, and it is still uncommitted.
+
+## Step 7 verified and fix-passed, still uncommitted — 2026-08-14
+
+**State.** HEAD is still `ca95eee`. Nothing from step 7 is committed. The
+working tree holds `workflows/Incite/Review.hs`, `test/Spec.hs` (modified), the
+two goldens (staged `A `), and `flake.lock` (modified). The implementation
+arrived from another writer; the goldens, the `goldensRead` fix and the fix
+pass below are this repo's own work.
+
+**Lock.** `flake.lock` is at agent-functor **310 / `e4aedca`**, not the 309 /
+`ca258f6` an earlier draft of this section recorded — the other writer re-locked
+at `14:01:46`, after the fingerprint watch that had been reported as
+"quiescent" ended at `13:59:39`. That watch proved a quiet ten minutes, not a
+stopped writer. The `309 → 310` delta was read before anything was measured
+against it: `Agent.Acp.Protocol` gains a cmark-based `unfence`/`consoleBodyLines`
+so a tool result's markdown fence never reaches the console as literal
+backticks, plus `Agent.Tui.{App,Highlight,Theme}` and their specs. No change to
+any API incite's flows call.
+
+**Counts, re-measured on the tree as it stands (lock 310, fix pass applied):**
+
+- `nix develop -c cabal run incite-test` — **317 tests, 0 failures**.
+- `BLOCK_OPENCODE=1 nix develop -c cabal run incite-test` — **317, 0**.
+- `nix flake check` — **exit 0**; `checks.unit-test` BUILT and ran. The package
+  and devShell attributes say `(build skipped)` and are NOT evidence they build.
+- 297 → 317 is the arrived `compaction` group (14) plus this pass's six.
+
+**The fix pass (five review findings, all in the compaction code):**
+
+1. `splitFor` cut diffs with `T.lines`, which drops a trailing newline — and
+   every real `git show` ends in one. Both kinds now cut with `T.splitOn "\n"`,
+   the exact inverse of the `T.intercalate "\n"` that upstream's `Coarsen` uses
+   to merge units back, so the reassembly law holds for every input rather than
+   only for a sample built without a trailing newline.
+2. `splitFor ProsePayload` cut on the blank line, so a JSONL transcript or a log
+   — no blank line anywhere — yielded ONE unit, and `Coarsen` only ever merges.
+   The single leaf would have been handed the whole oversized artifact the
+   combinator exists to avoid handing anyone. Prose now cuts at the line.
+3. Nothing checked whether a diff leaf obeyed "keep it verbatim". The original
+   now rides an `Id` branch past the fan and `verbatimCheck` counts, in the
+   reduce, how many changed lines came back character for character. No leaf is
+   sent the original; the count is mechanical, not the model's account of itself.
+4. `compactionBanner` carried a local `tshowInt`, duplicating the module's
+   `count`. Deleted.
+5. `Payload` and `Subject` had bare deriving clauses; both are `deriving stock`.
+
+**Two findings from the same review were rejected, with reasons, so nobody
+re-raises them cold.** (a) "A body line beginning `diff --git ` splits a file
+mid-hunk" — it cannot: every body line in a unified diff carries a ` `, `+` or
+`-` prefix, so a column-zero `diff --git ` is always a real file header. The
+finding's own example, `+diff --git a/tests/x.patch …`, does not match the
+prefix test it claims to trip. (b) "Delete the whole compaction API, it has no
+shipped caller" — the absence of a caller is the recorded operator decision
+(compacting for uniformity drags a panel down to the smallest window in the
+roster), not an oversight; it is stated in `compacted`'s haddock. Deleting the
+step the task list asks for is not a simplification of it.
+
+**Recording the goldens.** There is no re-record harness — goldens are files on
+disk, and that repl invocation IS the procedure:
+
+```
+nix develop -c cabal repl lib:incite-workflows -v0
+TIO.writeFile "test/golden/compaction-diff.txt"  (promptText (compactionBrief DiffPayload  "<<PART>>"))
+TIO.writeFile "test/golden/compaction-prose.txt" (promptText (compactionBrief ProsePayload "<<PART>>"))
+```
+
+682 and 480 bytes; unchanged by the fix pass, since no brief was reworded. Both
+were red-trialled (append a byte → `the briefs are byte-for-byte the recorded
+ones` fails; revert → OK, md5 `fa54b7e0007145402226cc4db2f85b42` and
+`8db8b506867898e88c35ffed8f14d133`).
+
+**A trap worth the paragraph, because it cost a check cycle.** `cabal test`
+reads the working directory; `nix flake check` builds from a source derivation
+carrying **git-tracked files only**. With the goldens written but untracked,
+`cabal test` was green while `nix flake check` failed both golden fences. `git
+add` fixed it. A new golden is invisible to the sandbox until it is staged.
+The same rule caught gap 2 of the arrival: the arrived code fenced its goldens
+in its own `compactionGoldens` but never added them to `goldensRead`, which the
+global `every golden on disk is one this suite fences` case then failed.
+`goldensRead` now folds in `map snd compactionGoldens` rather than spelling the
+paths a second time.
+
+**Why it is not committed.** Two commit attempts were made in the earlier pass
+and both were refused — one blocked by the permission classifier, one declined
+by the operator. Neither was retried, and this pass did not retry either. If the
+operator wants it committed: `flake.lock` first and alone (308 → 310), then step
+7 as one commit over `workflows/Incite/Review.hs`, `test/Spec.hs` and the two
+goldens — **by explicit pathspec, never `git commit -a`**, because the tree is
+shared with a live writer. The message must say the implementation arrived from
+another writer and that this repo verified, completed and fix-passed it rather
+than authored it.
+
+**No post-commit audit ran, because no commit landed.** The audit beat is per
+commit; there is nothing for it to report on.

@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
@@ -76,6 +77,17 @@ module Incite.Review
   , slopOfDocs
   , ponytailOfDocs
   , ponytailOfTree
+    -- * Compaction
+    --
+    -- | Making an oversized artifact fit, without pretending afterwards that
+    -- it was not made to fit. 'Payload' says what is being compacted and
+    -- therefore how; 'compacted' is the 'Flow'.
+  , Payload (..)
+  , compacted
+  , compactionBrief
+  , splitFor
+  , compactionBanner
+  , verbatimCheck
   ) where
 
 import Data.Char (isSpace)
@@ -86,8 +98,10 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Agent.Backend (claudeAgent, defaultModel, withBackend)
+import Agent.Bounds (Bound (boundMax))
 import Agent.Flow (Flow (Id), Mode (Plan), dimap', fanout', left'', withMode, (>>>))
-import Agent.Flow.Combinators (exploreFlows, hierarchical, refineWith, unionFindings)
+import Agent.Flow.Combinators (exploreFlows, hierarchical, partitionReview, posReport, refineWith, sourceBlock, unionFindings)
+import Agent.Positions (Positions (Positions))
 import Agent.Grant (Grant, execGrant)
 import Agent.Op (LeafName, leafNameText)
 import Agent.Prompt (Prompt, brief, iii, promptText, __i)
@@ -426,7 +440,7 @@ data Subject
   | -- | @grind-paradox@: a whole source tree, and the debt standing in it.
     -- Nobody changed anything; the question is what is already wrong.
     OfTree
-  deriving (Eq, Show, Bounded, Enum)
+  deriving stock (Eq, Show, Bounded, Enum)
 
 -- | The lenses that artifact admits, in the order their blocks are read.
 --
@@ -1126,6 +1140,248 @@ ponytailOfTree =
     output and which caller, because the fixer has to fix them in the same
     change.
   |]
+
+-- | __What is being compacted, and therefore how.__ Not a formatting knob: the
+-- two strategies are not interchangeable, and applying the wrong one destroys
+-- exactly what the panel downstream was going to look for.
+--
+-- A prose summary of a diff drops the tokens a defect lives in — the off-by-one
+-- bound, the swapped argument, the guard that is @>@ where it should be @>=@.
+-- Summarised, that hunk becomes \"tightens the bounds check\" and every lens
+-- reviews a sentence nobody can find a bug in. A diff therefore wants
+-- __selection__: drop what the change did not touch, keep what survives
+-- __verbatim__. A transcript or an audit report has no such tokens — its value
+-- is its claims — so it wants __summary__.
+--
+-- A sum type rather than a @Bool@ or a caller-supplied function, so the choice
+-- is made once per call site and 'compactionBrief' is total over it: a third
+-- payload kind cannot be added without someone writing its strategy down.
+--
+-- __Deliberately not 'Subject', which is a different axis.__ 'Subject' answers
+-- \"which lenses admit this artifact\"; this answers \"what shape are the bytes,
+-- so how do we shrink them\". Folding the two together would mean inventing a
+-- compaction strategy for @OfChange@ and @OfTree@ that nothing needs, and would
+-- let a change to the lens-set taxonomy silently change how a diff is
+-- compacted. They are spelled apart so they can move apart.
+data Payload
+  = -- | A unified diff. Selection.
+    DiffPayload
+  | -- | A transcript, an audit report, a findings list. Summary.
+    ProsePayload
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | __Compaction as a fold over parts that each already fit__, so no leaf in
+-- this flow is ever sent the oversized artifact it is compacting. That is the
+-- whole reason it is built on 'partitionReview' rather than one \"summarise
+-- this\" leaf: one leaf would have to read the thing that does not fit. (The
+-- artifact itself rides an 'Id' branch to the reduce, where 'verbatimCheck'
+-- counts what came back — a pure fold, no window.)
+--
+-- 'partitionReview' applies @boundedSplit@ under the 'Bound'\'s policy before
+-- it fans, and under @Coarsen@ that re-partitions __larger__ — merging adjacent
+-- units until there are at most 'boundMax' of them, __with no content
+-- dropped__. Pass 'Agent.Bounds.coarsenTo' and an artifact of any size is
+-- covered by exactly that many leaves; pass 'Agent.Bounds.failAt' and an
+-- oversized artifact aborts the run instead. Both are honest; the second is
+-- the one to reach for when a silent re-partition would be worse than a stop.
+--
+-- __Apply this ONCE, before the fan-out, never inside it.__ Every leaf in a
+-- panel must see the same artifact. A panel where one backend reviewed a
+-- compaction and another reviewed the full payload produces a synthesis that
+-- reads input asymmetry as model disagreement — it will rank a finding one
+-- model \"missed\" that was never in front of it. That is the same error
+-- @backendsFor@ refuses when it drops the duplicate backend rather than
+-- reporting 21 reviewers running 14 models' worth of opinion.
+--
+-- __The output says it is a compaction__ ('compactionBanner'), because findings
+-- on a compaction are not findings on the code and a reader cannot tell the two
+-- apart from the findings alone.
+--
+-- Deliberately __not wired into any shipped tier__. Compacting for uniformity
+-- drags a whole panel down to the smallest window in the roster: on a large
+-- diff, codex's window pulls a 1M 'Incite.Backend.fable5' down with it, and a
+-- three-backend panel over a compaction is not obviously worth more than a
+-- two-backend panel at full fidelity. That is an operator's call about a
+-- specific artifact, so it is left as one rather than settled here.
+compacted :: Payload -> Bound -> Flow Text Text
+compacted kind bound =
+  dimap' id (uncurry (verbatimCheck kind)) $
+    fanout'
+      Id
+      ( partitionReview
+          (splitFor kind)
+          bound
+          ("compact:" <> leafTag kind)
+          (compactionBrief kind)
+          (compactionBanner kind bound)
+      )
+
+-- | __What the model actually did, counted rather than taken on trust.__
+--
+-- 'compactionBrief' tells a diff leaf to keep surviving code verbatim, and
+-- nothing downstream can tell whether it obeyed: a model that summarised anyway
+-- produces prose about code that the banner then vouches for as a compaction,
+-- and every lens reviews a paraphrase. That is the false negative the banner
+-- exists to prevent, and a banner alone does not prevent it — it warns about
+-- material that was /dropped/, not about material that was /rewritten/.
+--
+-- So the original is carried past the fan on an 'Id' branch ('fanout''), and
+-- the reduce counts how many of the diff's changed lines came back character
+-- for character. The original is only ever held here, in a pure fold; no leaf
+-- is sent it, which is the property 'compacted' is built for.
+--
+-- __The number is not a pass\/fail__ and must not be read as one: the brief
+-- licenses dropping whole files, so a shortfall is dropped material, a rewrite,
+-- or both. What it does is make the difference between \"90% survived\" and
+-- \"nothing survived\" visible to a reader who otherwise has only the model's
+-- word for it.
+--
+-- Nothing is added for 'ProsePayload': a summary is /told/ to paraphrase, so a
+-- verbatim count there would be noise that reads like a failure.
+verbatimCheck :: Payload -> Text -> Text -> Text
+verbatimCheck ProsePayload _ compaction = compaction
+verbatimCheck DiffPayload original compaction
+  | null changed = compaction
+  | otherwise = sourceBlock "compaction-fidelity" (T.unwords note) <> "\n\n" <> compaction
+  where
+    -- ponytail: O(changed × compaction) membership scan, one pass per flow at
+    -- reduce time. Upgrade to a Set of the compaction's lines if this ever runs
+    -- on diffs with tens of thousands of changed lines.
+    kept = length (filter (`elem` survivors) changed)
+    survivors = T.splitOn "\n" compaction
+    changed = filter isChanged (T.splitOn "\n" original)
+    isChanged l =
+      any (`T.isPrefixOf` l) ["+", "-"]
+        && not (any (`T.isPrefixOf` l) ["+++ ", "--- "])
+    note =
+      [ "VERBATIM CHECK, counted mechanically over the original:"
+      , count kept <> " of " <> count (length changed)
+      , "changed lines survive in the compaction below character for character."
+      , "The brief permits dropping whole files and forbids rewriting what"
+      , "survives, so a shortfall is dropped material, a rewrite, or both — the"
+      , "leaf's own dropped-files line says which. This is not the model's"
+      , "account of what it did."
+      ]
+
+-- | The leaf-name and block-label tag for a payload kind. One binding, so the
+-- leaf a run shows and the label its banner writes cannot drift apart.
+leafTag :: Payload -> LeafName
+leafTag DiffPayload = "diff"
+leafTag ProsePayload = "prose"
+
+-- | How each part is split off the whole, before the 'Bound' coarsens it.
+--
+-- __Both splits are exact inverses of @T.intercalate \"\\n\"@__, which is not a
+-- style choice: that is the separator upstream's @Coarsen@ merges adjacent
+-- units back together with, so any split that cuts on something else loses a
+-- byte per boundary the moment the bound bites. @T.lines@ is the trap here —
+-- it drops a trailing newline, and every real @git show@ ends in one — so this
+-- cuts with @T.splitOn \"\\n\"@ and the law holds for every input rather than
+-- only for hand-written samples.
+--
+-- A diff is then regrouped at @diff --git@, so a unit is whole files and a
+-- coarsened unit is a run of whole files rather than a slice through the middle
+-- of a hunk: a fragment carrying no file header is one the brief's \"drop whole
+-- files\" instruction cannot be obeyed on. Anything before the first
+-- @diff --git@ (the commit message a @git show@ carries) is its own leading
+-- unit rather than being dropped — losing it would silently discard the claims
+-- the @fess@ lens exists to check.
+--
+-- __Prose is not regrouped at all__, because the blank line is not a boundary
+-- every prose payload has: a JSONL transcript, a log, or a findings list one
+-- per line contains no @\"\\n\\n\"@, so cutting there yields a single unit — and
+-- @Coarsen@ only ever merges, never splits, so that single unit stays whole and
+-- the one leaf under it is handed the entire oversized artifact this combinator
+-- exists to avoid handing anyone. The line is the boundary that is always
+-- there.
+splitFor :: Payload -> Text -> [Text]
+splitFor _ t | T.null t = []
+splitFor DiffPayload t = chunkOnHeaders (T.splitOn "\n" t)
+  where
+    chunkOnHeaders [] = []
+    chunkOnHeaders (l : ls) =
+      let (body, rest) = break ("diff --git " `T.isPrefixOf`) ls
+       in T.intercalate "\n" (l : body) : chunkOnHeaders rest
+splitFor ProsePayload t = T.splitOn "\n" t
+
+-- | What one part is turned into. Total over 'Payload' by construction — the
+-- point of the sum type.
+--
+-- Both briefs forbid the other strategy in as many words, because that is the
+-- failure worth spending prompt on: a model handed a diff and told to
+-- \"compact\" it will summarise by default, and a summarised diff is a diff no
+-- lens can find a defect in.
+compactionBrief :: Payload -> Text -> Prompt
+compactionBrief DiffPayload part =
+  [__i|
+    SELECT from this diff. Do not summarise it, do not describe it, and do not
+    rewrite any line of code that survives.
+
+    Keep VERBATIM, character for character:
+      * every added or removed line, with its leading + or -;
+      * the @@ hunk headers and the file headers those hunks belong to;
+      * enough surrounding context to see what each hunk changed.
+
+    Drop only: whole files whose every hunk is pure whitespace or a mechanical
+    rename, and context lines far from any hunk. If dropping a file would hide
+    a change, keep the file.
+
+    State at the end, in one line, which files you dropped and why. A reader
+    must be able to tell what is missing without diffing you against the
+    original.
+
+    #{part}
+  |]
+compactionBrief ProsePayload part =
+  [__i|
+    SUMMARISE this text. It is prose — a transcript, a report, a findings list
+    — not code, so compress it.
+
+    Preserve exactly, never paraphrased:
+      * every claim made, and who or what made it;
+      * every file path, line number, identifier, command and commit SHA;
+      * every finding, with its severity if one was given.
+
+    Drop: narration, restated context, and anything said twice.
+
+    A claim you compress away cannot be checked later, so when in doubt about a
+    claim, keep it.
+
+    #{part}
+  |]
+
+-- | The reduce: the parts, under a header that says what this artifact is.
+--
+-- __A compaction that does not announce itself is the defect this whole
+-- combinator would otherwise introduce.__ Findings on a compaction get read as
+-- findings on the code, and a lens that says \"no issue here\" about a hunk it
+-- was never shown is worse than no lens — it is a false negative wearing a
+-- model's name. So the banner leads, and it carries the part count and the
+-- bound, which together are what a reader needs to judge how much was lost.
+--
+-- The precedent is @backendsFor@ reporting 14 reviewers on a blocked machine
+-- rather than claiming 21: say what actually ran over what.
+compactionBanner :: Payload -> Bound -> Positions Text -> Text
+compactionBanner kind bound ps@(Positions rs) =
+  sourceBlock "compaction" (T.unwords (banner kind (length rs) (boundMax bound)))
+    <> "\n\n"
+    <> posReport (leafNameText (leafTag kind) <> " part") ps
+  where
+    banner k n limit =
+      [ "This is a COMPACTION of the original artifact, not the artifact itself."
+      , "Kind:"
+      , strategy k <> "."
+      , "It was split into"
+      , count n
+      , "part(s) against a bound of"
+      , count limit <> ";"
+      , "each part was compacted on its own and they are concatenated below."
+      , "Findings below are findings ON A COMPACTION: material the compaction"
+      , "dropped cannot have been reviewed, so absence of a finding here is not"
+      , "evidence of absence in the original."
+      ]
+    strategy DiffPayload = "unified diff, compacted by SELECTION (surviving code verbatim)"
+    strategy ProsePayload = "prose, compacted by SUMMARY"
 
 -- | The cross-product: every lens answered by every backend, concurrently, over
 -- one artifact. Leaf names are @lens\@backend@, so 'unionFindings' heads each

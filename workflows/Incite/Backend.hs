@@ -7,6 +7,13 @@
 -- model, the review tiers fan every lens across all three backends, and both
 -- need the same vocabulary. Keeping it here is what stops
 -- "Incite.Feature" and "Incite.Review" from importing each other.
+--
+-- @droid@ is deliberately not among the backends here: upstream ships
+-- 'Agent.Backend.droid' but marks its model selection __unverified__, and
+-- unverified there means permissive — a @droidModel@ pin would type-check and
+-- leave preflight to discover the truth at run time — while @doctor@ on this
+-- machine reports droid not installed at all. A roster slot that cannot launch
+-- only widens every @panelAcross@ cross-product with a leaf that cannot run.
 module Incite.Backend
   ( fable5
   , gpt55
@@ -36,6 +43,7 @@ import Agent.Backend
   , codex
   , codexModel
   , defaultModel
+  , fallingBackTo
   , opencode
   , withBackend
   )
@@ -44,11 +52,42 @@ import Agent.Flow.Combinators (refineWith)
 import Agent.Op (LeafName)
 import Agent.Prompt (Prompt, brief)
 
--- | Fable 5 by match key: resolved against what this install's
--- @claude-agent-acp@ advertises ('Agent.Op.matchModelKey'); preflight refuses
--- loudly rather than guessing if the key is ambiguous.
+-- | Fable 5 by match key, __falling back to Opus when the Fable allowance is
+-- spent__: resolved against what this install's @claude-agent-acp@ advertises
+-- ('Agent.Op.matchModelKey'); preflight refuses loudly rather than guessing if
+-- either key is ambiguous.
+--
+-- __What the fallback is for, precisely.__ A Claude subscription meters Fable 5
+-- separately, and running out of it is not an error the run can see coming:
+-- @agent-functor doctor@ still lists @claude-fable-5[1m]@ in the menu, and
+-- @session\/set_config_option@ still succeeds. The refusal arrives at the first
+-- @session\/prompt@ —
+--
+-- > {"code":-32603,
+-- >  "message":"Internal error: You've reached your Fable 5 limit. …",
+-- >  "data":{"errorKind":"rate_limit"}}
+--
+-- — and before this pin carried a fallback that killed the whole run. Not one
+-- leaf: a throw cancels its siblings, so a @grind-tests@ panel with twelve
+-- lenses in flight lost all twelve to an allowance that had nothing to do with
+-- any of them. 'Agent.Backend.fallingBackTo' fires on that error kind and only
+-- that one, so an ordinary broken turn still halts loudly.
+--
+-- __Opus rather than Sonnet__, and not for the obvious reason. Every leaf this
+-- pin serves is a __reviewer or a planner__ — a lens that misses a defect costs
+-- more than the tokens it saved, which is the same argument that puts the codex
+-- side of these panels on 'gpt55' at @xhigh@. A fallback that quietly halves the
+-- reading is a panel reporting twelve reviewers while running twelve cheaper
+-- opinions; if the cheaper answer were good enough here, it would be the pin.
+--
+-- __The cost, stated.__ @claude-agent\/opus@ is now a preflighted requirement
+-- and a second @claude-agent-acp@ process for the whole run, spawned whether or
+-- not Fable ever runs dry — that is what makes the fallback real at the moment
+-- it is needed rather than a promise checked too late. @opus@ is unambiguous
+-- against this install's menu (@[default, opus[1m], claude-fable-5[1m], sonnet,
+-- haiku]@); read it off @agent-functor doctor@ before changing either key.
 fable5 :: Model 'ClaudeAgent 'Named
-fable5 = claudeModel "fable"
+fable5 = claudeModel "fable" `fallingBackTo` claudeModel "opus"
 
 -- | The model every codex leaf in this repository runs on, __named rather than
 -- inherited__.
@@ -178,6 +217,28 @@ opencodeBackend = opencodeBackendFor blockOpencode
 -- @backendsFor False@ built on the CAF returned @[claude-agent, codex, codex]@
 -- under @BLOCK_OPENCODE@ — the very duplicate 'backendsFor' documents itself as
 -- dropping — so the one test written to be environment-independent was not.
+--
+-- __The unblocked entry stays on 'defaultModel' by decision, not by absence of
+-- an alternative.__ @opencodeModel@ is legal — upstream moved
+-- @SelectsModel \'Opencode@ off its @TypeError@ branch to @()@ in @c879ee1@ —
+-- and @doctor@ on this machine reports 77 wire-selectable opencode models
+-- against codex's 20. What stops a pin is that __opencode ids are
+-- provider-qualified and install-specific__: @google\/gemini-3.1-pro-preview@,
+-- @xai\/grok-4.6@. Which ids exist depends on the credentials of the install,
+-- so one is readable only off a @doctor@ run on a machine that has opencode,
+-- while a pin is a single repository-wide constant. On any machine whose own
+-- @doctor@ menu lacks the pinned id, 'Agent.Op.matchModelKey' finds no match
+-- and preflight refuses __every opencode leaf on that machine__.
+--
+-- 'gpt55' is the counter-precedent only because its failure had already been
+-- observed — its own haddock records it — and that asymmetry of evidence is the
+-- whole argument. What is known here is narrower than the fleet: on this
+-- machine opencode's default resolves and its turns complete, in 25 completed
+-- @\@opencode@ leaf records under @.agent-functor\/runs@; no such failure has
+-- been __reported__ from another machine, which is not the same as none having
+-- occurred on one nobody has read. Revisit when a specific opencode default is
+-- __observed__ to fail a turn, and pin the id read off that machine's own
+-- @doctor@.
 opencodeBackendFor :: Bool -> (LeafName, Flow Text Text -> Flow Text Text)
 opencodeBackendFor True = codexBackend
 opencodeBackendFor False = ("opencode", withBackend opencode defaultModel)
