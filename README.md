@@ -78,6 +78,8 @@ skills/            — skill bodies
   pr-review.md     — interactive, strictly read-only PR review in a worktree
   pr-comment.md    — draft one comment into the pending review
   pr-fix.md        — apply one change via a subagent, push to the PR head
+  pr-address.md    — the author side: walk inbound review comments across the
+                     stack one thread at a time, fix, reply, resolve
 workflows/
   Main.hs          — the typed workflows; `passMain` gives them a CLI
 docs/              — maintained human-facing reference docs
@@ -158,10 +160,12 @@ native concept instead of degrading it into something that collides. Only
 agent into a skill, colliding with the `code-review` *command* already
 deployed as a skill there.
 
-### The PR-review trio
+### The PR skills
 
-`pr-review` is the entry point and the other two are its companions — they are
-meant to be invoked *during* a review, not standalone:
+Two entry points, facing opposite directions. `pr-review` is the reviewer
+side; `pr-address` is the author side. `pr-comment` and `pr-fix` are
+`pr-review`'s companions — meant to be invoked *during* a review, not
+standalone:
 
 - **`/pr-review <pr-number>`** sets up an isolated worktree and walks the diff
   one logical group of hunks at a time, strictly read-only, pausing for
@@ -174,8 +178,15 @@ meant to be invoked *during* a review, not standalone:
 - **`/pr-fix <change>`** hands one change to a subagent in a *separate*
   worktree and pushes it to the PR head branch. The review worktree stays
   untouched, so reviewing and fixing never fight over the same tree.
+- **`/pr-address [pr-number]`** is the mirror: coworkers' comments coming *in*
+  on a stack I authored. It gathers every unresolved review thread across the
+  whole stack into one downstack-first queue and walks it a thread at a time —
+  showing the thread and the code as it stands now, saying whether the comment
+  is right, and on approval applying the fix through `pr-fix`'s machinery.
+  Replies and thread resolution are drafted but never posted unprompted.
 
 The split is deliberate: the reviewer never writes, the fixer never reviews.
+Fixes land per-thread as their own commit, so a reply can point at a sha.
 
 ## Inputs
 

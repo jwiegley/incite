@@ -697,6 +697,17 @@
           body = builtins.readFile ./skills/pr-review.md;
         }
 
+        {
+          type = "skill";
+          name = "pr-address";
+          description = "Interactively address inbound code review comments left by coworkers across a whole Graphite PR stack: gather every unresolved review thread into one downstack-first queue, then walk it one thread at a time — show the thread, show the code as it stands now, say whether it's right, and on my word apply the fix via a subagent in its own worktree and push it immediately. Replies and thread resolution are drafted but never posted without my explicit approval. Handles outdated threads, already-fixed threads, and comments whose fix belongs downstack.";
+          extraFrontmatter = {
+            author = "Isaac Shapira";
+            invocation = "/pr-address [pr-number]";
+          };
+          body = builtins.readFile ./skills/pr-address.md;
+        }
+
         # ── ponytail (upstream, from the pinned flake input) ─────────────────
         #
         # Deployed as skills, not as an `instructions` fragment: the ladder as
