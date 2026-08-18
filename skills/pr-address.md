@@ -12,10 +12,11 @@ apply the fix through a subagent in its own worktree and push it. Replies and
 resolutions are **drafted and shown, never posted without my explicit
 approval** — those are outward-facing and belong to me.
 
-The argument is any PR in the stack (the whole stack gets pulled in either
-way). If none was given, infer it from the current branch
-(`gh pr list --state open --head $(git branch --show-current)`); if that is
-ambiguous, ask and stop.
+**The unit of work is the stack, never a PR.** There is no required argument
+and you must not ask me for a PR number — work the stack out yourself from the
+repo (Step 1). An argument, if I give one, is only a *selector*: a PR number,
+branch name, or stack name that picks which stack to work, after which the
+whole stack comes along regardless.
 
 # Hard constraints
 
@@ -47,24 +48,52 @@ Non-plussed and concise. Two sentences per thread, not a paragraph. Say
 comment into a fix, and do not manufacture agreement to keep the queue moving.
 If a reviewer misread the code, say so and draft a reply that says so kindly.
 
-# Step 1 — Resolve the stack
+# Step 1 — Work out the stack yourself
 
 1. Verify we're in a git repo and `gh auth status` passes. If not, stop.
-2. Resolve the stack. The Graphite bot's stack comment in a PR body/comments
-   is canonical — it lists the stack in order. Absent that, chain branches:
-   `gh pr list --state open --head <baseRefName>` finds the PR below,
-   `gh pr list --state open --base <headRefName>` finds the PR(s) above.
-   Walk both directions from the given PR to the ends. `gt log short` is a
-   useful cross-check when the local repo is the stack's working copy.
-3. For each PR in the stack, capture:
+2. **Build the whole forest of open PRs in one call** — every `base → head`
+   edge in the repo, which is all a stack is:
+   ```
+   gh pr list --state open --limit 200 \
+     --json number,title,headRefName,baseRefName,author,isDraft,url
+   ```
+   A PR whose `baseRefName` is another open PR's `headRefName` sits directly
+   above it. Chain those edges and you have every stack in the repo, rooted at
+   trunk, with no PR number from me and no extra API calls.
+
+   One case breaks the chain: when the bottom PR merges, GitHub retargets the
+   ones above it to trunk and they look like separate stacks. The Graphite
+   bot's stack comment in a PR body still lists the true stack in order — use
+   it to re-join a chain that looks severed, and prefer it over the edges
+   whenever the two disagree.
+3. **Pick which stack**, in this order — stop at the first that resolves:
+   - I gave a selector → the stack containing that PR/branch.
+   - The current branch (`git branch --show-current`) appears as a `headRefName`
+     or anywhere in a chain → that stack.
+   - `gt log short --no-interactive -q` names a current stack (Graphite tracks
+     it locally even before the branches have PRs) → that stack.
+   - Exactly one stack in the forest is authored by me → that one.
+   - Several of mine are open → list them, one line per stack
+     (`<n> PRs: #a → #b → #c — <title of the top>`), and ask **which stack**.
+     That is the only question you may ask here, and it is a choice between
+     stacks, never a request for a PR number.
+   - None of mine are open → say so and stop.
+4. **Take the whole stack, both directions.** Everything downstack of the
+   selected PR and everything upstack of it, root to tip — never just the one I
+   named and never just the tip. If the stack branches into several PRs above,
+   include every branch of it and say so.
+5. Per PR in the stack, capture the state the walk needs:
    `gh pr view <n> --json number,title,headRefName,baseRefName,author,state,isDraft,url,mergeable,mergeStateStatus`
    plus `gh pr checks <n>` (nonzero exit on failing/pending is data, not an
    error).
-4. Skip merged and closed PRs. Note any PR in the stack authored by someone
-   else and ask before touching it — a stack can be shared.
+6. Skip merged and closed PRs, but say which you skipped — a merged PR's
+   threads can still be live feedback. Note any PR in the stack authored by
+   someone else and ask before touching that one; keep reading its threads
+   either way, since they constrain what lands below.
 
-Report the stack compactly, one line per PR: position, number, title, state,
-CI, and unresolved-thread count once Step 2 lands.
+Report the stack compactly, one line per PR — position, number, title, state,
+CI — then go straight to Step 2 and fold in the unresolved-thread counts. Do
+not pause between them; the queue is the point.
 
 # Step 2 — Gather every unresolved thread into one queue
 

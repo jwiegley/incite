@@ -178,9 +178,11 @@ standalone:
 - **`/pr-fix <change>`** hands one change to a subagent in a *separate*
   worktree and pushes it to the PR head branch. The review worktree stays
   untouched, so reviewing and fixing never fight over the same tree.
-- **`/pr-address [pr-number]`** is the mirror: coworkers' comments coming *in*
-  on a stack I authored. It gathers every unresolved review thread across the
-  whole stack into one downstack-first queue and walks it a thread at a time —
+- **`/pr-address`** is the mirror: coworkers' comments coming *in* on a stack I
+  authored. It takes no argument — the stack comes from the repo (the open-PR
+  base/head forest, the current branch, `gt`), and the unit of work is the
+  whole stack, never one PR. It gathers every unresolved review thread across
+  that stack into one downstack-first queue and walks it a thread at a time —
   showing the thread and the code as it stands now, saying whether the comment
   is right, and on approval applying the fix through `pr-fix`'s machinery.
   Replies and thread resolution are drafted but never posted unprompted.
